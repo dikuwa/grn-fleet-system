@@ -15,6 +15,7 @@ import {
 import { processSupervisorDecisionAtomic } from '@/lib/supervisor-approval';
 import { processAtomicWorkflowDecision } from '@/lib/workflow-decision-atomic';
 import { processAuthorisationDecision } from '@/lib/authorisation-decision';
+import { processExternalAuthorisationDecision } from '@/lib/external-authorisation-decision';
 import { sendWorkflowOutcomeEmailBestEffort } from '@/lib/workflow-outcome-email';
 import { evaluateTripReleaseGate } from '@/lib/trip-release-gate';
 
@@ -191,6 +192,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       }
     }
 
+    let authorisationDriverKind: 'internal' | 'external' | null = null;
     if (stepActionType === 'authorise' && actionType === 'approved') {
       const releaseGate = await evaluateTripReleaseGate({
         tenantId: session.tenantId,
@@ -210,6 +212,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           },
           { status: 409 },
         );
+      }
+      if (releaseGate.driverKind === 'internal' || releaseGate.driverKind === 'external') {
+        authorisationDriverKind = releaseGate.driverKind;
       }
     }
 
@@ -231,6 +236,16 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         instanceId: id,
         action: stepActionType as WorkflowActionType,
         result: semanticResult,
+        comment: typeof comment === 'string' ? comment : undefined,
+        session,
+      });
+    } else if (
+      stepActionType === 'authorise' &&
+      semanticResult === 'authorised' &&
+      authorisationDriverKind === 'external'
+    ) {
+      result = await processExternalAuthorisationDecision({
+        instanceId: id,
         comment: typeof comment === 'string' ? comment : undefined,
         session,
       });

@@ -12,6 +12,7 @@ export * from './people';
 export * from './employee-lifecycle';
 export * from './external-parties';
 export * from './external-driver-assignments';
+export * from './external-authority-drivers';
 export * from './fleet';
 export * from './requests';
 export * from './request-sequences';
