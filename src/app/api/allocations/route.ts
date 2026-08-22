@@ -31,6 +31,73 @@ const ALLOCATABLE_STATUSES = [
 ];
 const LIVE_ALLOCATION_STATES = ['provisional', 'confirmed'] as const;
 
+const ALLOCATION_DB_ERROR_MESSAGES: Record<string, { status: number; error: string }> = {
+  allocation_request_already_live: {
+    status: 409,
+    error: 'This transport request already has a live allocation. Refresh the request before creating another allocation.',
+  },
+  allocation_vehicle_overlap: {
+    status: 409,
+    error: 'Vehicle is already allocated during this period.',
+  },
+  allocation_driver_overlap: {
+    status: 409,
+    error: 'Driver is already assigned to another live allocation during this period.',
+  },
+  allocation_vehicle_not_available: {
+    status: 409,
+    error: 'Vehicle availability changed before the allocation could be saved. Refresh the vehicle list and choose an available vehicle.',
+  },
+  allocation_vehicle_blocking_defect: {
+    status: 409,
+    error: 'Vehicle has an unresolved blocking defect and cannot be allocated until it is cleared.',
+  },
+  allocation_invalid_period: {
+    status: 400,
+    error: 'Allocation dates are invalid. The end date must be after the start date.',
+  },
+  allocation_vehicle_not_found: {
+    status: 404,
+    error: 'Vehicle no longer exists. Refresh the request and select another vehicle.',
+  },
+};
+
+function describeAllocationDbError(error: unknown) {
+  const candidate = error as {
+    code?: string;
+    message?: string;
+    detail?: string;
+    cause?: unknown;
+  };
+  const diagnostic = [candidate?.message, candidate?.detail, String(candidate?.cause ?? ''), String(error)]
+    .filter(Boolean)
+    .join(' ');
+
+  for (const [marker, response] of Object.entries(ALLOCATION_DB_ERROR_MESSAGES)) {
+    if (diagnostic.includes(marker)) return response;
+  }
+
+  if (candidate?.code === '23P01') {
+    return {
+      status: 409,
+      error: 'Allocation conflicts with an existing live reservation. Refresh the request and try again.',
+    };
+  }
+  if (candidate?.code === '23514') {
+    return {
+      status: 409,
+      error: 'Allocation no longer satisfies the current vehicle safety or availability rules. Refresh and try again.',
+    };
+  }
+  if (candidate?.code === '23503') {
+    return {
+      status: 409,
+      error: 'A vehicle, driver, or request used by this allocation changed before it could be saved. Refresh and try again.',
+    };
+  }
+  return null;
+}
+
 export async function POST(req: NextRequest) {
   try {
     const auth = await requireRequestAuth(req);
@@ -412,8 +479,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ allocation, trip, document: doc, recommendation, compliance: driverCompliance });
   } catch (error) {
     console.error('[allocations] POST failed:', error);
-    if ((error as { code?: string })?.code === '23P01') {
-      return NextResponse.json({ error: 'Vehicle is already allocated during this period' }, { status: 409 });
+    const allocationDbError = describeAllocationDbError(error);
+    if (allocationDbError) {
+      return NextResponse.json({ error: allocationDbError.error }, { status: allocationDbError.status });
     }
     return NextResponse.json({ error: 'Failed to create allocation' }, { status: 500 });
   }
