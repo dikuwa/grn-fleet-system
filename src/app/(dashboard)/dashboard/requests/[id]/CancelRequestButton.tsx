@@ -32,23 +32,30 @@ export function CancelRequestButton({ requestId, currentStatus, disabled }: Canc
   const { toast } = useToast();
 
   const canCancel = !nonCancellableStatuses.includes(currentStatus);
+  const cleanReason = reason.trim();
+  const validReason = cleanReason.length >= 5 && cleanReason.length <= 500;
 
   if (!canCancel) return null;
 
   const handleCancel = async () => {
+    if (!validReason) {
+      setError('Provide a cancellation reason of at least 5 characters.');
+      return;
+    }
     setLoading(true);
     setError(null);
     try {
       const res = await fetch(`/api/requests/${requestId}/cancel`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason: reason || undefined }),
+        body: JSON.stringify({ reason: cleanReason }),
       });
       if (!res.ok) {
         const json = await res.json();
         throw new Error(json.error || 'Failed to cancel');
       }
       setOpen(false);
+      setReason('');
       router.refresh();
       toast({ title: 'Request Cancelled', description: 'The transport request has been cancelled.', variant: 'success' });
     } catch (err) {
@@ -61,7 +68,13 @@ export function CancelRequestButton({ requestId, currentStatus, disabled }: Canc
   };
 
   return (
-    <Dialog open={open} onOpenChange={setOpen}>
+    <Dialog open={open} onOpenChange={(nextOpen) => {
+      setOpen(nextOpen);
+      if (!nextOpen) {
+        setReason('');
+        setError(null);
+      }
+    }}>
       <DialogTrigger asChild>
         <Button variant="secondary" size="sm" disabled={disabled || loading}>
           <XCircle className="h-4 w-4" /> Cancel Request
@@ -71,19 +84,29 @@ export function CancelRequestButton({ requestId, currentStatus, disabled }: Canc
         <DialogHeader>
           <DialogTitle>Cancel Transport Request</DialogTitle>
           <DialogDescription>
-            Are you sure you want to cancel this transport request? This action cannot be undone.
+            Cancelling ends the request workflow and any unissued allocation, trip and authority. Provide a reason for the audit trail.
           </DialogDescription>
         </DialogHeader>
         <div className="space-y-3 py-2">
           <label className="block text-sm font-medium text-ink-700">
-            Reason for cancellation
+            Reason for cancellation <span className="text-status-error-text" aria-hidden="true">*</span>
           </label>
           <textarea
             value={reason}
-            onChange={(e) => setReason(e.target.value)}
-            placeholder="Optional: provide a reason for cancellation..."
-            className="h-24 w-full rounded-[8px] border border-border bg-surface p-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600 resize-none"
+            onChange={(e) => {
+              setReason(e.target.value);
+              if (error) setError(null);
+            }}
+            maxLength={500}
+            required
+            aria-required="true"
+            placeholder="Explain why this request is being cancelled..."
+            className="h-24 w-full resize-none rounded-[8px] border border-border bg-surface p-3 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600"
           />
+          <div className="flex items-center justify-between gap-3 text-xs text-ink-500">
+            <span>Minimum 5 characters.</span>
+            <span>{reason.length}/500</span>
+          </div>
           {error && (
             <p className="text-xs text-status-error-text">{error}</p>
           )}
@@ -92,7 +115,14 @@ export function CancelRequestButton({ requestId, currentStatus, disabled }: Canc
           <Button variant="secondary" size="sm" onClick={() => setOpen(false)} disabled={loading}>
             Keep Request
           </Button>
-          <Button variant="primary" size="sm" onClick={handleCancel} loading={loading} className="bg-status-error-text hover:bg-red-700">
+          <Button
+            variant="primary"
+            size="sm"
+            onClick={handleCancel}
+            loading={loading}
+            disabled={loading || !validReason}
+            className="bg-status-error-text hover:bg-red-700"
+          >
             <XCircle className="h-4 w-4" /> Yes, Cancel Request
           </Button>
         </DialogFooter>
