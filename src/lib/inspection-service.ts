@@ -331,10 +331,44 @@ export async function completeOfficialInspection(input: InspectionInput) {
       }))));
 
       if (criticalFailure) {
-        queries.push(tx.update(vehicles).set({ status: 'maintenance', updatedAt: now }).where(and(
-          eq(vehicles.id, input.vehicleId),
-          eq(vehicles.tenantId, tenantId),
-        )));
+        queries.push(tx.execute(sql`
+          WITH candidate AS (
+            SELECT id, status
+            FROM vehicles
+            WHERE id = ${input.vehicleId}::uuid
+              AND tenant_id = ${tenantId}::uuid
+            FOR UPDATE
+          ),
+          transitioned AS (
+            UPDATE vehicles v
+            SET status = CASE
+                  WHEN c.status IN ('out_of_service', 'written_off', 'decommissioned') THEN c.status
+                  ELSE 'maintenance'
+                END,
+                updated_at = ${now}
+            FROM candidate c
+            WHERE v.id = c.id
+            RETURNING v.id, c.status AS previous_status, v.status AS new_status
+          ),
+          status_logged AS (
+            INSERT INTO vehicle_status_events (
+              vehicle_id, previous_status, new_status, reason,
+              changed_by_user_id, reference_entity_type, reference_entity_id
+            )
+            SELECT
+              id,
+              previous_status,
+              new_status,
+              ${`Critical defect in ${input.type} inspection`},
+              ${userId},
+              'inspection',
+              ${inspectionId}
+            FROM transitioned
+            WHERE previous_status <> new_status
+            RETURNING id
+          )
+          SELECT count(*)::int AS transitioned_count FROM transitioned
+        `));
         queries.push(tx.insert(maintenanceEvents).values({
           vehicleId: input.vehicleId,
           serviceDate: now.toISOString().slice(0, 10),
@@ -344,15 +378,6 @@ export async function completeOfficialInspection(input: InspectionInput) {
           notes: `Automatically escalated from inspection ${inspectionId}`,
           createdByUserId: userId,
           assignedToUserId: maintenanceAssignee,
-        }));
-        queries.push(tx.insert(vehicleStatusEvents).values({
-          vehicleId: input.vehicleId,
-          previousStatus: vehicle.status,
-          newStatus: 'maintenance',
-          reason: `Critical defect in ${input.type} inspection`,
-          changedByUserId: userId,
-          referenceEntityType: 'inspection',
-          referenceEntityId: inspectionId,
         }));
       }
 
