@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { and, count, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, count, eq, inArray, isNull, or, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import {
   cmsEnquiries,
@@ -24,6 +24,7 @@ export const PLATFORM_OPERATIONAL_PRESERVED = [
   'Subscriptions, packages and billing',
   'Payments and financial records',
   'CMS content, media and site settings',
+  'Open Platform Admin action-required notifications',
   'Backup and reset history',
   'Audit events',
 ] as const;
@@ -82,18 +83,23 @@ export async function previewPlatformOperationalReset(): Promise<PlatformOperati
   const enquiryIds = enquiryRows.map((row) => row.id);
   const demoRequestIds = demoRows.map((row) => row.id);
   const entityIds = [...enquiryIds, ...demoRequestIds];
-  const notificationRows = entityIds.length
-    ? await db
-        .select({ id: notifications.id })
-        .from(notifications)
-        .where(
-          and(
-            eq(notifications.workspace, 'platform_admin'),
-            inArray(notifications.entityId, entityIds),
-            inArray(notifications.entityType, ['public_enquiry', 'demo_request']),
-          ),
-        )
-    : [];
+  const disposableNotificationConditions = [
+    inArray(notifications.status, ['resolved', 'dismissed', 'archived']),
+  ];
+  if (entityIds.length) {
+    disposableNotificationConditions.push(
+      and(
+        inArray(notifications.entityId, entityIds),
+        inArray(notifications.entityType, ['public_enquiry', 'demo_request']),
+      )!,
+    );
+  }
+  const notificationRows = await db
+    .select({ id: notifications.id })
+    .from(notifications)
+    .where(
+      and(eq(notifications.workspace, 'platform_admin'), or(...disposableNotificationConditions)),
+    );
   const notificationIds = notificationRows.map((row) => row.id);
 
   let notificationDeliveryCount = 0;

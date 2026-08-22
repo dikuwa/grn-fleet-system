@@ -1,6 +1,13 @@
 import { and, eq, gt, isNull, lte, or } from 'drizzle-orm';
 import { getDb } from '@/db';
-import { notifications, roleAssignments, roles, tenantMemberships } from '@/db/schema';
+import {
+  notificationDismissals,
+  notificationReads,
+  notifications,
+  roleAssignments,
+  roles,
+  tenantMemberships,
+} from '@/db/schema';
 import { SystemRoles, WorkspaceIds } from '@/lib/workspaces';
 
 async function activePlatformResetRecipients() {
@@ -151,7 +158,7 @@ export async function notifyResetRequesterReady(input: {
   requesterUserId: string;
 }) {
   const db = getDb();
-  await db
+  const [readyNotification] = await db
     .insert(notifications)
     .values({
       tenantId: input.tenantId,
@@ -170,7 +177,28 @@ export async function notifyResetRequesterReady(input: {
       priority: 'high',
       dedupeKey: `tenant_reset_ready:${input.requestId}:${input.requesterUserId}`,
     })
-    .onConflictDoNothing();
+    .onConflictDoUpdate({
+      target: notifications.dedupeKey,
+      set: {
+        status: 'action_required',
+        isRead: false,
+        readAt: null,
+        resolvedAt: null,
+        dismissedAt: null,
+        archivedAt: null,
+      },
+    })
+    .returning({ id: notifications.id });
+  if (readyNotification) {
+    await Promise.all([
+      db
+        .delete(notificationReads)
+        .where(eq(notificationReads.notificationId, readyNotification.id)),
+      db
+        .delete(notificationDismissals)
+        .where(eq(notificationDismissals.notificationId, readyNotification.id)),
+    ]);
+  }
 }
 
 export async function resolveTenantResetReadyNotification(requestId: string) {

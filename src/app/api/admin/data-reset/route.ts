@@ -13,7 +13,11 @@ import {
 } from '@/lib/platform/reset-notifications';
 import { matchesTenantResetRequestPhrase, tenantExecutionResetPhrase } from '@/lib/reset-workflow';
 import { normalizeResetSpec, resetScopeForSpec } from '@/lib/reset-catalog';
-import { isResetApprovalExpired, resetApprovalExpiresAt } from '@/lib/reset-execution-guard';
+import {
+  isResetApprovalExpired,
+  isResetRequestBlocking,
+  resetApprovalExpiresAt,
+} from '@/lib/reset-execution-guard';
 import { resetExecutionOwner } from '@/lib/reset-workflow';
 
 const OPEN_STATUSES = ['draft', 'pending_review', 'approved', 'in_progress'] as const;
@@ -68,7 +72,8 @@ export async function GET(request: NextRequest) {
             { target: 'tenant' },
           );
           const metadata = (item.metadata ?? {}) as Record<string, unknown>;
-          const approvalExpired = isResetApprovalExpired(item.reviewedAt);
+          const approvalExpired =
+            item.status === 'approved' && isResetApprovalExpired(item.reviewedAt);
           const validation = (item.validationResults ?? {}) as Record<string, unknown>;
           const tenantExecutable =
             item.status === 'approved' &&
@@ -134,14 +139,18 @@ export async function POST(request: NextRequest) {
     }
 
     const db = getDb();
-    const [tenant, openRequest] = await Promise.all([
+    const [tenant, openRequests] = await Promise.all([
       db
         .select({ id: tenants.id, name: tenants.name, code: tenants.code })
         .from(tenants)
         .where(eq(tenants.id, auth.session.tenantId))
         .limit(1),
       db
-        .select({ id: tenantResetRequests.id, status: tenantResetRequests.status })
+        .select({
+          id: tenantResetRequests.id,
+          status: tenantResetRequests.status,
+          reviewedAt: tenantResetRequests.reviewedAt,
+        })
         .from(tenantResetRequests)
         .where(
           and(
@@ -149,10 +158,11 @@ export async function POST(request: NextRequest) {
             inArray(tenantResetRequests.status, [...OPEN_STATUSES]),
           ),
         )
-        .limit(1),
-    ]).then(([tenantRows, requestRows]) => [tenantRows[0], requestRows[0]] as const);
+        .orderBy(desc(tenantResetRequests.createdAt)),
+    ]).then(([tenantRows, requestRows]) => [tenantRows[0], requestRows] as const);
 
     if (!tenant) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
+    const openRequest = openRequests.find((item) => isResetRequestBlocking(item));
     if (openRequest) {
       return NextResponse.json(
         {

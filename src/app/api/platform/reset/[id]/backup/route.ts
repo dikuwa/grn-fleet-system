@@ -11,6 +11,7 @@ import { recordAuditEvent } from '@/lib/audit-event';
 import { normalizeResetSpec } from '@/lib/reset-catalog';
 import { resetExecutionOwner } from '@/lib/reset-workflow';
 import { notifyResetRequesterReady } from '@/lib/platform/reset-notifications';
+import { isResetApprovalExpired } from '@/lib/reset-execution-guard';
 
 export const maxDuration = 300;
 
@@ -35,6 +36,14 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       return NextResponse.json(
         { error: 'Approve the reset request before creating its recovery point' },
         { status: 400 },
+      );
+    if (isResetApprovalExpired(resetRequest.reviewedAt))
+      return NextResponse.json(
+        {
+          error:
+            'This approval expired. Run a fresh impact preview and renew Platform approval before creating a recovery point.',
+        },
+        { status: 409 },
       );
     const requestMetadata = (resetRequest.metadata ?? {}) as Record<string, unknown>;
     const resetSpec = normalizeResetSpec(requestMetadata.resetSpec, { target: 'tenant' });

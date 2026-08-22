@@ -11,12 +11,17 @@ import { Permissions } from '@/lib/permissions';
 import { getDb } from '@/db';
 import { tenantResetRequests, resetRequestSteps } from '@/db/schema/reset-requests';
 import { tenants, user } from '@/db/schema';
-import { eq } from 'drizzle-orm';
+import { and, eq, inArray, ne } from 'drizzle-orm';
 import { recordAuditEvent } from '@/lib/audit-event';
 import {
   notifyResetRequesterOutcome,
   resolvePlatformResetRequestNotification,
 } from '@/lib/platform/reset-notifications';
+import {
+  isResetApprovalExpired,
+  isResetRequestBlocking,
+  resetApprovalExpiresAt,
+} from '@/lib/reset-execution-guard';
 
 // ---------------------------------------------------------------------------
 // GET — Get reset request details with step history
@@ -86,7 +91,15 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
 
     return NextResponse.json({
       success: true,
-      data: { request, steps },
+      data: {
+        request: {
+          ...request,
+          approvalExpired:
+            request.status === 'approved' && isResetApprovalExpired(request.reviewedAt),
+          approvalExpiresAt: resetApprovalExpiresAt(request.reviewedAt)?.toISOString() ?? null,
+        },
+        steps,
+      },
     });
   } catch (error) {
     console.error('[Platform Reset Detail] GET failed:', error);
@@ -113,12 +126,12 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
     if (!action) {
       return NextResponse.json(
-        { error: 'action is required (submit, approve, reject)' },
+        { error: 'action is required (submit, approve, renew, reject)' },
         { status: 400 },
       );
     }
 
-    const validActions = ['submit', 'approve', 'reject'];
+    const validActions = ['submit', 'approve', 'renew', 'reject'];
     if (!validActions.includes(action)) {
       return NextResponse.json(
         { error: `Invalid action. Must be one of: ${validActions.join(', ')}` },
@@ -181,6 +194,74 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         if (reviewNotes) updates.reviewNotes = reviewNotes;
         break;
       }
+      case 'renew': {
+        if (current.status !== 'approved' || !isResetApprovalExpired(current.reviewedAt)) {
+          return NextResponse.json(
+            { error: 'Only an expired approval can be renewed' },
+            { status: 400 },
+          );
+        }
+        const validation = (current.validationResults ?? {}) as Record<string, unknown>;
+        const plannedAt =
+          typeof validation.plannedAt === 'string' ? new Date(validation.plannedAt) : null;
+        if (
+          typeof validation.fingerprint !== 'string' ||
+          !plannedAt ||
+          Number.isNaN(plannedAt.getTime()) ||
+          !current.reviewedAt ||
+          plannedAt <= current.reviewedAt
+        ) {
+          return NextResponse.json(
+            { error: 'Run and review a fresh impact preview before renewing approval' },
+            { status: 409 },
+          );
+        }
+        if (typeof reviewNotes !== 'string' || reviewNotes.trim().length < 10) {
+          return NextResponse.json(
+            { error: 'Add review notes of at least 10 characters before renewing approval' },
+            { status: 400 },
+          );
+        }
+        if (reviewNotes.trim() === current.reviewNotes?.trim()) {
+          return NextResponse.json(
+            { error: 'Add updated review notes for this fresh impact preview' },
+            { status: 400 },
+          );
+        }
+        const otherOpenRows = await db
+          .select({
+            id: tenantResetRequests.id,
+            status: tenantResetRequests.status,
+            reviewedAt: tenantResetRequests.reviewedAt,
+          })
+          .from(tenantResetRequests)
+          .where(
+            and(
+              eq(tenantResetRequests.tenantId, current.tenantId),
+              ne(tenantResetRequests.id, current.id),
+              inArray(tenantResetRequests.status, [
+                'draft',
+                'pending_review',
+                'approved',
+                'in_progress',
+              ]),
+            ),
+          );
+        if (otherOpenRows.some((item) => isResetRequestBlocking(item))) {
+          return NextResponse.json(
+            {
+              error:
+                'This tenant already has a newer active reset request. Review that request instead.',
+            },
+            { status: 409 },
+          );
+        }
+        updates.status = 'approved';
+        updates.reviewedByUserId = session.user.id;
+        updates.reviewedAt = new Date();
+        updates.reviewNotes = reviewNotes.trim();
+        break;
+      }
       case 'reject': {
         if (current.status !== 'pending_review') {
           return NextResponse.json(
@@ -210,13 +291,21 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       .returning();
 
     // Record audit event
+    const auditActionLabel =
+      action === 'submit'
+        ? 'submitted'
+        : action === 'approve'
+          ? 'approved'
+          : action === 'renew'
+            ? 'approval renewed'
+            : 'rejected';
     await recordAuditEvent({
       tenantId: current.tenantId,
       actorUserId: session.user.id,
       action: `reset_request.${action}`,
       entityType: 'reset_request',
       entityId: id,
-      summary: `Reset request ${action}d: ${current.status} → ${updates.status}`,
+      summary: `Reset request ${auditActionLabel}: ${current.status} → ${updates.status}`,
       after: {
         previousStatus: current.status,
         newStatus: updates.status,
@@ -225,11 +314,11 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       },
     });
 
-    if (action === 'approve' || action === 'reject') {
+    if (action === 'approve' || action === 'renew' || action === 'reject') {
       const tenantOrigin =
         (current.metadata as Record<string, unknown> | null)?.createdFrom === 'tenant_admin';
       await resolvePlatformResetRequestNotification(id);
-      if (tenantOrigin) {
+      if (tenantOrigin && action !== 'renew') {
         await notifyResetRequesterOutcome({
           requestId: id,
           tenantId: current.tenantId,
