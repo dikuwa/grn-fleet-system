@@ -2,7 +2,13 @@ import { randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import { and, desc, eq, isNotNull } from 'drizzle-orm';
 import { getDb } from '@/db';
-import { tripAuthorities, tripExpenses, tripProgressEntries, trips } from '@/db/schema/trips';
+import {
+  tripAuthorities,
+  tripExpenses,
+  tripIncidents,
+  tripProgressEntries,
+  trips,
+} from '@/db/schema/trips';
 import { employees } from '@/db/schema/people';
 import { auditEvents } from '@/db/schema/audit';
 import { hasPermission, requireDashboardAction, requireRequestAuth } from '@/lib/auth-helpers';
@@ -145,6 +151,61 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         .limit(1),
     ]);
     if (!context) return NextResponse.json({ error: 'Trip not found' }, { status: 404 });
+
+    // A committed offline mutation must remain recoverable after the trip or
+    // authority advances. Scope recovery to the already-authorised trip and to
+    // the same recorder so a sync token cannot be used to browse another user's
+    // operation. New writes continue through the live lifecycle checks below.
+    if (clientSyncId) {
+      if (action === 'progress') {
+        const [existing] = await db
+          .select()
+          .from(tripProgressEntries)
+          .where(and(
+            eq(tripProgressEntries.tenantId, session.tenantId),
+            eq(tripProgressEntries.tripId, id),
+            eq(tripProgressEntries.clientSyncId, clientSyncId),
+            eq(tripProgressEntries.createdByUserId, session.user.id),
+          ))
+          .limit(1);
+        if (existing) {
+          return NextResponse.json({ success: true, data: existing, idempotentReplay: true });
+        }
+      } else if (action === 'expense') {
+        const [existing] = await db
+          .select()
+          .from(tripExpenses)
+          .where(and(
+            eq(tripExpenses.tenantId, session.tenantId),
+            eq(tripExpenses.tripId, id),
+            eq(tripExpenses.clientSyncId, clientSyncId),
+            eq(tripExpenses.enteredByUserId, session.user.id),
+          ))
+          .limit(1);
+        if (existing) {
+          return NextResponse.json({ success: true, data: existing, idempotentReplay: true });
+        }
+      } else {
+        const [existing] = await db
+          .select()
+          .from(tripIncidents)
+          .where(and(
+            eq(tripIncidents.tenantId, session.tenantId),
+            eq(tripIncidents.tripId, id),
+            eq(tripIncidents.clientSyncId, clientSyncId),
+            eq(tripIncidents.reportedByUserId, session.user.id),
+          ))
+          .limit(1);
+        if (existing) {
+          return NextResponse.json({
+            success: true,
+            data: existing,
+            idempotentReplay: true,
+            acceptedLateOfflineIncident: false,
+          });
+        }
+      }
+    }
 
     const activeForJourney = ['in_progress', 'return_due'].includes(context.tripStatus);
     const acceptedLateOfflineIncident =
