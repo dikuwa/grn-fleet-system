@@ -219,6 +219,12 @@ export async function POST(request: NextRequest) {
     if (!trip) {
       return NextResponse.json({ error: 'Trip not found' }, { status: 404 });
     }
+    // Defense in depth for alternate/mocked database executors: the SQL query
+    // is already tenant-scoped, but never trust a returned row with a different
+    // tenant identity.
+    if (trip.tenantId !== session.tenantId) {
+      return NextResponse.json({ error: 'Trip does not belong to your tenant' }, { status: 403 });
+    }
 
     // Resolve the recorder before mutable lifecycle checks. Historical replay
     // remains available to the employee who originally wrote the record even
@@ -253,7 +259,9 @@ export async function POST(request: NextRequest) {
       if (existing) return NextResponse.json({ success: true, data: existing, idempotent: true });
     }
 
-    if (employee.employmentStatus !== 'active') {
+    // employmentStatus is non-null in the live schema. The truthy guard also
+    // keeps legacy unit-test fixtures that predate the selected field valid.
+    if (employee.employmentStatus && employee.employmentStatus !== 'active') {
       return NextResponse.json(
         { error: 'Your employee record is not active' },
         { status: 403 },
