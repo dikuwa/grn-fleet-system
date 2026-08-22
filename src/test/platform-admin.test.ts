@@ -506,6 +506,9 @@ describe('Trip Logs API — POST /api/trip-logs', () => {
     mockDb.pushResult([trip]);
     // Authenticated employee lookup
     mockDb.pushResult([{ id: 'employee-1' }]);
+    // Chronology neighbor lookups: no previous or next journey day.
+    mockDb.pushResult([]);
+    mockDb.pushResult([]);
     // Atomic log insert
     mockDb.pushResult([newEntry]);
     // Atomic audit insert
@@ -526,6 +529,87 @@ describe('Trip Logs API — POST /api/trip-logs', () => {
     expect(res.status).toBe(201);
     expect(json.success).toBe(true);
     expect(json.data.origin).toBe('Rundu');
+  });
+
+  it('rejects an odometer below the previous journey day', async () => {
+    const { requireRequestAuth, requirePermission } = await import('@/lib/auth-helpers');
+    const { getDb } = await import('@/db');
+    vi.mocked(requireRequestAuth).mockResolvedValue(MOCK_SESSION as never);
+    vi.mocked(requirePermission).mockResolvedValue(true as never);
+
+    const mockDb = createMockDb();
+    mockDb.pushResult([{ id: 'trip-1', tenantId: 'platform-tenant', status: 'in_progress', driverEmployeeId: 'employee-1' }]);
+    mockDb.pushResult([{ id: 'employee-1' }]);
+    mockDb.pushResult([{ logDate: new Date('2026-07-14T00:00:00+02:00'), odometerOut: 1000, odometerIn: 1050 }]);
+    mockDb.pushResult([]);
+    vi.mocked(getDb).mockReturnValue(mockDb as never);
+
+    const req = {
+      url: 'http://localhost:3000/api/trip-logs',
+      method: 'POST',
+      json: async () => ({ tripId: 'trip-1', logDate: '2026-07-15', odometerOut: 1040 }),
+    };
+    const res = await route.POST(req as unknown as Request);
+    const json = await res.json();
+
+    expect(res.status).toBe(422);
+    expect(json.error).toContain('previous journey day');
+  });
+
+  it('rejects a backfilled odometer above the next recorded journey day', async () => {
+    const { requireRequestAuth, requirePermission } = await import('@/lib/auth-helpers');
+    const { getDb } = await import('@/db');
+    vi.mocked(requireRequestAuth).mockResolvedValue(MOCK_SESSION as never);
+    vi.mocked(requirePermission).mockResolvedValue(true as never);
+
+    const mockDb = createMockDb();
+    mockDb.pushResult([{ id: 'trip-1', tenantId: 'platform-tenant', status: 'in_progress', driverEmployeeId: 'employee-1' }]);
+    mockDb.pushResult([{ id: 'employee-1' }]);
+    mockDb.pushResult([]);
+    mockDb.pushResult([{ logDate: new Date('2026-07-16T00:00:00+02:00'), odometerOut: 1100, odometerIn: 1140 }]);
+    vi.mocked(getDb).mockReturnValue(mockDb as never);
+
+    const req = {
+      url: 'http://localhost:3000/api/trip-logs',
+      method: 'POST',
+      json: async () => ({ tripId: 'trip-1', logDate: '2026-07-15', odometerOut: 1110 }),
+    };
+    const res = await route.POST(req as unknown as Request);
+    const json = await res.json();
+
+    expect(res.status).toBe(422);
+    expect(json.error).toContain('next recorded journey day');
+  });
+
+  it('accepts a backfilled odometer between neighboring journey days', async () => {
+    const { requireRequestAuth, requirePermission } = await import('@/lib/auth-helpers');
+    const { getDb } = await import('@/db');
+    vi.mocked(requireRequestAuth).mockResolvedValue(MOCK_SESSION as never);
+    vi.mocked(requirePermission).mockResolvedValue(true as never);
+
+    const mockDb = createMockDb();
+    const trip = { id: 'trip-1', tenantId: 'platform-tenant', status: 'in_progress', driverEmployeeId: 'employee-1' };
+    const newEntry = { id: 'log-backfill', tripId: 'trip-1', logDate: new Date('2026-07-15'), odometerOut: 1060, odometerIn: 1090, origin: null, destination: null, distanceKm: 30, remarks: null, isSynced: true, syncState: 'synced', createdAt: new Date() };
+    mockDb.pushResult([trip]);
+    mockDb.pushResult([{ id: 'employee-1' }]);
+    mockDb.pushResult([{ logDate: new Date('2026-07-14T00:00:00+02:00'), odometerOut: 1000, odometerIn: 1050 }]);
+    mockDb.pushResult([{ logDate: new Date('2026-07-16T00:00:00+02:00'), odometerOut: 1100, odometerIn: 1140 }]);
+    mockDb.pushResult([newEntry]);
+    mockDb.pushResult([]);
+    mockDb.pushResult([newEntry]);
+    vi.mocked(getDb).mockReturnValue(mockDb as never);
+
+    const req = {
+      url: 'http://localhost:3000/api/trip-logs',
+      method: 'POST',
+      json: async () => ({ tripId: 'trip-1', logDate: '2026-07-15', odometerOut: 1060, odometerIn: 1090 }),
+    };
+    const res = await route.POST(req as unknown as Request);
+    const json = await res.json();
+
+    expect(res.status).toBe(201);
+    expect(json.success).toBe(true);
+    expect(json.data.odometerOut).toBe(1060);
   });
 
   it('rejects cross-tenant trip access', async () => {
