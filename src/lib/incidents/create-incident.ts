@@ -11,6 +11,10 @@ import { createScopedNotifications, resolveActiveRoleRecipients } from '@/lib/no
 import { SystemRoles, WorkspaceIds } from '@/lib/workspaces';
 import { generateDocument } from '@/lib/document-generator';
 import { runAtomicMutations } from '@/lib/db-atomic';
+import {
+  incidentRequiresVehicleRestriction,
+  normalizedVehicleSafety,
+} from '@/lib/incidents/incident-safety';
 
 export type CreateIncidentInput = {
   tripId: string;
@@ -190,8 +194,12 @@ export async function createIncident(input: CreateIncidentInput): Promise<Create
     .limit(1);
   if (!trip) throw new Error('Trip not found in your organisation');
 
-  const vehicleSafe = input.vehicleSafe ?? input.safeToContinue;
-  const requiresVehicleRestriction = input.severity === 'critical' || vehicleSafe === false;
+  const vehicleSafe = normalizedVehicleSafety(input.vehicleSafe);
+  const requiresVehicleRestriction = incidentRequiresVehicleRestriction({
+    severity: input.severity,
+    vehicleDamage: input.vehicleDamage,
+    vehicleSafe,
+  });
   const restrictedVehicleStatus = STRONGER_VEHICLE_STATUSES.has(trip.vehicleStatus)
     ? trip.vehicleStatus
     : 'maintenance';
@@ -277,12 +285,14 @@ export async function createIncident(input: CreateIncidentInput): Promise<Create
           after: {
             tripId: input.tripId,
             severity: input.severity,
+            vehicleDamage: input.vehicleDamage,
             vehicleSafe,
+            safeToContinue: input.safeToContinue,
             continuationState: input.continuationState,
             detailsRequired: needsMvaDetails,
             maintenanceAssigneeUserId,
             journeyHeldForCriticalIncident: input.severity === 'critical',
-            journeyHeldForSafetyIncident: requiresVehicleRestriction,
+            vehicleRestricted: requiresVehicleRestriction,
             returnReconciliationInvalidated: invalidateReturnReconciliation,
           },
         }),
@@ -331,7 +341,7 @@ export async function createIncident(input: CreateIncidentInput): Promise<Create
             vehicleId: trip.vehicleId,
             tripId: input.tripId,
             severity: input.severity === 'critical' ? 'critical' : 'major',
-            description: `${input.severity === 'critical' ? 'Critical incident' : 'Unsafe vehicle incident'} ${officialNumber}: ${input.description.slice(0, 200)}`,
+            description: `${input.severity === 'critical' ? 'Critical incident' : 'Vehicle safety incident'} ${officialNumber}: ${input.description.slice(0, 200)}`,
             isBlocking: true,
             reportedByUserId: input.reportedByUserId,
             assignedToUserId: maintenanceAssigneeUserId,
@@ -341,7 +351,7 @@ export async function createIncident(input: CreateIncidentInput): Promise<Create
             serviceDate,
             serviceOdometer: input.odometerReading ?? null,
             serviceType: 'repair',
-            description: `Follow-up from ${input.severity === 'critical' ? 'critical' : 'unsafe-vehicle'} incident ${officialNumber}. Vehicle must be inspected and cleared before returning to service.`,
+            description: `Follow-up from ${input.severity === 'critical' ? 'critical' : 'vehicle-safety'} incident ${officialNumber}. Vehicle must be inspected and cleared before returning to service.`,
             createdByUserId: input.reportedByUserId,
             assignedToUserId: maintenanceAssigneeUserId,
           }),
@@ -353,7 +363,7 @@ export async function createIncident(input: CreateIncidentInput): Promise<Create
               vehicleId: trip.vehicleId,
               previousStatus: trip.vehicleStatus,
               newStatus: restrictedVehicleStatus,
-              reason: `${input.severity === 'critical' ? 'Critical' : 'Unsafe vehicle'} incident ${officialNumber} — vehicle restricted`,
+              reason: `${input.severity === 'critical' ? 'Critical' : 'Vehicle safety'} incident ${officialNumber} — vehicle restricted`,
               changedByUserId: input.reportedByUserId,
               referenceEntityType: 'trip_incident',
               referenceEntityId: incidentId,
