@@ -1,4 +1,5 @@
-import { pgTable, uuid, text, timestamp, boolean, integer, jsonb, pgEnum, index } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
+import { pgTable, uuid, text, timestamp, boolean, integer, jsonb, pgEnum, index, uniqueIndex } from 'drizzle-orm/pg-core';
 import { tenants } from './tenants';
 
 /**
@@ -80,6 +81,14 @@ export const tenantResetRequests = pgTable('tenant_reset_requests', {
 }, (table) => [
   index('tenant_reset_requests_tenant_idx').on(table.tenantId),
   index('tenant_reset_requests_status_idx').on(table.status),
+  // Database-backed creation slot. Approved rows are intentionally excluded:
+  // approvals expire and remain renewable/history-visible while a new request
+  // may be created after expiry. Application checks continue to block a fresh,
+  // unexpired approval; this index closes simultaneous draft/pending/in-progress
+  // creation races for both tenant and platform request paths.
+  uniqueIndex('tenant_reset_requests_creation_slot_uidx')
+    .on(table.tenantId)
+    .where(sql`${table.status} in ('draft', 'pending_review', 'in_progress')`),
 ]);
 
 /**
