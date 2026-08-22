@@ -104,11 +104,6 @@ async function deliverIncidentSideEffects(
       entityType: 'trip_incident',
       entityId: incident.id,
       actionUrl: `/dashboard/trips/${input.tripId}`,
-      // Incident reporting is available to both Driver and Transport Admin
-      // workspaces. Keep the reporter acknowledgement workspace-neutral so the
-      // same user can see it in whichever authorised workspace submitted it;
-      // the notification feed still strips action URLs that the active
-      // workspace cannot access.
       workspace: null,
       priority: 'high',
     }),
@@ -136,10 +131,6 @@ async function deliverIncidentSideEffects(
     }),
   ];
 
-  // Late incident reporting is legitimate even after operational reconciliation.
-  // Preserve the previously issued completion as historical evidence and let
-  // the document generator refresh the pending draft or allocate the next
-  // completion version for the newly disclosed safety record.
   if (tripStatus === 'closed') {
     effects.push(
       generateDocument({
@@ -225,6 +216,11 @@ export async function createIncident(input: CreateIncidentInput): Promise<Create
   const sourceChannel = syncId ? 'offline_sync' : 'web';
   const serviceDate = input.occurredAt.toISOString().split('T')[0];
   const numberInjured = input.injuries ? Math.max(1, input.numberInjured || 1) : 0;
+  const invalidateReturnReconciliation = Boolean(
+    syncId &&
+      input.offlineCreatedAt &&
+      ['return_inspection', 'closure_review'].includes(trip.status),
+  );
 
   try {
     await runAtomicMutations((tx) => {
@@ -287,9 +283,35 @@ export async function createIncident(input: CreateIncidentInput): Promise<Create
             maintenanceAssigneeUserId,
             journeyHeldForCriticalIncident: input.severity === 'critical',
             journeyHeldForSafetyIncident: requiresVehicleRestriction,
+            returnReconciliationInvalidated: invalidateReturnReconciliation,
           },
         }),
       ];
+
+      if (invalidateReturnReconciliation) {
+        mutations.push(
+          tx
+            .update(tripAuthorities)
+            .set({
+              data: sql`coalesce(${tripAuthorities.data}, '{}'::jsonb) || jsonb_build_object(
+                'returnDeclaration',
+                coalesce(${tripAuthorities.data}->'returnDeclaration', '{}'::jsonb) || jsonb_build_object(
+                  'reconciledAt', null,
+                  'lateIncidentRequiresReconciliation', true,
+                  'lateIncidentId', ${incidentId},
+                  'lateIncidentSyncId', ${syncId}
+                )
+              )`,
+              updatedAt: new Date(),
+            })
+            .where(
+              and(
+                eq(tripAuthorities.tripId, input.tripId),
+                eq(tripAuthorities.tenantId, input.tenantId),
+              ),
+            ),
+        );
+      }
 
       if (requiresVehicleRestriction) {
         mutations.push(
