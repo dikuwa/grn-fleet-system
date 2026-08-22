@@ -479,7 +479,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       emergencyServicesContacted: body.emergencyServicesContacted === true,
       safeToContinue: requestedContinuation,
       continuationState,
-      vehicleSafe: typeof body.vehicleSafe === 'boolean' ? body.vehicleSafe : requestedContinuation,
+      vehicleSafe: typeof body.vehicleSafe === 'boolean' ? body.vehicleSafe : null,
       passengerSafe: body.passengerSafe !== false,
       numberInjured: body.injuries === true ? Math.max(1, Number(body.numberInjured) || 1) : 0,
       detailsRequired: body.rapidReport === true,
