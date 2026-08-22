@@ -13,6 +13,7 @@ import { createScopedNotifications, resolveActiveRoleRecipients } from '@/lib/no
 import { SystemRoles, WorkspaceIds } from '@/lib/workspaces';
 import { createIncident } from '@/lib/incidents/create-incident';
 import { getIncidentCategory } from '@/lib/incidents/categories';
+import { canAcceptLateOfflineIncident } from '@/lib/incidents/offline-incident-window';
 
 const progressTypes = [
   'official_stop',
@@ -94,6 +95,19 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       return NextResponse.json({ error: 'Unsupported operation' }, { status: 400 });
     }
 
+    const clientSyncId =
+      typeof body.clientSyncId === 'string' && body.clientSyncId.trim()
+        ? body.clientSyncId.trim()
+        : null;
+    const occurredAt = body.occurredAt ? new Date(String(body.occurredAt)) : new Date();
+    if (Number.isNaN(occurredAt.getTime()) || occurredAt.getTime() > Date.now() + 5 * 60 * 1000) {
+      return NextResponse.json({ error: 'A valid occurrence date and time is required' }, { status: 422 });
+    }
+    const offlineCreatedAt = optionalDate(body.offlineCreatedAt);
+    if (body.offlineCreatedAt && !offlineCreatedAt) {
+      return NextResponse.json({ error: 'Offline creation time is invalid' }, { status: 422 });
+    }
+
     const db = getDb();
     const canManage = await hasPermission(session, Permissions.TRIP_MANAGE);
     const conditions = [eq(trips.id, id), eq(trips.tenantId, session.tenantId)];
@@ -116,6 +130,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       db
         .select({
           tripStatus: trips.status,
+          startedAt: trips.startedAt,
+          returnedAt: trips.returnedAt,
+          closedAt: trips.closedAt,
           authorityId: tripAuthorities.id,
           authorityStatus: tripAuthorities.status,
           vehicleId: trips.vehicleId,
@@ -130,8 +147,29 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (!context) return NextResponse.json({ error: 'Trip not found' }, { status: 404 });
 
     const activeForJourney = ['in_progress', 'return_due'].includes(context.tripStatus);
-    if ((action === 'progress' || action === 'incident') && !activeForJourney) {
+    const acceptedLateOfflineIncident =
+      action === 'incident' &&
+      !activeForJourney &&
+      canAcceptLateOfflineIncident({
+        tripStatus: context.tripStatus,
+        startedAt: context.startedAt,
+        returnedAt: context.returnedAt,
+        closedAt: context.closedAt,
+        occurredAt,
+        offlineCreatedAt,
+        clientSyncId,
+      });
+    if (action === 'progress' && !activeForJourney) {
       return NextResponse.json({ error: 'This trip is no longer active for journey updates' }, { status: 409 });
+    }
+    if (action === 'incident' && !activeForJourney && !acceptedLateOfflineIncident) {
+      return NextResponse.json(
+        {
+          error:
+            'This trip is no longer active for new incident reports. A saved offline incident is accepted only when its occurrence and local draft timestamps both fall within the recorded journey window.',
+        },
+        { status: 409 },
+      );
     }
     if (action === 'progress' && context.authorityStatus === 'incident_reported') {
       return NextResponse.json(
@@ -144,19 +182,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     }
     if (action === 'expense' && !['in_progress', 'return_due', 'closure_review'].includes(context.tripStatus)) {
       return NextResponse.json({ error: 'Expenses are unavailable for this trip status' }, { status: 409 });
-    }
-
-    const clientSyncId =
-      typeof body.clientSyncId === 'string' && body.clientSyncId.trim()
-        ? body.clientSyncId.trim()
-        : null;
-    const occurredAt = body.occurredAt ? new Date(String(body.occurredAt)) : new Date();
-    if (Number.isNaN(occurredAt.getTime()) || occurredAt.getTime() > Date.now() + 5 * 60 * 1000) {
-      return NextResponse.json({ error: 'A valid occurrence date and time is required' }, { status: 422 });
-    }
-    const offlineCreatedAt = optionalDate(body.offlineCreatedAt);
-    if (body.offlineCreatedAt && !offlineCreatedAt) {
-      return NextResponse.json({ error: 'Offline creation time is invalid' }, { status: 422 });
     }
 
     if (action === 'progress') {
@@ -421,7 +446,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       reportedByUserId: session.user.id,
     });
     return NextResponse.json(
-      { success: true, data: result.incident, idempotentReplay: result.idempotent === true },
+      {
+        success: true,
+        data: result.incident,
+        idempotentReplay: result.idempotent === true,
+        acceptedLateOfflineIncident,
+      },
       { status: result.idempotent ? 200 : 201 },
     );
   } catch (error) {
