@@ -246,7 +246,8 @@ export default async function RequestDetailPage({ params }: PageProps) {
       db
         .select({
           id: workflowInstances.id,
-          assignedUserId: workflowSteps.assignedUserId,
+          currentAssignedUserId: workflowInstances.currentAssignedUserId,
+          definitionAssignedUserId: workflowSteps.assignedUserId,
           requiredPermission: workflowSteps.requiredPermission,
         })
         .from(workflowInstances)
@@ -271,9 +272,11 @@ export default async function RequestDetailPage({ params }: PageProps) {
         )
         .limit(1),
     ]);
+    const effectiveAssignedUserId =
+      assignedApproval?.currentAssignedUserId ?? assignedApproval?.definitionAssignedUserId ?? null;
     const canReviewApproval = Boolean(
       assignedApproval &&
-        (assignedApproval.assignedUserId === session.user.id ||
+        (effectiveAssignedUserId === session.user.id ||
           (assignedApproval.requiredPermission &&
             permissionCodes.includes(assignedApproval.requiredPermission as PermissionCode))),
     );
