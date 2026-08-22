@@ -23,6 +23,44 @@ import {
 
 export type BackupSource = 'manual' | 'scheduled' | 'pre_reset';
 
+const configuredBackupTimeout = Number(process.env.RESET_BACKUP_TIMEOUT_MS);
+export const BACKUP_STORAGE_TIMEOUT_MS = Number.isFinite(configuredBackupTimeout)
+  ? Math.min(300_000, Math.max(5_000, configuredBackupTimeout))
+  : 120_000;
+export const STALE_BACKUP_AFTER_MS = BACKUP_STORAGE_TIMEOUT_MS + 30_000;
+
+export async function withinBackupDeadline<T>(operation: PromiseLike<T>, deadlineAt: number) {
+  const remainingMs = deadlineAt - Date.now();
+  if (remainingMs <= 0) throw new Error('Recovery point creation exceeded its safety deadline.');
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(
+      () => reject(new Error('Recovery point creation exceeded its safety deadline.')),
+      remainingMs,
+    );
+  });
+  try {
+    return await Promise.race([Promise.resolve(operation), timeout]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
+
+export async function failStaleCreatingBackups(now = new Date()) {
+  const db = getDb();
+  const cutoff = new Date(now.getTime() - STALE_BACKUP_AFTER_MS);
+  return db
+    .update(platformBackups)
+    .set({
+      status: 'failed',
+      failureReason:
+        'Recovery point creation exceeded the storage deadline. Retry to create a fresh recovery point.',
+      updatedAt: now,
+    })
+    .where(and(eq(platformBackups.status, 'creating'), lte(platformBackups.createdAt, cutoff)))
+    .returning({ id: platformBackups.id });
+}
+
 interface CreateBackupInput {
   tenantId: string;
   source: BackupSource;
@@ -72,6 +110,7 @@ export async function createTenantOperationalBackup(input: CreateBackupInput) {
   }
 
   const db = getDb();
+  await failStaleCreatingBackups();
   const [tenant] = await db
     .select({ id: tenants.id, name: tenants.name, code: tenants.code })
     .from(tenants)
@@ -108,30 +147,41 @@ export async function createTenantOperationalBackup(input: CreateBackupInput) {
       createdByUserId: input.createdByUserId ?? null,
     })
     .returning();
+  const deadlineAt = Date.now() + BACKUP_STORAGE_TIMEOUT_MS;
 
   try {
     const plan =
       input.plan ??
-      (await buildResetPlan(db as unknown as ResetDb, {
-        tenantId: tenant.id,
-        mode: 'operational',
-        dryRun: false,
-        timestamp: new Date().toISOString().replace(/[:.]/g, '-'),
-      }));
+      (await withinBackupDeadline(
+        buildResetPlan(db as unknown as ResetDb, {
+          tenantId: tenant.id,
+          mode: 'operational',
+          dryRun: false,
+          timestamp: new Date().toISOString().replace(/[:.]/g, '-'),
+        }),
+        deadlineAt,
+      ));
 
     const tables: BackupPayload['tables'] = [];
     let recordCount = 0;
     for (const step of plan.steps) {
-      if (input.advancedPlan && !input.advancedPlan.resetSpec.categories.includes('operations')) break;
+      if (input.advancedPlan && !input.advancedPlan.resetSpec.categories.includes('operations'))
+        break;
       if (step.before === 0) continue;
-      const rows = await exportRows(db as unknown as ResetDb, plan, step.table);
+      const rows = await withinBackupDeadline(
+        exportRows(db as unknown as ResetDb, plan, step.table),
+        deadlineAt,
+      );
       if (!rows.length) continue;
       recordCount += rows.length;
       tables.push({ table: step.table, label: step.label, rows });
     }
 
     if (input.advancedPlan) {
-      const advancedTables = await exportAdvancedResetRows(input.advancedPlan);
+      const advancedTables = await withinBackupDeadline(
+        exportAdvancedResetRows(input.advancedPlan),
+        deadlineAt,
+      );
       for (const entry of advancedTables) {
         const existing = tables.find((table) => table.table === entry.table);
         if (existing) {
@@ -167,7 +217,11 @@ export async function createTenantOperationalBackup(input: CreateBackupInput) {
       .toLowerCase()
       .replace(/[^a-z0-9_-]/g, '-');
     const storageKey = `backups/tenants/${safeCode}/${snapshot.id}.json`;
-    const upload = await uploadFile(buffer, storageKey, { contentType: 'application/json' });
+    const remainingStorageMs = Math.max(1, deadlineAt - Date.now());
+    const upload = await uploadFile(buffer, storageKey, {
+      contentType: 'application/json',
+      timeoutMs: remainingStorageMs,
+    });
 
     const [ready] = await db
       .update(platformBackups)
@@ -230,6 +284,7 @@ export async function createTenantOperationalBackup(input: CreateBackupInput) {
 
 export async function listBackups(limit = 100) {
   const db = getDb();
+  await failStaleCreatingBackups();
   return db
     .select({
       id: platformBackups.id,
@@ -311,6 +366,7 @@ async function bodyToText(body: ReadableStream | null) {
 export async function readBackupPayload(
   backupId: string,
 ): Promise<{ backup: typeof platformBackups.$inferSelect; payload: BackupPayload }> {
+  const deadlineAt = Date.now() + BACKUP_STORAGE_TIMEOUT_MS;
   const db = getDb();
   const [backup] = await db
     .select()
@@ -319,14 +375,20 @@ export async function readBackupPayload(
     .limit(1);
   if (!backup || backup.status !== 'ready' || !backup.storageKey)
     throw new Error('Backup is not ready');
-  const file = await downloadFile(backup.storageKey);
+  const file = await withinBackupDeadline(
+    downloadFile(backup.storageKey, { timeoutMs: BACKUP_STORAGE_TIMEOUT_MS }),
+    deadlineAt,
+  );
   if (!file) throw new Error('Backup archive could not be found in durable storage');
-  const text = await bodyToText(file.body);
+  const text = await withinBackupDeadline(bodyToText(file.body), deadlineAt);
   const checksum = createHash('sha256').update(Buffer.from(text, 'utf8')).digest('hex');
   if (backup.checksum && checksum !== backup.checksum)
     throw new Error('Backup integrity check failed: checksum mismatch');
   const payload = JSON.parse(text) as BackupPayload;
-  if (![1, 2].includes(payload.formatVersion) || payload.type !== 'govfleet-tenant-operational-backup')
+  if (
+    ![1, 2].includes(payload.formatVersion) ||
+    payload.type !== 'govfleet-tenant-operational-backup'
+  )
     throw new Error('Unsupported backup format');
   if (backup.tenantId && payload.tenant.id !== backup.tenantId)
     throw new Error('Backup tenant identity mismatch');

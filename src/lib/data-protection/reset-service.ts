@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { eq, getTableName } from 'drizzle-orm';
+import { eq, getTableName, sql } from 'drizzle-orm';
 import { getDb, schema } from '@/db';
 import { platformBackups } from '@/db/schema/data-protection';
 import { tenantResetRequests, resetRequestSteps } from '@/db/schema/reset-requests';
@@ -158,6 +158,14 @@ async function executeResetPlanAtomically(
   await runAtomicMutations((executor) => {
     const mutations: unknown[] = [];
     if (resetSpec.categories.includes('operations')) {
+      // Closed-trip financial rows are immutable during ordinary application use.
+      // A governed reset is the sole exception: approval, a matching dry run,
+      // typed confirmation and a verified recovery point are all checked before
+      // this transaction begins. set_config(..., true) keeps the exception local
+      // to this atomic transaction and cannot leak into later requests.
+      mutations.push(
+        executor.execute(sql`SELECT set_config('govfleet.governed_reset', 'on', true)`),
+      );
       for (const step of OPERATIONAL_DELETE_STEPS) {
         if (!plan.steps.find((candidate) => candidate.table === step.table)?.before) continue;
         const condition = resolveStepCondition(step, plan.ids, plan.tenantId);
@@ -367,7 +375,11 @@ export async function executeApprovedTenantOperationalReset(input: {
       completedAt,
       executionTimeMs: Date.now() - startedAt,
       results: {
-        dryRunSummary: { ...freshPreview.dryRunSummary, total: totalRemoved },
+        // Keep the reviewed impact immutable. A failed atomic plan removes zero
+        // rows, but must not rewrite its reviewed impact to look like a zero-row
+        // request in history.
+        dryRunSummary: freshPreview.dryRunSummary,
+        totalRemoved,
         steps: outcomes,
         preserved: freshPreview.preserved,
         review: freshPreview.review,

@@ -134,6 +134,7 @@ export default function PlatformResetPage() {
   });
   const [loading, setLoading] = useState(true);
   const [processingId, setProcessingId] = useState<string | null>(null);
+  const [recoveryPointId, setRecoveryPointId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
   const [selected, setSelected] = useState<ResetRequest | null>(null);
@@ -337,6 +338,7 @@ export default function PlatformResetPage() {
 
   const createRecoveryPoint = async (request: ResetRequest) => {
     setProcessingId(request.id);
+    setRecoveryPointId(request.id);
     try {
       const res = await fetch(`/api/platform/reset/${request.id}/backup`, { method: 'POST' });
       const json = await res.json();
@@ -358,6 +360,7 @@ export default function PlatformResetPage() {
         variant: 'error',
       });
     } finally {
+      setRecoveryPointId(null);
       setProcessingId(null);
     }
   };
@@ -801,9 +804,9 @@ export default function PlatformResetPage() {
                     <div className="border-border overflow-hidden rounded-[8px] border">
                       {preview.steps
                         .filter((step) => step.planned > 0)
-                        .map((step) => (
+                        .map((step, index) => (
                           <div
-                            key={step.table}
+                            key={`${step.table}-${index}`}
                             className="border-border flex items-center justify-between gap-3 border-b px-3 py-2.5 last:border-b-0"
                           >
                             <span className="text-ink-700 text-sm">{step.label}</span>
@@ -930,6 +933,20 @@ export default function PlatformResetPage() {
                   <div className="bg-status-error-bg text-status-error-text rounded-[8px] p-3">
                     <p className="text-sm font-semibold">Previous failure</p>
                     <p className="mt-1 text-xs">{selected.failureReason}</p>
+                  </div>
+                )}
+                {recoveryPointId === selected.id && (
+                  <div
+                    className="border-status-info-text/20 bg-status-info-bg/20 text-status-info-text rounded-[8px] border p-3"
+                    role="status"
+                    aria-live="polite"
+                  >
+                    <p className="text-sm font-semibold">Creating and verifying recovery point…</p>
+                    <p className="mt-1 text-xs">
+                      Archiving the reviewed data to durable storage. This operation has a
+                      two-minute storage deadline; execution remains locked until verification
+                      succeeds.
+                    </p>
                   </div>
                 )}
               </div>
