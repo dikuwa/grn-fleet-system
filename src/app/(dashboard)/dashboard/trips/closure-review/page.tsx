@@ -13,7 +13,7 @@ import { vehicles } from '@/db/schema/fleet';
 import { transportRequests } from '@/db/schema/requests';
 import { employees } from '@/db/schema/people';
 import { externalParties } from '@/db/schema/external-parties';
-import { eq, and, desc, inArray, ne } from 'drizzle-orm';
+import { eq, and, desc, inArray, ne, or } from 'drizzle-orm';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent } from '@/components/ui/card';
 import { Badge, StatusBadge } from '@/components/ui/badge';
@@ -238,8 +238,16 @@ async function fetchClosureReviewTrips(tenantId: string): Promise<ClosureTrip[]>
             and(
               eq(tripIncidents.tenantId, tenantId),
               inArray(tripIncidents.tripId, tripIds),
-              eq(tripIncidents.safeToContinue, false),
-              ne(tripIncidents.status, 'resolved'),
+              or(
+                eq(tripIncidents.safeToContinue, false),
+                eq(tripIncidents.vehicleSafe, false),
+                eq(tripIncidents.vehicleDamage, true),
+                eq(tripIncidents.severity, 'critical'),
+              ),
+              or(
+                ne(tripIncidents.status, 'resolved'),
+                ne(tripIncidents.technicalClearanceStatus, 'cleared'),
+              ),
             ),
           )
       : Promise.resolve([] as Array<{ tripId: string }>),
@@ -313,7 +321,7 @@ async function fetchClosureReviewTrips(tenantId: string): Promise<ClosureTrip[]>
       reconciliationBlockers.push('Expense verification pending');
     }
     if (unsafeIncidentTripIds.has(row.id)) {
-      reconciliationBlockers.push('Safety-critical incident unresolved');
+      reconciliationBlockers.push('Vehicle-safety incident unresolved or awaiting technical clearance');
     }
     if (returnDeclarationNeedsReconciliation) {
       reconciliationBlockers.push(
