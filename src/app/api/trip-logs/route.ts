@@ -195,10 +195,10 @@ export async function POST(request: NextRequest) {
 
     const db = getDb();
 
-    // Verify the trip exists and belongs to the tenant. The current Trip
-    // Authority supplies the immutable departure odometer floor used below;
-    // unlike a "latest server reading" check, this remains safe when older
-    // offline daily logs reconnect and sync after newer journey evidence.
+    // Verify the trip exists inside this tenant. The current Trip Authority
+    // supplies the immutable departure odometer floor used below; unlike a
+    // "latest server reading" check, this remains safe when older offline daily
+    // logs reconnect and sync after newer journey evidence.
     const [trip] = await db
       .select({
         id: trips.id,
@@ -213,16 +213,49 @@ export async function POST(request: NextRequest) {
         tripAuthorities,
         and(eq(tripAuthorities.tripId, trips.id), eq(tripAuthorities.tenantId, trips.tenantId)),
       )
-      .where(eq(trips.id, tripId))
+      .where(and(eq(trips.id, tripId), eq(trips.tenantId, session.tenantId)))
       .limit(1);
 
     if (!trip) {
       return NextResponse.json({ error: 'Trip not found' }, { status: 404 });
     }
 
-    if (trip.tenantId !== session.tenantId) {
+    // Resolve the recorder before mutable lifecycle checks. Historical replay
+    // remains available to the employee who originally wrote the record even
+    // when the trip is now closed or the assignment has since changed.
+    const [employee] = await db
+      .select({ id: employees.id, employmentStatus: employees.employmentStatus })
+      .from(employees)
+      .where(
+        and(
+          eq(employees.tenantId, session.tenantId),
+          eq(employees.userId, session.user.id),
+        ),
+      )
+      .limit(1);
+    if (!employee) {
       return NextResponse.json(
-        { error: 'Trip does not belong to your organisation' },
+        { error: 'Your login is not linked to an employee record' },
+        { status: 403 },
+      );
+    }
+
+    if (syncId) {
+      const [existing] = await db
+        .select()
+        .from(tripLogEntries)
+        .where(and(
+          eq(tripLogEntries.tripId, tripId),
+          eq(tripLogEntries.clientSyncId, syncId),
+          eq(tripLogEntries.driverEmployeeId, employee.id),
+        ))
+        .limit(1);
+      if (existing) return NextResponse.json({ success: true, data: existing, idempotent: true });
+    }
+
+    if (employee.employmentStatus !== 'active') {
+      return NextResponse.json(
+        { error: 'Your employee record is not active' },
         { status: 403 },
       );
     }
@@ -234,22 +267,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const [employee] = await db
-      .select({ id: employees.id })
-      .from(employees)
-      .where(
-        and(
-          eq(employees.tenantId, session.tenantId),
-          eq(employees.userId, session.user.id),
-          eq(employees.employmentStatus, 'active'),
-        ),
-      )
-      .limit(1);
-    if (!employee)
-      return NextResponse.json(
-        { error: 'Your login is not linked to an active employee record' },
-        { status: 403 },
-      );
     if (employee.id !== trip.driverEmployeeId) {
       const [additionalAssignment] = await db
         .select({ id: requestDrivers.id })
@@ -258,6 +275,7 @@ export async function POST(request: NextRequest) {
         .where(
           and(
             eq(trips.id, tripId),
+            eq(trips.tenantId, session.tenantId),
             eq(requestDrivers.employeeId, employee.id),
             inArray(requestDrivers.driverType, ['assigned', 'additional']),
           ),
@@ -329,11 +347,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Keep a second replay check immediately before the insert for concurrent
+    // duplicate retries that both passed the earlier recovery lookup.
     if (syncId) {
       const [existing] = await db
         .select()
         .from(tripLogEntries)
-        .where(and(eq(tripLogEntries.tripId, tripId), eq(tripLogEntries.clientSyncId, syncId)))
+        .where(and(
+          eq(tripLogEntries.tripId, tripId),
+          eq(tripLogEntries.clientSyncId, syncId),
+          eq(tripLogEntries.driverEmployeeId, employee.id),
+        ))
         .limit(1);
       if (existing) return NextResponse.json({ success: true, data: existing, idempotent: true });
     }
@@ -380,7 +404,11 @@ export async function POST(request: NextRequest) {
         const [existing] = await db
           .select()
           .from(tripLogEntries)
-          .where(and(eq(tripLogEntries.tripId, tripId), eq(tripLogEntries.clientSyncId, syncId)))
+          .where(and(
+            eq(tripLogEntries.tripId, tripId),
+            eq(tripLogEntries.clientSyncId, syncId),
+            eq(tripLogEntries.driverEmployeeId, employee.id),
+          ))
           .limit(1);
         if (existing) {
           return NextResponse.json({ success: true, data: existing, idempotent: true });
