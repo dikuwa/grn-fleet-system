@@ -9,7 +9,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { and, count, eq, inArray, isNotNull, or } from 'drizzle-orm';
+import { and, count, eq, inArray, isNotNull, or, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { tripAuthorities, trips, vehicleAllocations } from '@/db/schema/trips';
 import { externalDriverAssignments } from '@/db/schema/external-driver-assignments';
@@ -79,6 +79,13 @@ export async function GET(request: NextRequest) {
                 isNotNull(vehicleAllocations.driverEmployeeId),
                 isNotNull(externalDriverAssignments.id),
               ),
+              sql`not exists (
+                select 1
+                from vehicle_defects vd
+                where vd.vehicle_id = ${trips.vehicleId}
+                  and vd.is_blocking = true
+                  and vd.resolved_at is null
+              )`,
             ),
             and(
               inArray(trips.status, RETURN_TRIP_STATUSES),
