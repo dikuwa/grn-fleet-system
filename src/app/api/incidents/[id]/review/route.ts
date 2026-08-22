@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { tripIncidents, trips } from '@/db/schema/trips';
 import { vehicles, vehicleDefects, vehicleStatusEvents } from '@/db/schema/fleet';
@@ -54,6 +54,13 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     };
 
     if (action === 'investigation_update') {
+      if (context.incident.investigationStatus === 'closed' || context.incident.status === 'resolved') {
+        return NextResponse.json(
+          { error: 'This investigation is already closed. Closed incident evidence cannot be reopened through ordinary investigation editing.' },
+          { status: 409 },
+        );
+      }
+
       const investigationStatus = String(body.investigationStatus || context.incident.investigationStatus);
       if (!investigationStatuses.has(investigationStatus)) {
         return NextResponse.json(
@@ -61,24 +68,67 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
           { status: 422 },
         );
       }
-      await runAtomicMutations((tx) => [
-        tx.update(tripIncidents).set({
-          investigationStatus,
-          investigationNotes: body.investigationNotes == null ? context.incident.investigationNotes : String(body.investigationNotes).trim() || null,
-          policeReference: body.policeReference == null ? context.incident.policeReference : String(body.policeReference).trim() || null,
-          policeReportFiled: typeof body.policeReportFiled === 'boolean' ? body.policeReportFiled : context.incident.policeReportFiled,
-          administratorResponse: body.administratorResponse == null ? context.incident.administratorResponse : String(body.administratorResponse).trim() || null,
-          status: 'under_review',
-          updatedAt: now,
-        }).where(and(eq(tripIncidents.id, id), eq(tripIncidents.tenantId, auth.session.tenantId))),
-        tx.insert(auditEvents).values({
-          ...commonAudit,
-          eventType: 'incident_investigation_updated',
-          action: 'incident.investigation.update',
-          summary: `${context.incident.officialNumber || id}: investigation updated to ${investigationStatus.replaceAll('_', ' ')}`,
-          after: { investigationStatus, policeReportFiled: body.policeReportFiled, policeReference: body.policeReference },
-        }),
-      ]);
+
+      const investigationNotes = body.investigationNotes == null
+        ? context.incident.investigationNotes
+        : String(body.investigationNotes).trim() || null;
+      const policeReference = body.policeReference == null
+        ? context.incident.policeReference
+        : String(body.policeReference).trim() || null;
+      const policeReportFiled = typeof body.policeReportFiled === 'boolean'
+        ? body.policeReportFiled
+        : context.incident.policeReportFiled;
+      const administratorResponse = body.administratorResponse == null
+        ? context.incident.administratorResponse
+        : String(body.administratorResponse).trim() || null;
+
+      await db.execute(sql`
+        WITH incident_claim AS (
+          UPDATE trip_incidents ti
+          SET investigation_status = ${investigationStatus},
+              investigation_notes = ${investigationNotes},
+              police_reference = ${policeReference},
+              police_report_filed = ${policeReportFiled},
+              administrator_response = ${administratorResponse},
+              status = 'under_review',
+              updated_at = ${now}
+          WHERE ti.id = ${id}::uuid
+            AND ti.tenant_id = ${auth.session.tenantId}::uuid
+            AND ti.investigation_status <> 'closed'
+            AND ti.status <> 'resolved'
+          RETURNING id
+        ),
+        audit_insert AS (
+          INSERT INTO audit_events (
+            tenant_id, tenant_sequence, event_type, actor_user_id,
+            action, entity_type, entity_id, summary, after, source_channel
+          )
+          SELECT
+            ${auth.session.tenantId}::uuid,
+            ${Date.now()},
+            'incident_investigation_updated',
+            ${auth.session.user.id},
+            'incident.investigation.update',
+            'trip_incident',
+            ${id}::uuid,
+            ${`${context.incident.officialNumber || id}: investigation updated to ${investigationStatus.replaceAll('_', ' ')}`},
+            jsonb_build_object(
+              'investigationStatus', ${investigationStatus},
+              'policeReportFiled', ${policeReportFiled},
+              'policeReference', ${policeReference}
+            ),
+            'web'
+          FROM incident_claim
+          RETURNING id
+        )
+        SELECT CAST(CASE
+          WHEN (SELECT count(*) FROM incident_claim) = 1
+           AND (SELECT count(*) FROM audit_insert) = 1
+          THEN '1'
+          ELSE 'incident_investigation_update_conflict'
+        END AS integer) AS committed
+      `);
+
       await refreshIncidentOperationalDocuments({
         tenantId: auth.session.tenantId,
         incidentId: id,
@@ -109,6 +159,10 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     }
 
     if (action === 'technical_clearance') {
+      if (context.incident.technicalClearanceStatus === 'cleared') {
+        return NextResponse.json({ success: true, alreadyCleared: true });
+      }
+
       const unresolved = await db
         .select({ id: vehicleDefects.id })
         .from(vehicleDefects)
@@ -128,6 +182,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
           WHERE ti.id = ${id}::uuid
             AND ti.tenant_id = ${auth.session.tenantId}::uuid
             AND ti.trip_id = ${context.incident.tripId}::uuid
+            AND ti.technical_clearance_status <> 'cleared'
             AND NOT EXISTS (
               SELECT 1
               FROM vehicle_defects vd
@@ -160,13 +215,25 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
           WHEN (SELECT count(*) FROM incident_claim) = 1
            AND (SELECT count(*) FROM audit_insert) = 1
           THEN '1'
+          WHEN EXISTS (
+            SELECT 1
+            FROM trip_incidents ti
+            WHERE ti.id = ${id}::uuid
+              AND ti.tenant_id = ${auth.session.tenantId}::uuid
+              AND ti.technical_clearance_status = 'cleared'
+          )
+          THEN '1'
           ELSE 'incident_technical_clearance_blocked'
         END AS integer) AS committed
       `);
-      return NextResponse.json({ success: true });
+      return NextResponse.json({ success: true, alreadyCleared: false });
     }
 
     if (action === 'close_investigation') {
+      if (context.incident.investigationStatus === 'closed' || context.incident.status === 'resolved') {
+        return NextResponse.json({ success: true, alreadyClosed: true });
+      }
+
       const requiresTechnicalClearance =
         context.incident.vehicleDamage ||
         context.incident.vehicleSafe === false ||
@@ -177,29 +244,71 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
           { status: 409 },
         );
       }
-      await runAtomicMutations((tx) => [
-        tx.update(tripIncidents).set({
-          investigationStatus: 'closed',
-          investigationClosedAt: now,
-          status: 'resolved',
-          detailsRequired: false,
-          updatedAt: now,
-        }).where(and(eq(tripIncidents.id, id), eq(tripIncidents.tenantId, auth.session.tenantId))),
-        tx.insert(auditEvents).values({
-          ...commonAudit,
-          eventType: 'incident_investigation_closed',
-          action: 'incident.investigation.close',
-          summary: `${context.incident.officialNumber || id}: investigation closed`,
-          after: { investigationStatus: 'closed', status: 'resolved' },
-        }),
-      ]);
+
+      await db.execute(sql`
+        WITH incident_claim AS (
+          UPDATE trip_incidents ti
+          SET investigation_status = 'closed',
+              investigation_closed_at = ${now},
+              status = 'resolved',
+              details_required = false,
+              updated_at = ${now}
+          WHERE ti.id = ${id}::uuid
+            AND ti.tenant_id = ${auth.session.tenantId}::uuid
+            AND ti.investigation_status <> 'closed'
+            AND ti.status <> 'resolved'
+            AND (
+              NOT (
+                ti.vehicle_damage = true
+                OR ti.vehicle_safe = false
+                OR ti.severity = 'critical'
+              )
+              OR ti.technical_clearance_status = 'cleared'
+            )
+          RETURNING id
+        ),
+        audit_insert AS (
+          INSERT INTO audit_events (
+            tenant_id, tenant_sequence, event_type, actor_user_id,
+            action, entity_type, entity_id, summary, after, source_channel
+          )
+          SELECT
+            ${auth.session.tenantId}::uuid,
+            ${Date.now()},
+            'incident_investigation_closed',
+            ${auth.session.user.id},
+            'incident.investigation.close',
+            'trip_incident',
+            ${id}::uuid,
+            ${`${context.incident.officialNumber || id}: investigation closed`},
+            jsonb_build_object('investigationStatus', 'closed', 'status', 'resolved'),
+            'web'
+          FROM incident_claim
+          RETURNING id
+        )
+        SELECT CAST(CASE
+          WHEN (SELECT count(*) FROM incident_claim) = 1
+           AND (SELECT count(*) FROM audit_insert) = 1
+          THEN '1'
+          WHEN EXISTS (
+            SELECT 1
+            FROM trip_incidents ti
+            WHERE ti.id = ${id}::uuid
+              AND ti.tenant_id = ${auth.session.tenantId}::uuid
+              AND (ti.investigation_status = 'closed' OR ti.status = 'resolved')
+          )
+          THEN '1'
+          ELSE 'incident_investigation_close_conflict'
+        END AS integer) AS committed
+      `);
+
       await refreshIncidentOperationalDocuments({
         tenantId: auth.session.tenantId,
         incidentId: id,
         tripId: context.incident.tripId,
         actorUserId: auth.session.user.id,
       });
-      return NextResponse.json({ success: true });
+      return NextResponse.json({ success: true, alreadyClosed: false });
     }
 
     if (action === 'return_vehicle_to_service') {
@@ -315,6 +424,18 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     return NextResponse.json({ error: 'Unsupported incident review action' }, { status: 400 });
   } catch (error) {
     console.error('[incidents/review] PATCH failed:', error);
+    if (String(error).includes('incident_investigation_update_conflict')) {
+      return NextResponse.json(
+        { error: 'The investigation was closed or changed while this update was being saved. Refresh the incident before making further changes.' },
+        { status: 409 },
+      );
+    }
+    if (String(error).includes('incident_investigation_close_conflict')) {
+      return NextResponse.json(
+        { error: 'The incident safety or investigation state changed while closure was being recorded. Refresh the incident and resolve the latest blockers.' },
+        { status: 409 },
+      );
+    }
     if (String(error).includes('incident_technical_clearance_blocked')) {
       return NextResponse.json(
         {
