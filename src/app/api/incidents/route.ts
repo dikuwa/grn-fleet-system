@@ -121,7 +121,8 @@ export async function POST(req: NextRequest) {
       odometerReading,
       description,
       injuries = false,
-      vehicleDamage = true,
+      vehicleDamage = false,
+      vehicleSafe = null,
       thirdPartyInvolvement = false,
       policeReference,
       emergencyServicesContacted = false,
@@ -144,6 +145,21 @@ export async function POST(req: NextRequest) {
     if (!['minor', 'moderate', 'serious', 'critical'].includes(severity)) {
       return NextResponse.json(
         { error: 'Severity must be minor, moderate, serious or critical' },
+        { status: 422 },
+      );
+    }
+    if (typeof vehicleDamage !== 'boolean') {
+      return NextResponse.json({ error: 'Vehicle damage must be true or false' }, { status: 422 });
+    }
+    if (vehicleSafe !== null && vehicleSafe !== undefined && typeof vehicleSafe !== 'boolean') {
+      return NextResponse.json(
+        { error: 'Vehicle safety must be true, false, or omitted when unknown' },
+        { status: 422 },
+      );
+    }
+    if (typeof safeToContinue !== 'boolean') {
+      return NextResponse.json(
+        { error: 'Journey continuation safety must be true or false' },
         { status: 422 },
       );
     }
@@ -218,11 +234,12 @@ export async function POST(req: NextRequest) {
       odometerReading: odometer,
       description: description.trim(),
       injuries: Boolean(injuries),
-      vehicleDamage: Boolean(vehicleDamage),
+      vehicleDamage,
+      vehicleSafe,
       thirdPartyInvolvement: Boolean(thirdPartyInvolvement),
       policeReference: policeReference || null,
       emergencyServicesContacted: Boolean(emergencyServicesContacted),
-      safeToContinue: Boolean(safeToContinue),
+      safeToContinue,
       continuationState,
       actionTaken: actionTaken || null,
       attachmentKeys: attachmentKeys || [],
