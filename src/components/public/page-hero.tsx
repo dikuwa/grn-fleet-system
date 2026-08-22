@@ -12,15 +12,16 @@ import { TechnicalBackdrop } from '@/components/public/technical-backdrop';
 export interface PageHeroProps {
   title: string;
   description?: string;
+  children?: React.ReactNode;
 }
 
-export function PageHero({ title, description }: PageHeroProps) {
+export function PageHero({ title, description, children }: PageHeroProps) {
   return (
-    <section className="relative overflow-hidden border-b border-border bg-brand-950">
+    <section className="border-border bg-brand-950 relative overflow-hidden border-b">
       <TechnicalBackdrop />
       <SectionContainer className="relative py-16 md:py-20">
         <div className="max-w-3xl">
-          <h1 className="text-3xl font-[650] leading-[1.1] tracking-tight text-white md:text-5xl">
+          <h1 className="text-3xl leading-[1.1] font-[650] tracking-tight text-white md:text-5xl">
             {title}
           </h1>
           {description && (
@@ -28,6 +29,7 @@ export function PageHero({ title, description }: PageHeroProps) {
               {description}
             </p>
           )}
+          {children && <div className="mt-7">{children}</div>}
         </div>
       </SectionContainer>
     </section>
