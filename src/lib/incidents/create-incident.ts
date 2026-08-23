@@ -174,7 +174,12 @@ export async function createIncident(input: CreateIncidentInput): Promise<Create
     const [existing] = await db
       .select()
       .from(tripIncidents)
-      .where(and(eq(tripIncidents.tenantId, input.tenantId), eq(tripIncidents.clientSyncId, syncId)))
+      .where(and(
+        eq(tripIncidents.tenantId, input.tenantId),
+        eq(tripIncidents.tripId, input.tripId),
+        eq(tripIncidents.clientSyncId, syncId),
+        eq(tripIncidents.reportedByUserId, input.reportedByUserId),
+      ))
       .limit(1);
     if (existing) {
       return { incident: existing, officialNumber: existing.officialNumber || existing.id, idempotent: true };
@@ -378,7 +383,12 @@ export async function createIncident(input: CreateIncidentInput): Promise<Create
       const [existing] = await db
         .select()
         .from(tripIncidents)
-        .where(and(eq(tripIncidents.tenantId, input.tenantId), eq(tripIncidents.clientSyncId, syncId)))
+        .where(and(
+          eq(tripIncidents.tenantId, input.tenantId),
+          eq(tripIncidents.tripId, input.tripId),
+          eq(tripIncidents.clientSyncId, syncId),
+          eq(tripIncidents.reportedByUserId, input.reportedByUserId),
+        ))
         .limit(1);
       if (existing) {
         return { incident: existing, officialNumber: existing.officialNumber || existing.id, idempotent: true };

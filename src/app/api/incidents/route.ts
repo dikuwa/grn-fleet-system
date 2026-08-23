@@ -252,6 +252,15 @@ export async function POST(req: NextRequest) {
       { status: result.idempotent ? 200 : 201 },
     );
   } catch (error) {
+    if ((error as { code?: string })?.code === '23505') {
+      return NextResponse.json(
+        {
+          error:
+            'This offline incident sync ID is already used by another incident. Refresh or generate a new local sync ID before retrying.',
+        },
+        { status: 409 },
+      );
+    }
     console.error('[incidents] POST failed:', error);
     return NextResponse.json({ error: 'Failed to create incident' }, { status: 500 });
   }

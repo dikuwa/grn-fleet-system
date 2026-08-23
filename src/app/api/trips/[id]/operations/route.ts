@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
-import { and, desc, eq, isNotNull } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, isNotNull, lt } from 'drizzle-orm';
 import { getDb } from '@/db';
 import {
   tripAuthorities,
@@ -20,6 +20,7 @@ import { SystemRoles, WorkspaceIds } from '@/lib/workspaces';
 import { createIncident } from '@/lib/incidents/create-incident';
 import { getIncidentCategory } from '@/lib/incidents/categories';
 import { canAcceptLateOfflineIncident } from '@/lib/incidents/offline-incident-window';
+import { validateProgressOdometer } from '@/lib/trip-progress-odometer';
 
 const progressTypes = [
   'official_stop',
@@ -263,15 +264,43 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         body.odometerReading === null || body.odometerReading === undefined || body.odometerReading === ''
           ? null
           : Number(body.odometerReading);
-      const [previous] = await db
-        .select({ value: tripProgressEntries.odometerReading })
-        .from(tripProgressEntries)
-        .where(and(eq(tripProgressEntries.tripId, id), isNotNull(tripProgressEntries.odometerReading)))
-        .orderBy(desc(tripProgressEntries.occurredAt))
-        .limit(1);
-      const floor = previous?.value ?? context.beginningOdometer ?? 0;
-      if (odometer !== null && (!Number.isInteger(odometer) || odometer < floor)) {
-        return NextResponse.json({ error: `Odometer must be a whole number at or above ${floor}` }, { status: 422 });
+
+      // Validate by occurrence-time neighbours rather than latest server arrival.
+      // This allows a legitimate older offline event to sync after a newer event
+      // without accepting an impossible rollback/overshoot in journey chronology.
+      const [[previous], [next]] = await Promise.all([
+        db
+          .select({ value: tripProgressEntries.odometerReading })
+          .from(tripProgressEntries)
+          .where(and(
+            eq(tripProgressEntries.tenantId, session.tenantId),
+            eq(tripProgressEntries.tripId, id),
+            isNotNull(tripProgressEntries.odometerReading),
+            lt(tripProgressEntries.occurredAt, occurredAt),
+          ))
+          .orderBy(desc(tripProgressEntries.occurredAt))
+          .limit(1),
+        db
+          .select({ value: tripProgressEntries.odometerReading })
+          .from(tripProgressEntries)
+          .where(and(
+            eq(tripProgressEntries.tenantId, session.tenantId),
+            eq(tripProgressEntries.tripId, id),
+            isNotNull(tripProgressEntries.odometerReading),
+            gt(tripProgressEntries.occurredAt, occurredAt),
+          ))
+          .orderBy(asc(tripProgressEntries.occurredAt))
+          .limit(1),
+      ]);
+      const odometerCheck = validateProgressOdometer({
+        value: odometer,
+        previous: previous?.value ?? null,
+        next: next?.value ?? null,
+        authorityStart: context.beginningOdometer,
+        authorityEnd: context.endingOdometer,
+      });
+      if (!odometerCheck.ok) {
+        return NextResponse.json({ error: odometerCheck.error }, { status: 422 });
       }
       if (entryType === 'route_deviation' && !String(body.routeDeviationReason || '').trim()) {
         return NextResponse.json({ error: 'A route deviation reason is required' }, { status: 422 });
@@ -283,15 +312,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         (longitude !== null && (!Number.isFinite(longitude) || longitude < -180 || longitude > 180))
       ) {
         return NextResponse.json({ error: 'Location coordinates are invalid' }, { status: 422 });
-      }
-
-      if (clientSyncId) {
-        const [existing] = await db
-          .select()
-          .from(tripProgressEntries)
-          .where(and(eq(tripProgressEntries.tenantId, session.tenantId), eq(tripProgressEntries.clientSyncId, clientSyncId)))
-          .limit(1);
-        if (existing) return NextResponse.json({ success: true, data: existing, idempotentReplay: true });
       }
 
       const entryId = randomUUID();
@@ -377,14 +397,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       const currency = String(body.currency || 'NAD').trim().toUpperCase();
       if (!/^[A-Z]{3}$/.test(currency)) {
         return NextResponse.json({ error: 'Currency must use a three-letter code' }, { status: 422 });
-      }
-      if (clientSyncId) {
-        const [existing] = await db
-          .select()
-          .from(tripExpenses)
-          .where(and(eq(tripExpenses.tenantId, session.tenantId), eq(tripExpenses.clientSyncId, clientSyncId)))
-          .limit(1);
-        if (existing) return NextResponse.json({ success: true, data: existing, idempotentReplay: true });
       }
 
       const expenseId = randomUUID();
