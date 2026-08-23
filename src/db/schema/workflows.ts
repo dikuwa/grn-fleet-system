@@ -8,6 +8,7 @@ import {
   jsonb,
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
+import { sql } from 'drizzle-orm';
 import { tenants } from './tenants';
 import { transportRequests } from './requests';
 
@@ -55,30 +56,43 @@ export const workflowSteps = pgTable('workflow_steps', {
 });
 
 /**
- * Workflow instances (created per request submission)
+ * Workflow instances (created per request submission).
+ *
+ * A request may accumulate historical completed/cancelled/overridden instances,
+ * but there can be only one active instance at a time. Migration 0089 repairs
+ * legacy duplicates and enforces the same invariant in PostgreSQL so concurrent
+ * submissions cannot create parallel approval chains.
  */
-export const workflowInstances = pgTable('workflow_instances', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  requestId: uuid('request_id')
-    .notNull()
-    .references(() => transportRequests.id, { onDelete: 'cascade' }),
-  definitionId: uuid('definition_id')
-    .notNull()
-    .references(() => workflowDefinitions.id),
-  definitionVersion: integer('definition_version').notNull(),
-  currentStepOrder: integer('current_step_order').notNull().default(0),
-  status: text('status').notNull().default('active'), // active, completed, cancelled, overridden
-  // Per-request override for conflict-of-interest reassignment. Never write a
-  // request-specific alternate into workflow_steps because those rows are
-  // shared by every workflow instance using the definition.
-  currentAssignedUserId: text('current_assigned_user_id'),
-  currentAssignmentMeta: jsonb('current_assignment_meta')
-    .$type<Record<string, unknown>>()
-    .notNull()
-    .default({}),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
+export const workflowInstances = pgTable(
+  'workflow_instances',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    requestId: uuid('request_id')
+      .notNull()
+      .references(() => transportRequests.id, { onDelete: 'cascade' }),
+    definitionId: uuid('definition_id')
+      .notNull()
+      .references(() => workflowDefinitions.id),
+    definitionVersion: integer('definition_version').notNull(),
+    currentStepOrder: integer('current_step_order').notNull().default(0),
+    status: text('status').notNull().default('active'), // active, completed, cancelled, overridden
+    // Per-request override for conflict-of-interest reassignment. Never write a
+    // request-specific alternate into workflow_steps because those rows are
+    // shared by every workflow instance using the definition.
+    currentAssignedUserId: text('current_assigned_user_id'),
+    currentAssignmentMeta: jsonb('current_assignment_meta')
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('workflow_instances_one_active_per_request')
+      .on(table.requestId)
+      .where(sql`${table.status} = 'active'`),
+  ],
+);
 
 /**
  * Workflow actions (approve, reject, return, release, authorise, etc.)
