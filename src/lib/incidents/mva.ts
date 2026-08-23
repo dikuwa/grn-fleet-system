@@ -83,8 +83,6 @@ export async function updateInvestigation(
     return { ok: false as const, error: 'Invalid investigation status' };
   }
 
-  // Closed investigation evidence is terminal. This service is shared by more
-  // than one route, so protect the state here as well as in individual APIs.
   if (incident.investigationStatus === 'closed' || incident.status === 'resolved') {
     return { ok: false as const, error: 'investigation_already_closed' };
   }
@@ -103,7 +101,6 @@ export async function updateInvestigation(
     return { ok: false as const, error: 'technical_clearance_required' };
   }
 
-  // Closing an investigation requires notes.
   if (isClosing && !input.notes?.trim()) {
     return {
       ok: false as const,
@@ -119,6 +116,8 @@ export async function updateInvestigation(
     if (input.notes !== undefined) set.investigationNotes = input.notes;
     if (isClosing) {
       set.investigationClosedAt = new Date();
+      set.status = 'resolved';
+      set.detailsRequired = false;
       if (input.notes?.trim()) {
         set.investigationNotes = input.notes.trim();
       }
@@ -156,21 +155,17 @@ export async function updateInvestigation(
       .where(and(...claimConditions))
       .returning();
 
-    // Another workflow may have closed the investigation or changed its safety
-    // state after the preflight read. Do not append an audit event for a write
-    // that lost that race.
     if (!updated) return null;
 
     await recordAuditEvent(
       {
         tenantId,
         actorUserId,
-        eventType: 'incident_investigation_updated',
-        action: 'update',
+        eventType: isClosing ? 'incident_investigation_closed' : 'incident_investigation_updated',
+        action: isClosing ? 'close' : 'update',
         entityType: 'trip_incident',
         entityId: incidentId,
-        summary:
-          `${incident.officialNumber}: investigation → ${input.status ?? 'unchanged'}`,
+        summary: `${incident.officialNumber}: investigation → ${input.status ?? 'unchanged'}`,
         sourceChannel: 'web',
       },
       tx,
@@ -264,10 +259,6 @@ export async function updateInsurance(
 // Complete incident details
 // ---------------------------------------------------------------------------
 
-/**
- * Mark an incident's details as complete after verifying all mandatory
- * fields are filled. Only allowed when `detailsRequired` is true.
- */
 export async function completeIncidentDetails(
   tenantId: string,
   incidentId: string,
@@ -276,6 +267,9 @@ export async function completeIncidentDetails(
   const db = getDb();
   const incident = await getTenantIncident(tenantId, incidentId);
   if (!incident) return { ok: false as const, error: 'not_found' };
+  if (incident.investigationStatus === 'closed' || incident.status === 'resolved') {
+    return { ok: false as const, error: 'incident_already_closed' };
+  }
   if (!incident.detailsRequired) {
     return {
       ok: false as const,
@@ -283,7 +277,6 @@ export async function completeIncidentDetails(
     };
   }
 
-  // Validate mandatory fields are present
   if (!incident.description?.trim()) {
     return { ok: false as const, error: 'Description is required' };
   }
@@ -302,9 +295,14 @@ export async function completeIncidentDetails(
         and(
           eq(tripIncidents.id, incidentId),
           eq(tripIncidents.tenantId, tenantId),
+          eq(tripIncidents.detailsRequired, true),
+          sql`${tripIncidents.investigationStatus} <> 'closed'`,
+          sql`${tripIncidents.status} <> 'resolved'`,
         ),
       )
       .returning();
+
+    if (!updated) return null;
 
     await recordAuditEvent(
       {
@@ -322,6 +320,10 @@ export async function completeIncidentDetails(
 
     return updated;
   });
+
+  if (!row) {
+    return { ok: false as const, error: 'details_completion_conflict' };
+  }
 
   regenerateMvaReport(tenantId, incidentId, actorUserId);
 
@@ -370,8 +372,6 @@ export async function recordTechnicalClearance(
       )
       .returning();
 
-    // If another reviewer granted clearance first, leave the original decision
-    // untouched and do not emit a duplicate audit event.
     if (!updated) return null;
 
     await recordAuditEvent(
@@ -408,7 +408,6 @@ export async function recordTechnicalClearance(
 // MVA report generation
 // ---------------------------------------------------------------------------
 
-/** Generate and issue the MVAR. Returns the generated document. */
 export async function generateMvaReport(
   tenantId: string,
   incidentId: string,
