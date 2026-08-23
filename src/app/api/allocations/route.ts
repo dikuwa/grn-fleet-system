@@ -120,6 +120,7 @@ export async function POST(req: NextRequest) {
       recommendOnly,
       recommendAuto,
       driverEmployeeId,
+      notes,
     } = body;
 
     const db = getDb();
@@ -157,6 +158,7 @@ export async function POST(req: NextRequest) {
         reference: transportRequests.reference,
         requesterEmployeeId: transportRequests.requesterEmployeeId,
         requesterUserId: transportRequests.requesterUserId,
+        preferredDriverEmployeeId: transportRequests.preferredDriverEmployeeId,
       })
       .from(transportRequests)
       .where(and(eq(transportRequests.id, resolvedRequestId), eq(transportRequests.tenantId, tenantId)))
@@ -234,6 +236,42 @@ export async function POST(req: NextRequest) {
     }
 
     const resolvedDriverId: string | null = driverEmployeeId || null;
+    const nominatedDrivers = await db
+      .select({ employeeId: requestDrivers.employeeId, driverType: requestDrivers.driverType })
+      .from(requestDrivers)
+      .where(eq(requestDrivers.requestId, resolvedRequestId));
+    const requesterNominatedDriverIds = Array.from(
+      new Set(
+        nominatedDrivers
+          .filter((driver) => driver.driverType === 'nominated')
+          .map((driver) => driver.employeeId)
+          .filter(Boolean),
+      ),
+    );
+    if (
+      foundReq.preferredDriverEmployeeId &&
+      !requesterNominatedDriverIds.includes(foundReq.preferredDriverEmployeeId)
+    ) {
+      requesterNominatedDriverIds.push(foundReq.preferredDriverEmployeeId);
+    }
+    const driverNominationOverridden = Boolean(
+      resolvedDriverId &&
+      requesterNominatedDriverIds.length > 0 &&
+      !requesterNominatedDriverIds.includes(resolvedDriverId),
+    );
+    const driverOverrideReason = typeof notes === 'string' ? notes.trim() : '';
+    if (driverNominationOverridden && driverOverrideReason.length < 3) {
+      return NextResponse.json(
+        {
+          error:
+            'The requester nominated a different driver. Add a clear override reason in Allocation Notes before assigning another driver.',
+          requiresDriverOverrideReason: true,
+          nominatedDriverEmployeeIds: requesterNominatedDriverIds,
+        },
+        { status: 400 },
+      );
+    }
+
     let driverCompliance: ReturnType<typeof calculateDriverCompliance> | null = null;
     if (resolvedDriverId) {
       const [driver] = await db
@@ -332,6 +370,7 @@ export async function POST(req: NextRequest) {
           state: 'confirmed',
           allocatedByUserId: userId,
           recommendationScore: recommendation?.topVariant?.score ?? null,
+          overrideReason: driverNominationOverridden ? driverOverrideReason : null,
           createdAt: now,
           updatedAt: now,
         }),
@@ -400,9 +439,30 @@ export async function POST(req: NextRequest) {
         entityType: 'allocation',
         entityId: allocation.id,
         summary: `Allocation created for ${foundReq.reference}: vehicle ${vehicle.licenceNumber}${resolvedDriverId ? `, driver ${resolvedDriverId.slice(0, 8)}` : ''}`,
-        before: {},
-        after: { vehicleId: resolvedVehicleId, driverEmployeeId: resolvedDriverId, startAt: startAt.toISOString(), endAt: endAt.toISOString() },
+        before: {
+          requesterNominatedDriverEmployeeIds: requesterNominatedDriverIds,
+        },
+        after: {
+          vehicleId: resolvedVehicleId,
+          driverEmployeeId: resolvedDriverId,
+          startAt: startAt.toISOString(),
+          endAt: endAt.toISOString(),
+          driverNominationOverridden,
+          driverOverrideReason: driverNominationOverridden ? driverOverrideReason : null,
+        },
       });
+      if (driverNominationOverridden) {
+        await recordAuditEvent({
+          tenantId,
+          actorUserId: userId,
+          action: 'allocation.driver_nomination_overridden',
+          entityType: 'allocation',
+          entityId: allocation.id,
+          summary: `Requester driver nomination overridden for ${foundReq.reference}.`,
+          before: { nominatedDriverEmployeeIds: requesterNominatedDriverIds },
+          after: { assignedDriverEmployeeId: resolvedDriverId, reason: driverOverrideReason },
+        });
+      }
       await recordTenantRequestActivity({
         tenantId,
         requestId: foundReq.id,
@@ -453,6 +513,24 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    if (driverNominationOverridden && foundReq.requesterUserId) {
+      try {
+        await createScopedNotifications({
+          tenantId,
+          recipientUserIds: [foundReq.requesterUserId],
+          category: 'awareness',
+          eventType: 'driver.nomination_overridden',
+          title: 'Driver nomination updated',
+          body: `Transport Office assigned a different eligible driver to ${foundReq.reference}. Reason: ${driverOverrideReason}`,
+          entityType: 'allocation',
+          entityId: allocation.id,
+          actionUrl: `/dashboard/requests/${foundReq.id}`,
+        });
+      } catch (notificationError) {
+        console.warn('[allocations] Requester override notification failed:', notificationError);
+      }
+    }
+
     try {
       const { sendNotificationEmail } = await import('@/lib/email');
       const [requester] = await db
@@ -466,8 +544,10 @@ export async function POST(req: NextRequest) {
         await sendNotificationEmail({
           to: requester.email,
           type: 'allocation_created',
-          title: '🚗 Vehicle Allocated',
-          body: `A vehicle (${vehicle.licenceNumber}) has been allocated to your request ${foundReq.reference} from ${startAt.toLocaleDateString('en-NA')}.`,
+          title: driverNominationOverridden ? '🚗 Vehicle and driver allocated' : '🚗 Vehicle Allocated',
+          body: driverNominationOverridden
+            ? `A vehicle (${vehicle.licenceNumber}) and a different eligible driver have been allocated to your request ${foundReq.reference}. Driver override reason: ${driverOverrideReason}`
+            : `A vehicle (${vehicle.licenceNumber}) has been allocated to your request ${foundReq.reference} from ${startAt.toLocaleDateString('en-NA')}.`,
           actionUrl: `/dashboard/requests/${foundReq.id}`,
           recipientName: requester.firstName || 'Requester',
         });
@@ -476,7 +556,14 @@ export async function POST(req: NextRequest) {
       console.warn('[allocations] Allocation email failed:', emailErr);
     }
 
-    return NextResponse.json({ allocation, trip, document: doc, recommendation, compliance: driverCompliance });
+    return NextResponse.json({
+      allocation,
+      trip,
+      document: doc,
+      recommendation,
+      compliance: driverCompliance,
+      driverNominationOverridden,
+    });
   } catch (error) {
     console.error('[allocations] POST failed:', error);
     const allocationDbError = describeAllocationDbError(error);
