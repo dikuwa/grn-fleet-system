@@ -33,8 +33,17 @@ export async function POST(
     );
 
     if (!result.ok) {
-      const status = result.error === 'not_found' ? 404 : 400;
-      return NextResponse.json({ error: result.error }, { status });
+      const status = result.error === 'not_found'
+        ? 404
+        : result.error === 'incident_already_closed' || result.error === 'details_completion_conflict'
+          ? 409
+          : 400;
+      const error = result.error === 'incident_already_closed'
+        ? 'Closed incident evidence cannot be changed through details completion.'
+        : result.error === 'details_completion_conflict'
+          ? 'Incident details changed while completion was being recorded. Refresh and review the current incident state.'
+          : result.error;
+      return NextResponse.json({ error }, { status });
     }
 
     return NextResponse.json({ data: result.data });
