@@ -8,7 +8,7 @@
 
 import { getDb } from '@/db';
 import { tripIncidents } from '@/db/schema/trips';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { generateDocument } from '@/lib/document-generator';
 
@@ -83,8 +83,25 @@ export async function updateInvestigation(
     return { ok: false as const, error: 'Invalid investigation status' };
   }
 
-  const isClosing =
-    input.status === 'closed' && incident.investigationStatus !== 'closed';
+  // Closed investigation evidence is terminal. This service is shared by more
+  // than one route, so protect the state here as well as in individual APIs.
+  if (incident.investigationStatus === 'closed' || incident.status === 'resolved') {
+    return { ok: false as const, error: 'investigation_already_closed' };
+  }
+
+  const isClosing = input.status === 'closed';
+  const requiresTechnicalClearance =
+    incident.vehicleDamage ||
+    incident.vehicleSafe === false ||
+    incident.severity === 'critical';
+
+  if (
+    isClosing &&
+    requiresTechnicalClearance &&
+    incident.technicalClearanceStatus !== 'cleared'
+  ) {
+    return { ok: false as const, error: 'technical_clearance_required' };
+  }
 
   // Closing an investigation requires notes.
   if (isClosing && !input.notes?.trim()) {
@@ -116,16 +133,33 @@ export async function updateInvestigation(
       set.witnessStatements = [...existing, ...input.addedWitnesses];
     }
 
+    const claimConditions = [
+      eq(tripIncidents.id, incidentId),
+      eq(tripIncidents.tenantId, tenantId),
+      sql`${tripIncidents.investigationStatus} <> 'closed'`,
+      sql`${tripIncidents.status} <> 'resolved'`,
+    ];
+    if (isClosing) {
+      claimConditions.push(sql`(
+        NOT (
+          ${tripIncidents.vehicleDamage} IS TRUE
+          OR ${tripIncidents.vehicleSafe} IS FALSE
+          OR ${tripIncidents.severity} = 'critical'
+        )
+        OR ${tripIncidents.technicalClearanceStatus} = 'cleared'
+      )`);
+    }
+
     const [updated] = await tx
       .update(tripIncidents)
       .set(set)
-      .where(
-        and(
-          eq(tripIncidents.id, incidentId),
-          eq(tripIncidents.tenantId, tenantId),
-        ),
-      )
+      .where(and(...claimConditions))
       .returning();
+
+    // Another workflow may have closed the investigation or changed its safety
+    // state after the preflight read. Do not append an audit event for a write
+    // that lost that race.
+    if (!updated) return null;
 
     await recordAuditEvent(
       {
@@ -144,6 +178,10 @@ export async function updateInvestigation(
 
     return updated;
   });
+
+  if (!row) {
+    return { ok: false as const, error: 'investigation_update_conflict' };
+  }
 
   regenerateMvaReport(tenantId, incidentId, actorUserId);
 
@@ -307,7 +345,10 @@ export async function recordTechnicalClearance(
   if (!incident) return { ok: false as const, error: 'not_found' };
 
   const status = input.status;
-  if (incident.technicalClearanceStatus === 'cleared' && status !== 'cleared') {
+  if (incident.technicalClearanceStatus === 'cleared') {
+    if (status === 'cleared') {
+      return { ok: true as const, data: incident, idempotent: true as const };
+    }
     return { ok: false as const, error: 'clearance_already_granted' };
   }
 
@@ -324,9 +365,14 @@ export async function recordTechnicalClearance(
         and(
           eq(tripIncidents.id, incidentId),
           eq(tripIncidents.tenantId, tenantId),
+          sql`${tripIncidents.technicalClearanceStatus} <> 'cleared'`,
         ),
       )
       .returning();
+
+    // If another reviewer granted clearance first, leave the original decision
+    // untouched and do not emit a duplicate audit event.
+    if (!updated) return null;
 
     await recordAuditEvent(
       {
@@ -345,9 +391,17 @@ export async function recordTechnicalClearance(
     return updated;
   });
 
+  if (!row) {
+    const current = await getTenantIncident(tenantId, incidentId);
+    if (current?.technicalClearanceStatus === 'cleared' && status === 'cleared') {
+      return { ok: true as const, data: current, idempotent: true as const };
+    }
+    return { ok: false as const, error: 'technical_clearance_conflict' };
+  }
+
   regenerateMvaReport(tenantId, incidentId, actorUserId);
 
-  return { ok: true as const, data: row };
+  return { ok: true as const, data: row, idempotent: false as const };
 }
 
 // ---------------------------------------------------------------------------

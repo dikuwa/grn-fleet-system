@@ -114,8 +114,28 @@ export async function PATCH(
     );
 
     if (!result.ok) {
-      const status = result.error === 'Incident not found' ? 404 : 400;
-      return NextResponse.json({ error: result.error }, { status });
+      if (result.error === 'Incident not found') {
+        return NextResponse.json({ error: result.error }, { status: 404 });
+      }
+      if (result.error === 'technical_clearance_required') {
+        return NextResponse.json(
+          { error: 'Vehicle-safety investigations require technical clearance before closure.' },
+          { status: 409 },
+        );
+      }
+      if (
+        result.error === 'investigation_already_closed' ||
+        result.error === 'investigation_update_conflict'
+      ) {
+        return NextResponse.json(
+          {
+            error:
+              'The investigation changed while this update was being saved. Refresh before making another investigation decision.',
+          },
+          { status: 409 },
+        );
+      }
+      return NextResponse.json({ error: result.error }, { status: 400 });
     }
 
     return NextResponse.json({ data: result.data, alreadyClosed: false });
