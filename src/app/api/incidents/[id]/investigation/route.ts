@@ -70,13 +70,33 @@ export async function PATCH(
       return NextResponse.json({ error: 'Incident not found' }, { status: 404 });
     }
 
-    // Vehicle-damage investigations cannot be closed through this dedicated
-    // endpoint before technical clearance. The incident-review endpoint
-    // enforces the same prerequisite; keep both entry points aligned so a
-    // direct API call cannot bypass the safety handoff.
-    if (isClosing && incident.vehicleDamage && incident.technicalClearanceStatus !== 'cleared') {
+    // Closed investigation evidence is terminal. Keep repeat close requests
+    // idempotent, but do not let this older dedicated endpoint reopen or edit a
+    // closed/resolved incident after the incident-review workflow has finished.
+    if (incident.investigationStatus === 'closed' || incident.status === 'resolved') {
+      if (isClosing) {
+        return NextResponse.json({ data: incident, alreadyClosed: true });
+      }
       return NextResponse.json(
-        { error: 'Vehicle-damage investigations require technical clearance before closure.' },
+        {
+          error:
+            'This investigation is already closed. Closed incident evidence cannot be reopened through investigation editing.',
+        },
+        { status: 409 },
+      );
+    }
+
+    // Keep this dedicated endpoint aligned with the unified incident safety
+    // rule used by incident review, trip closure, and database clearance guards.
+    // Damage, an explicitly unsafe vehicle, or a critical incident all require
+    // technical clearance before the investigation can close.
+    const requiresTechnicalClearance =
+      incident.vehicleDamage ||
+      incident.vehicleSafe === false ||
+      incident.severity === 'critical';
+    if (isClosing && requiresTechnicalClearance && incident.technicalClearanceStatus !== 'cleared') {
+      return NextResponse.json(
+        { error: 'Vehicle-safety investigations require technical clearance before closure.' },
         { status: 409 },
       );
     }
@@ -98,7 +118,7 @@ export async function PATCH(
       return NextResponse.json({ error: result.error }, { status });
     }
 
-    return NextResponse.json({ data: result.data });
+    return NextResponse.json({ data: result.data, alreadyClosed: false });
   } catch (error) {
     console.error('[incidents/investigation] PATCH failed:', error);
     return NextResponse.json({ error: 'Failed to update investigation' }, { status: 500 });
