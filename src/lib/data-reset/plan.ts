@@ -135,8 +135,8 @@ export function resolveStepCondition(
     }
     // -- inspections scoped by tenant + trip
     case 'vehicle_inspections': {
-      if (tripIds.length === 0) return null;
-      return sql`tenant_id = ${tenantId} AND trip_id = ANY(${sql.raw(uuidArrayLiteral(tripIds))})`;
+      if (inspectionIds.length === 0) return null;
+      return sql`tenant_id = ${tenantId} AND id = ANY(${sql.raw(uuidArrayLiteral(inspectionIds))})`;
     }
     // -- odometer events produced by removed inspections / fuel entries / trips
     case 'vehicle_odometer_events': {
@@ -200,9 +200,20 @@ export function resolveStepCondition(
       return sql`notification_id = ANY(${sql.raw(uuidArrayLiteral(notificationIds))})`;
     }
     // -- share links for removed documents
+    case 'share_access_events': {
+      if (documentIds.length === 0) return null;
+      return sql`share_link_id IN (
+        SELECT id FROM share_links
+        WHERE document_id = ANY(${sql.raw(uuidArrayLiteral(documentIds))})
+      )`;
+    }
     case 'share_links': {
       if (documentIds.length === 0) return null;
       return sql`document_id = ANY(${sql.raw(uuidArrayLiteral(documentIds))})`;
+    }
+    case 'fuel_transactions': {
+      if (fuelIds.length === 0) return null;
+      return sql`id = ANY(${sql.raw(uuidArrayLiteral(fuelIds))})`;
     }
     default:
       break;
@@ -252,10 +263,6 @@ export function resolveStepCondition(
   if (step.table === 'workflow_instances') {
     return sql`request_id = ANY(${sql.raw(uuidArrayLiteral(requestIds))})`;
   }
-  if (step.table === 'fuel_transactions') {
-    return sql`trip_id = ANY(${sql.raw(uuidArrayLiteral(tripIds))})`;
-  }
-
   return sql`${sql.raw(scopeValue.column)} = ANY(${sql.raw(uuidArrayLiteral(scopeValue.values))})`;
 }
 
@@ -274,22 +281,6 @@ async function collectEntityIds(
       ? sql`SELECT id FROM ${sql.raw(quoteTable('transport_requests'))} WHERE tenant_id = ${tenantId} AND created_at < ${cutoff}`
       : sql`SELECT id FROM ${sql.raw(quoteTable('transport_requests'))} WHERE tenant_id = ${tenantId}`,
   );
-
-  // No operational requests → nothing further to collect.
-  if (requestIds.length === 0) {
-    return {
-      requestIds,
-      tripIds: [],
-      allocationIds: [],
-      authorityIds: [],
-      inspectionIds: [],
-      fuelTransactionIds: [],
-      workflowInstanceIds: [],
-      generatedDocumentIds: [],
-      notificationIds: [],
-      removedEntityIds: [],
-    };
-  }
 
   const [tripIds, allocationIds, authorityIds, workflowInstanceIds] = await Promise.all([
     collectIds(
@@ -313,11 +304,19 @@ async function collectEntityIds(
   const [inspectionIds, fuelTransactionIds] = await Promise.all([
     collectIds(
       db,
-      sql`SELECT id FROM ${sql.raw(quoteTable('vehicle_inspections'))} WHERE tenant_id = ${tenantId} AND trip_id = ANY(${sql.raw(uuidArrayLiteral(tripIds))})`,
+      cutoff
+        ? sql`SELECT id FROM ${sql.raw(quoteTable('vehicle_inspections'))} WHERE tenant_id = ${tenantId} AND created_at < ${cutoff}`
+        : sql`SELECT id FROM ${sql.raw(quoteTable('vehicle_inspections'))} WHERE tenant_id = ${tenantId}`,
     ),
     collectIds(
       db,
-      sql`SELECT id FROM ${sql.raw(quoteTable('fuel_transactions'))} WHERE trip_id = ANY(${sql.raw(uuidArrayLiteral(tripIds))})`,
+      cutoff
+        ? sql`SELECT ft.id FROM ${sql.raw(quoteTable('fuel_transactions'))} ft
+          JOIN ${sql.raw(quoteTable('vehicles'))} v ON v.id = ft.vehicle_id
+          WHERE v.tenant_id = ${tenantId} AND ft.created_at < ${cutoff}`
+        : sql`SELECT ft.id FROM ${sql.raw(quoteTable('fuel_transactions'))} ft
+          JOIN ${sql.raw(quoteTable('vehicles'))} v ON v.id = ft.vehicle_id
+          WHERE v.tenant_id = ${tenantId}`,
     ),
   ]);
 
@@ -338,26 +337,14 @@ async function collectEntityIds(
     ),
     collectIds(
       db,
-      sql`SELECT n.id FROM ${sql.raw(quoteTable('notifications'))} n WHERE n.tenant_id = ${tenantId} AND (
-        n.entity_id = ANY(${sql.raw(uuidArrayLiteral(removedEntityIds))}) OR
-        (n.entity_id IS NOT NULL
-          AND NOT EXISTS (SELECT 1 FROM transport_requests tr WHERE tr.id = n.entity_id)
-          AND NOT EXISTS (SELECT 1 FROM trips tp WHERE tp.id = n.entity_id)
-          AND NOT EXISTS (SELECT 1 FROM vehicle_allocations va WHERE va.id = n.entity_id)
-          AND NOT EXISTS (SELECT 1 FROM trip_authorities ta WHERE ta.id = n.entity_id)
-          AND NOT EXISTS (SELECT 1 FROM vehicle_inspections vi WHERE vi.id = n.entity_id)
-          AND NOT EXISTS (SELECT 1 FROM fuel_transactions ft WHERE ft.id = n.entity_id)
-          AND NOT EXISTS (SELECT 1 FROM workflow_instances wi WHERE wi.id = n.entity_id)
-          AND NOT EXISTS (SELECT 1 FROM generated_documents gd WHERE gd.id = n.entity_id)
-          AND NOT EXISTS (SELECT 1 FROM vehicles v WHERE v.id = n.entity_id)
-          AND NOT EXISTS (SELECT 1 FROM maintenance_events me WHERE me.id = n.entity_id)
-          AND NOT EXISTS (SELECT 1 FROM programmes p WHERE p.id = n.entity_id)
-          AND NOT EXISTS (SELECT 1 FROM regions rg WHERE rg.id = n.entity_id)
-          AND NOT EXISTS (SELECT 1 FROM driver_licences dl WHERE dl.id = n.entity_id)
-          AND NOT EXISTS (SELECT 1 FROM employees em WHERE em.id = n.entity_id)
-          AND NOT EXISTS (SELECT 1 FROM offices ofc WHERE ofc.id = n.entity_id)
-          AND NOT EXISTS (SELECT 1 FROM departments dp WHERE dp.id = n.entity_id))
-      )`,
+      cutoff
+        ? sql`SELECT n.id FROM ${sql.raw(quoteTable('notifications'))} n
+          WHERE n.tenant_id = ${tenantId}
+            AND n.entity_type IS DISTINCT FROM 'reset_request'
+            AND n.created_at < ${cutoff}`
+        : sql`SELECT n.id FROM ${sql.raw(quoteTable('notifications'))} n
+          WHERE n.tenant_id = ${tenantId}
+            AND n.entity_type IS DISTINCT FROM 'reset_request'`,
     ),
   ]);
 

@@ -17,6 +17,13 @@ describe('reset catalog', () => {
     });
   });
 
+  it('defines clean slate as a go-live operational cleanup, not a tenant-shell wipe', () => {
+    expect(normalizeResetSpec({ preset: 'clean_slate' })).toMatchObject({
+      categories: ['operations', 'documents', 'programmes'],
+      requestedCategories: ['operations', 'documents', 'programmes'],
+    });
+  });
+
   it('accepts a past cutoff and rejects future cutoffs', () => {
     expect(
       normalizeResetSpec({ preset: 'selective', categories: ['operations'], cutoff: '2020-01-01' })

@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { revalidatePath } from 'next/cache';
 import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { getDb } from '@/db';
@@ -148,6 +149,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     ]).catch((notificationError) => {
       console.error('[Platform Reset Execute] Outcome notification failed:', notificationError);
     });
+
+    if (result.result === 'completed') revalidatePath('/dashboard', 'layout');
 
     return NextResponse.json(
       { success: result.result === 'completed', data: result },

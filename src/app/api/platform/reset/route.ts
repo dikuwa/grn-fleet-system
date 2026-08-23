@@ -16,7 +16,7 @@ import {
   resetScopeEnum,
 } from '@/db/schema/reset-requests';
 import { tenants, user } from '@/db/schema';
-import { eq, and, desc, count, ilike, lte, or, inArray } from 'drizzle-orm';
+import { eq, and, desc, count, gte, ilike, lt, lte, or, inArray, sql } from 'drizzle-orm';
 import { normalizeResetSpec, resetScopeForSpec } from '@/lib/reset-catalog';
 import {
   isResetApprovalExpired,
@@ -39,10 +39,12 @@ export async function GET(request: NextRequest) {
     const status = searchParams.get('status') || '';
     const scope = searchParams.get('scope') || '';
     const q = searchParams.get('q') || '';
+    const view = searchParams.get('view') === 'history' ? 'history' : 'current';
     const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(searchParams.get('limit') || '25', 10) || 25));
     const offset = (page - 1) * limit;
     const db = getDb();
+    const recentCutoff = new Date(Date.now() - 30 * 86_400_000);
 
     const conditions: ReturnType<typeof and>[] = [];
     if (status)
@@ -52,6 +54,31 @@ export async function GET(request: NextRequest) {
           status as (typeof resetRequestStatusEnum)['enumValues'][number],
         ),
       );
+    if (!status) {
+      conditions.push(
+        (view === 'history'
+          ? or(
+              inArray(tenantResetRequests.status, ['rejected', 'cancelled']),
+              and(
+                eq(tenantResetRequests.status, 'completed'),
+                lt(tenantResetRequests.createdAt, recentCutoff),
+              ),
+            )
+          : or(
+              inArray(tenantResetRequests.status, [
+                'draft',
+                'pending_review',
+                'approved',
+                'in_progress',
+                'failed',
+              ]),
+              and(
+                eq(tenantResetRequests.status, 'completed'),
+                gte(tenantResetRequests.createdAt, recentCutoff),
+              ),
+            ))!,
+      );
+    }
     if (scope)
       conditions.push(
         eq(tenantResetRequests.scope, scope as (typeof resetScopeEnum)['enumValues'][number]),
@@ -113,10 +140,18 @@ export async function GET(request: NextRequest) {
       .limit(limit)
       .offset(offset);
 
-    const statusCounts = await db
-      .select({ status: tenantResetRequests.status, count: count() })
-      .from(tenantResetRequests)
-      .groupBy(tenantResetRequests.status);
+    const [statusCounts, viewCounts] = await Promise.all([
+      db
+        .select({ status: tenantResetRequests.status, count: count() })
+        .from(tenantResetRequests)
+        .groupBy(tenantResetRequests.status),
+      db
+        .select({
+          current: sql<number>`COUNT(*) FILTER (WHERE ${tenantResetRequests.status} IN ('draft', 'pending_review', 'approved', 'in_progress', 'failed') OR (${tenantResetRequests.status} = 'completed' AND ${tenantResetRequests.createdAt} >= ${recentCutoff}))::int`,
+          history: sql<number>`COUNT(*) FILTER (WHERE ${tenantResetRequests.status} IN ('rejected', 'cancelled') OR (${tenantResetRequests.status} = 'completed' AND ${tenantResetRequests.createdAt} < ${recentCutoff}))::int`,
+        })
+        .from(tenantResetRequests),
+    ]);
     const [expiredApprovalResult] = await db
       .select({ count: count() })
       .from(tenantResetRequests)
@@ -144,6 +179,10 @@ export async function GET(request: NextRequest) {
         page,
         limit,
         totalPages: Math.max(1, Math.ceil(total / limit)),
+        viewCounts: {
+          current: Number(viewCounts[0]?.current ?? 0),
+          history: Number(viewCounts[0]?.history ?? 0),
+        },
         stats: {
           total,
           draft: byStatus.draft ?? 0,

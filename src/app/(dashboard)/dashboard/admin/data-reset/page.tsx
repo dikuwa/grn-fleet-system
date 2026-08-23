@@ -18,6 +18,7 @@ import { Badge, type BadgeProps } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
+import { FilterTabs } from '@/components/ui/filter-tabs';
 import { Input, Label, Textarea } from '@/components/ui/input';
 import { useConfirm } from '@/components/ui/confirm-dialog';
 import { useToast } from '@/lib/use-toast';
@@ -108,6 +109,7 @@ export default function TenantDataResetPage() {
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [executingId, setExecutingId] = useState<string | null>(null);
+  const [requestView, setRequestView] = useState<'current' | 'history'>('current');
   const [executionInputs, setExecutionInputs] = useState<Record<string, string>>({});
   const [reason, setReason] = useState('');
   const [acknowledgement, setAcknowledgement] = useState('');
@@ -165,6 +167,14 @@ export default function TenantDataResetPage() {
     [requests],
   );
   const currentRequest = readyRequest ?? openRequest;
+  const recentCompletedId = requests.find((item) => item.status === 'completed')?.id;
+  const currentRequests = requests.filter(
+    (item) =>
+      ['draft', 'pending_review', 'approved', 'in_progress', 'failed'].includes(item.status) ||
+      item.id === recentCompletedId,
+  );
+  const historicalRequests = requests.filter((item) => !currentRequests.includes(item));
+  const visibleRequests = requestView === 'current' ? currentRequests : historicalRequests;
 
   const showRequest = (id: string) => {
     document
@@ -480,19 +490,37 @@ export default function TenantDataResetPage() {
             <CardTitle>Request history</CardTitle>
           </CardHeader>
           <CardContent>
+            <FilterTabs
+              items={[
+                { value: 'current', label: 'Current & recent', count: currentRequests.length },
+                { value: 'history', label: 'Historical', count: historicalRequests.length },
+              ]}
+              value={requestView}
+              onValueChange={setRequestView}
+              label="Reset request view"
+              className="mb-3"
+            />
             {loading ? (
               <div className="text-ink-500 flex min-h-48 items-center justify-center gap-2 text-sm">
                 <Loader2 className="h-5 w-5 animate-spin" /> Loading requests…
               </div>
-            ) : requests.length === 0 ? (
+            ) : visibleRequests.length === 0 ? (
               <EmptyState
                 icon={<RotateCcw className="h-6 w-6" />}
-                title="No reset requests"
-                description="Your organisation has not requested a reset."
+                title={
+                  requestView === 'history'
+                    ? 'No historical reset requests'
+                    : 'No current reset requests'
+                }
+                description={
+                  requestView === 'history'
+                    ? 'Older completed, rejected and cancelled requests will appear here.'
+                    : 'Your organisation has no active or recent reset request.'
+                }
               />
             ) : (
               <div className="space-y-3">
-                {requests.map((item) => {
+                {visibleRequests.map((item) => {
                   const status = STATUS[item.status] ?? {
                     label: item.status,
                     variant: 'default' as const,

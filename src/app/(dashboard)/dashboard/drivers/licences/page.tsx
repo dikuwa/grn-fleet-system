@@ -20,15 +20,11 @@ import {
   ChevronRight,
 } from 'lucide-react';
 import { ClientFilterReset } from '@/components/ui/client-filter-reset';
+import { FilterTabs } from '@/components/ui/filter-tabs';
+import { TruncatedText } from '@/components/ui/long-value';
 
 type QueueTab =
-  | 'pending'
-  | 'expiring'
-  | 'expired'
-  | 'changes_requested'
-  | 'rejected'
-  | 'approved'
-  | 'all';
+  'pending' | 'expiring' | 'expired' | 'changes_requested' | 'rejected' | 'approved' | 'all';
 
 interface QueueRow {
   licenceId: string;
@@ -73,7 +69,10 @@ const TABS: Array<{ key: QueueTab; label: string }> = [
   { key: 'all', label: 'All' },
 ];
 
-function reviewBadge(status: string): { variant: 'success' | 'warning' | 'emergency' | 'error' | 'info' | 'default' | 'pending'; label: string } {
+function reviewBadge(status: string): {
+  variant: 'success' | 'warning' | 'emergency' | 'error' | 'info' | 'default' | 'pending';
+  label: string;
+} {
   switch (status) {
     case 'pending':
       return { variant: 'pending', label: 'Pending review' };
@@ -90,15 +89,6 @@ function reviewBadge(status: string): { variant: 'success' | 'warning' | 'emerge
     default:
       return { variant: 'default', label: status.replace(/_/g, ' ') };
   }
-}
-
-function tabTone(tab: QueueTab, active: boolean) {
-  if (!active) return 'border-border bg-surface text-ink-600 hover:border-ink-300 hover:bg-muted';
-  if (tab === 'approved') return 'border-status-success-text/25 bg-status-success-bg text-status-success-text';
-  if (tab === 'expired' || tab === 'rejected') return 'border-status-error-text/25 bg-status-error-bg text-status-error-text';
-  if (tab === 'changes_requested') return 'border-status-emergency-text/25 bg-status-emergency-bg text-status-emergency-text';
-  if (tab === 'pending' || tab === 'expiring') return 'border-status-warning-text/25 bg-status-warning-bg text-status-warning-text';
-  return 'border-brand-700 bg-brand-700 text-white';
 }
 
 export default function LicenceVerificationQueuePage() {
@@ -195,61 +185,62 @@ export default function LicenceVerificationQueuePage() {
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
           <Card>
             <CardContent className="pt-3 pb-3 text-center">
-              <p className="text-xl font-[650] tabular-nums text-status-pending-text">{stats.pending}</p>
-              <p className="text-[11px] text-ink-500">Pending review</p>
+              <p className="text-status-pending-text text-xl font-[650] tabular-nums">
+                {stats.pending}
+              </p>
+              <p className="text-ink-500 text-[11px]">Pending review</p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-3 pb-3 text-center">
-              <p className="text-xl font-[650] tabular-nums text-status-warning-text">{stats.expiring}</p>
-              <p className="text-[11px] text-ink-500">Expiring ≤ 60d</p>
+              <p className="text-status-warning-text text-xl font-[650] tabular-nums">
+                {stats.expiring}
+              </p>
+              <p className="text-ink-500 text-[11px]">Expiring ≤ 60d</p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-3 pb-3 text-center">
-              <p className="text-xl font-[650] tabular-nums text-status-error-text">{stats.expired}</p>
-              <p className="text-[11px] text-ink-500">Expired</p>
+              <p className="text-status-error-text text-xl font-[650] tabular-nums">
+                {stats.expired}
+              </p>
+              <p className="text-ink-500 text-[11px]">Expired</p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-3 pb-3 text-center">
-              <p className="text-xl font-[650] tabular-nums text-status-emergency-text">{stats.changes_requested}</p>
-              <p className="text-[11px] text-ink-500">Changes requested</p>
+              <p className="text-status-emergency-text text-xl font-[650] tabular-nums">
+                {stats.changes_requested}
+              </p>
+              <p className="text-ink-500 text-[11px]">Changes requested</p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-3 pb-3 text-center">
-              <p className="text-xl font-[650] tabular-nums text-status-error-text">{stats.rejected}</p>
-              <p className="text-[11px] text-ink-500">Rejected</p>
+              <p className="text-status-error-text text-xl font-[650] tabular-nums">
+                {stats.rejected}
+              </p>
+              <p className="text-ink-500 text-[11px]">Rejected</p>
             </CardContent>
           </Card>
           <Card>
             <CardContent className="pt-3 pb-3 text-center">
-              <p className="text-xl font-[650] tabular-nums text-status-success-text">{stats.approved}</p>
-              <p className="text-[11px] text-ink-500">Approved</p>
+              <p className="text-status-success-text text-xl font-[650] tabular-nums">
+                {stats.approved}
+              </p>
+              <p className="text-ink-500 text-[11px]">Approved</p>
             </CardContent>
           </Card>
         </div>
       )}
 
       {/* Tabs */}
-      <div className="flex flex-wrap gap-1.5" role="tablist" aria-label="Licence review queue">
-        {TABS.map((item) => {
-          const active = tab === item.key;
-          return (
-            <button
-              key={item.key}
-              type="button"
-              role="tab"
-              aria-selected={active}
-              onClick={() => switchTab(item.key)}
-              className={`focus-ring rounded-full border px-3.5 py-1.5 text-xs font-medium transition-colors ${tabTone(item.key, active)}`}
-            >
-              {item.label}
-            </button>
-          );
-        })}
-      </div>
+      <FilterTabs
+        items={TABS.map((item) => ({ value: item.key, label: item.label }))}
+        value={tab}
+        onValueChange={switchTab}
+        label="Licence review queue"
+      />
 
       {/* Filters */}
       <Card>
@@ -284,10 +275,20 @@ export default function LicenceVerificationQueuePage() {
               </StyledSelect>
             </div>
             <div className="w-40">
-              <StyledDateInput type="date" value={from} onChange={(e) => setFrom(e.target.value)} aria-label="Expiry from" />
+              <StyledDateInput
+                type="date"
+                value={from}
+                onChange={(e) => setFrom(e.target.value)}
+                aria-label="Expiry from"
+              />
             </div>
             <div className="w-40">
-              <StyledDateInput type="date" value={to} onChange={(e) => setTo(e.target.value)} aria-label="Expiry to" />
+              <StyledDateInput
+                type="date"
+                value={to}
+                onChange={(e) => setTo(e.target.value)}
+                aria-label="Expiry to"
+              />
             </div>
             <Button variant="secondary" size="sm" onClick={runSearch}>
               Apply filters
@@ -314,7 +315,12 @@ export default function LicenceVerificationQueuePage() {
             <div className="text-status-error-text flex items-center gap-2">
               <AlertCircle className="h-4 w-4" />
               <p className="text-sm">{error}</p>
-              <Button variant="secondary" size="sm" className="ml-auto" onClick={() => void fetchQueue()}>
+              <Button
+                variant="secondary"
+                size="sm"
+                className="ml-auto"
+                onClick={() => void fetchQueue()}
+              >
                 Retry
               </Button>
             </div>
@@ -347,41 +353,66 @@ export default function LicenceVerificationQueuePage() {
           {rows.map((row) => {
             const badge = reviewBadge(row.reviewStatus);
             return (
-              <Link key={row.licenceId} href={`/dashboard/drivers/licences/${row.licenceId}`} className="block">
+              <Link
+                key={row.licenceId}
+                href={`/dashboard/drivers/licences/${row.licenceId}`}
+                className="block"
+              >
                 <Card hover>
                   <CardContent className="py-3.5">
                     <div className="flex flex-wrap items-center justify-between gap-3">
                       <div className="flex min-w-0 items-center gap-3">
                         <div className="bg-brand-50 text-brand-700 flex h-10 w-10 shrink-0 items-center justify-center rounded-full text-sm font-bold">
-                          {row.driverName.split(' ').map((part) => part.charAt(0)).join('').slice(0, 2)}
+                          {row.driverName
+                            .split(' ')
+                            .map((part) => part.charAt(0))
+                            .join('')
+                            .slice(0, 2)}
                         </div>
                         <div className="min-w-0">
                           <div className="flex flex-wrap items-center gap-2">
-                            <p className="text-ink-950 truncate text-sm font-medium">{row.driverName}</p>
+                            <p className="text-ink-950 min-w-0 text-sm font-medium">
+                              <TruncatedText value={row.driverName} />
+                            </p>
                             <StatusBadge status={badge.variant} label={badge.label} />
-                            {!row.isActive && <Badge variant="default" size="sm">Superseded</Badge>}
+                            {!row.isActive && (
+                              <Badge variant="default" size="sm">
+                                Superseded
+                              </Badge>
+                            )}
                           </div>
                           <div className="text-ink-500 mt-0.5 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-0.5 text-xs">
                             <span>{row.employeeNumber}</span>
-                            {row.departmentName && <span className="max-w-full truncate">{row.departmentName}</span>}
-                            {row.officeName && <span className="max-w-full truncate">{row.officeName}</span>}
+                            {row.departmentName && <TruncatedText value={row.departmentName} />}
+                            {row.officeName && <TruncatedText value={row.officeName} />}
                           </div>
                         </div>
                       </div>
                       <div className="flex shrink-0 flex-wrap items-center gap-4">
                         <div className="text-right">
-                          <p className="text-sm font-semibold text-ink-950">
-                            Class {row.licenceClass} <span className="font-normal text-ink-500">· v{row.version}</span>
+                          <p className="text-ink-950 text-sm font-semibold">
+                            Class {row.licenceClass}{' '}
+                            <span className="text-ink-500 font-normal">· v{row.version}</span>
                           </p>
                           <p className="text-ink-500 mt-0.5 text-xs">{row.licenceNumber}</p>
                         </div>
                         <div className="text-right">
                           <Badge
-                            variant={row.daysUntil < 0 ? 'error' : row.daysUntil <= 60 ? 'warning' : 'success'}
+                            variant={
+                              row.daysUntil < 0
+                                ? 'error'
+                                : row.daysUntil <= 60
+                                  ? 'warning'
+                                  : 'success'
+                            }
                             size="sm"
                             className="gap-1"
                           >
-                            {row.daysUntil < 0 ? <ShieldAlert className="h-3 w-3" /> : <CalendarClock className="h-3 w-3" />}
+                            {row.daysUntil < 0 ? (
+                              <ShieldAlert className="h-3 w-3" />
+                            ) : (
+                              <CalendarClock className="h-3 w-3" />
+                            )}
                             {row.daysUntil < 0
                               ? `Expired ${Math.abs(row.daysUntil)}d ago`
                               : row.daysUntil === 0
@@ -398,7 +429,8 @@ export default function LicenceVerificationQueuePage() {
                           )}
                           {row.qualityWarnings.length > 0 && (
                             <p className="text-status-warning-text mt-0.5 text-[10px]">
-                              {row.qualityWarnings.length} warning{row.qualityWarnings.length === 1 ? '' : 's'}
+                              {row.qualityWarnings.length} warning
+                              {row.qualityWarnings.length === 1 ? '' : 's'}
                             </p>
                           )}
                         </div>

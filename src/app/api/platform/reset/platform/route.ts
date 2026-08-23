@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { revalidatePath } from 'next/cache';
 import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import {
@@ -66,6 +67,7 @@ export async function POST(request: NextRequest) {
         backupId,
         confirmationPhrase,
       });
+      revalidatePath('/dashboard', 'layout');
       return NextResponse.json({ success: true, data: result });
     }
     return NextResponse.json({ error: 'Action must be backup or execute' }, { status: 400 });

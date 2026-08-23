@@ -7,6 +7,7 @@ describe('operational reset explicit child coverage', () => {
     expect(tables).toEqual(
       expect.arrayContaining([
         'request_goods_equipment',
+        'share_access_events',
         'external_request_drivers',
         'external_driver_assignments',
         'notification_deliveries',
@@ -15,6 +16,7 @@ describe('operational reset explicit child coverage', () => {
       ]),
     );
     expect(tables.indexOf('notification_deliveries')).toBeLessThan(tables.indexOf('notifications'));
+    expect(tables.indexOf('share_access_events')).toBeLessThan(tables.indexOf('share_links'));
     expect(tables.indexOf('request_goods_equipment')).toBeLessThan(
       tables.indexOf('transport_requests'),
     );

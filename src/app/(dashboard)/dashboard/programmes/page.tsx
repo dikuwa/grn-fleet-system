@@ -8,6 +8,8 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ClientFilterReset } from '@/components/ui/client-filter-reset';
+import { FilterTabs } from '@/components/ui/filter-tabs';
+import { TruncatedText } from '@/components/ui/long-value';
 import {
   ArrowRight,
   CalendarDays,
@@ -127,32 +129,15 @@ export default function ProgrammesPage() {
       </PageHeader>
 
       <section aria-label="Programme filters" className="border-border space-y-3 border-y py-4">
-        <div className="-mx-1 overflow-x-auto px-1 pb-1">
-          <div className="flex min-w-max gap-1.5" role="tablist" aria-label="Programme status">
-            {STATUS_TABS.map((tab) => {
-              const active = status === tab.value;
-              return (
-                <button
-                  key={tab.value}
-                  type="button"
-                  role="tab"
-                  aria-selected={active}
-                  onClick={() => {
-                    setStatus(tab.value);
-                    setPage(1);
-                  }}
-                  className={`focus-ring min-h-10 rounded-[7px] border px-3 py-2 text-xs font-medium transition-colors motion-reduce:transition-none ${
-                    active
-                      ? 'border-brand-800 bg-brand-800 text-white'
-                      : 'border-border bg-surface text-ink-700 hover:bg-muted'
-                  }`}
-                >
-                  {tab.label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
+        <FilterTabs
+          items={STATUS_TABS}
+          value={status}
+          onValueChange={(nextStatus) => {
+            setStatus(nextStatus);
+            setPage(1);
+          }}
+          label="Programme status"
+        />
 
         <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
           <div className="relative min-w-0 flex-1 sm:max-w-md">
@@ -189,14 +174,22 @@ export default function ProgrammesPage() {
           <p className="min-w-0 flex-1 text-sm">
             {error instanceof Error ? error.message : 'Failed to load programmes'}
           </p>
-          <Button variant="secondary" size="sm" onClick={() => void refetch()} className="w-full sm:w-auto">
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={() => void refetch()}
+            className="w-full sm:w-auto"
+          >
             Retry
           </Button>
         </div>
       )}
 
       {isLoading && (
-        <div className="text-ink-500 flex items-center justify-center gap-2 py-14 text-sm" role="status">
+        <div
+          className="text-ink-500 flex items-center justify-center gap-2 py-14 text-sm"
+          role="status"
+        >
           <Loader2 className="h-5 w-5 animate-spin motion-reduce:animate-none" aria-hidden="true" />
           Loading programmes…
         </div>
@@ -211,7 +204,9 @@ export default function ProgrammesPage() {
               ? 'No matching records were found. Clear the filters to view the full programme register.'
               : 'Create a programme, submit it for review and publish it so requesters can link it to transport requests.'
           }
-          action={isFiltered ? undefined : { label: 'New Programme', href: '/dashboard/programmes/new' }}
+          action={
+            isFiltered ? undefined : { label: 'New Programme', href: '/dashboard/programmes/new' }
+          }
         />
       )}
 
@@ -225,23 +220,36 @@ export default function ProgrammesPage() {
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
-                  <h2 className="text-ink-950 group-hover:text-brand-700 line-clamp-2 text-sm font-semibold transition-colors motion-reduce:transition-none">
-                    {programme.title}
+                  <h2 className="text-ink-950 group-hover:text-brand-700 text-sm font-semibold transition-colors motion-reduce:transition-none">
+                    <TruncatedText value={programme.title} lines={2} />
                   </h2>
-                  <p className="text-ink-500 mt-1 break-all font-mono text-[11px]">{programme.reference}</p>
+                  <p className="text-ink-500 mt-1 font-mono text-[11px] break-all">
+                    {programme.reference}
+                  </p>
                 </div>
-                <Badge variant={STATUS_VARIANT[programme.status] ?? 'info'} size="sm" className="shrink-0 capitalize">
+                <Badge
+                  variant={STATUS_VARIANT[programme.status] ?? 'info'}
+                  size="sm"
+                  className="shrink-0 capitalize"
+                >
                   {programme.status.replace(/_/g, ' ')}
                 </Badge>
               </div>
 
               {programme.description && (
-                <p className="text-ink-500 mt-3 line-clamp-2 text-xs leading-5">{programme.description}</p>
+                <TruncatedText
+                  value={programme.description}
+                  lines={2}
+                  className="text-ink-500 mt-3 text-xs leading-5"
+                />
               )}
 
               <div className="text-ink-500 mt-3 grid gap-1.5 text-xs">
                 <span className="flex min-w-0 items-start gap-1.5">
-                  <CalendarDays className="text-ink-400 mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                  <CalendarDays
+                    className="text-ink-400 mt-0.5 h-3.5 w-3.5 shrink-0"
+                    aria-hidden="true"
+                  />
                   <span>
                     {formatDateShort(programme.startDate)}
                     {programme.endDate && programme.endDate !== programme.startDate
@@ -251,7 +259,10 @@ export default function ProgrammesPage() {
                 </span>
                 {programme.venue && (
                   <span className="flex min-w-0 items-start gap-1.5">
-                    <MapPin className="text-ink-400 mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden="true" />
+                    <MapPin
+                      className="text-ink-400 mt-0.5 h-3.5 w-3.5 shrink-0"
+                      aria-hidden="true"
+                    />
                     <span className="min-w-0 break-words">{programme.venue}</span>
                   </span>
                 )}
@@ -259,7 +270,8 @@ export default function ProgrammesPage() {
                   {programme.expectedParticipants != null && (
                     <span className="flex items-center gap-1.5">
                       <Users className="text-ink-400 h-3.5 w-3.5" aria-hidden="true" />
-                      {programme.expectedParticipants} participant{programme.expectedParticipants === 1 ? '' : 's'}
+                      {programme.expectedParticipants} participant
+                      {programme.expectedParticipants === 1 ? '' : 's'}
                     </span>
                   )}
                   {programme.estimatedKilometres != null && (
@@ -272,10 +284,10 @@ export default function ProgrammesPage() {
               </div>
 
               <div className="border-border mt-auto flex min-w-0 items-center justify-between gap-3 border-t pt-3 text-xs">
-                <span className="text-ink-500 min-w-0 truncate">
-                  {programme.ownerName || 'Owner not recorded'}
-                  {programme.departmentName ? ` · ${programme.departmentName}` : ''}
-                </span>
+                <TruncatedText
+                  value={`${programme.ownerName || 'Owner not recorded'}${programme.departmentName ? ` · ${programme.departmentName}` : ''}`}
+                  className="text-ink-500 min-w-0"
+                />
                 <span className="text-brand-700 flex shrink-0 items-center gap-1 font-medium">
                   Open <ArrowRight className="h-3.5 w-3.5" aria-hidden="true" />
                 </span>

@@ -119,7 +119,12 @@ export const RESET_CATEGORY_CATALOG: readonly ResetCategoryDefinition[] = [
 const CATEGORY_IDS = new Set<ResetCategoryId>(
   RESET_CATEGORY_CATALOG.map((category) => category.id),
 );
-const CLEAN_SLATE_CATEGORIES = RESET_CATEGORY_CATALOG.map((category) => category.id);
+/**
+ * A go-live clean slate removes the tenant's working/test footprint. It is
+ * deliberately not a tenant-shell wipe: fleet, people, organisation, access
+ * and configuration remain available as separately reviewed selective scopes.
+ */
+export const CLEAN_SLATE_CATEGORIES: ResetCategoryId[] = ['operations', 'documents', 'programmes'];
 
 export function isResetCategoryId(value: unknown): value is ResetCategoryId {
   return typeof value === 'string' && CATEGORY_IDS.has(value as ResetCategoryId);
@@ -214,7 +219,9 @@ export const RESET_ALWAYS_PROTECTED = [
   'Tenant identity and branding',
   'Subscription, billing and payments',
   'One Tenant Owner and all Platform Administrators',
+  'People, fleet and organisation master data',
+  'Roles, permissions and tenant configuration',
   'Audit history',
-  'Backups and reset history',
+  'Protected recovery points and reset history',
   'Global authentication accounts',
 ] as const;

@@ -5,6 +5,9 @@ import { Check, Copy } from 'lucide-react';
 import * as Tooltip from '@radix-ui/react-tooltip';
 import { cn } from '@/lib/utils';
 
+const tooltipClassName =
+  'border-border bg-ink-950 text-surface z-50 max-w-[min(20rem,calc(100vw-1rem))] rounded-[6px] border px-2.5 py-1.5 text-xs leading-4 [overflow-wrap:anywhere] whitespace-normal shadow-lg';
+
 interface LongValueProps {
   value: string | null | undefined;
   fallback?: string;
@@ -66,7 +69,7 @@ export function LongValue({
                 side="top"
                 sideOffset={6}
                 collisionPadding={8}
-                className="bg-ink-950 text-surface z-50 hidden max-w-[min(20rem,calc(100vw-1rem))] rounded-[6px] px-2.5 py-1.5 text-xs leading-4 [overflow-wrap:anywhere] whitespace-normal shadow-lg sm:block"
+                className={cn(tooltipClassName, 'hidden sm:block')}
               >
                 {value}
                 <Tooltip.Arrow className="fill-ink-950" />
@@ -88,6 +91,40 @@ export function LongValue({
           </button>
         ) : null}
       </span>
+    </Tooltip.Provider>
+  );
+}
+
+/** Theme-aware accessible tooltip for intentionally truncated display text. */
+export function TruncatedText({
+  value,
+  lines = 1,
+  className,
+}: {
+  value: string;
+  lines?: 1 | 2;
+  className?: string;
+}) {
+  return (
+    <Tooltip.Provider delayDuration={300} skipDelayDuration={100}>
+      <Tooltip.Root>
+        <Tooltip.Trigger asChild>
+          <span tabIndex={0} className={cn(lines === 1 ? 'truncate' : 'line-clamp-2', className)}>
+            {value}
+          </span>
+        </Tooltip.Trigger>
+        <Tooltip.Portal>
+          <Tooltip.Content
+            side="top"
+            sideOffset={6}
+            collisionPadding={8}
+            className={tooltipClassName}
+          >
+            {value}
+            <Tooltip.Arrow className="fill-ink-950" />
+          </Tooltip.Content>
+        </Tooltip.Portal>
+      </Tooltip.Root>
     </Tooltip.Provider>
   );
 }

@@ -92,6 +92,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         .update(platformBackups)
         .set({
           status: 'failed',
+          isProtected: false,
           failureReason: `Backup row count ${backup.recordCount} did not match dry-run row count ${preview.dryRunSummary.total}.`,
           updatedAt: new Date(),
         })

@@ -236,11 +236,86 @@ async function buildDefinitions(
   }
 
   if (selected.has('programmes')) {
+    const programmeIds = await ids(
+      db,
+      sql`SELECT id FROM programmes WHERE tenant_id = ${tenantId}`,
+    );
+    const programmeDocumentIds =
+      programmeIds.length && !selected.has('documents')
+        ? await ids(
+            db,
+            sql`SELECT id FROM generated_documents WHERE tenant_id = ${tenantId} AND entity_type = 'programme' AND ${anyUuid('entity_id', programmeIds)}`,
+          )
+        : [];
+    const programmeShareLinkIds = programmeDocumentIds.length
+      ? await ids(
+          db,
+          sql`SELECT id FROM share_links WHERE ${anyUuid('document_id', programmeDocumentIds)}`,
+        )
+      : [];
+    const programmeNotificationIds =
+      programmeIds.length && !selected.has('operations')
+        ? await ids(
+            db,
+            sql`SELECT id FROM notifications WHERE tenant_id = ${tenantId} AND entity_type = 'programme' AND ${anyUuid('entity_id', programmeIds)}`,
+          )
+        : [];
+    if (!selected.has('operations')) {
+      definitions.push(
+        {
+          table: 'notification_deliveries',
+          label: 'Programme notification deliveries',
+          category: 'programmes',
+          condition: anyUuid('notification_id', programmeNotificationIds),
+        },
+        {
+          table: 'notification_reads',
+          label: 'Programme notification reads',
+          category: 'programmes',
+          condition: anyUuid('notification_id', programmeNotificationIds),
+        },
+        {
+          table: 'notification_dismissals',
+          label: 'Programme notification dismissals',
+          category: 'programmes',
+          condition: anyUuid('notification_id', programmeNotificationIds),
+        },
+        {
+          table: 'notifications',
+          label: 'Programme notifications',
+          category: 'programmes',
+          condition: anyUuid('id', programmeNotificationIds),
+        },
+      );
+    }
+    if (!selected.has('documents')) {
+      definitions.push(
+        {
+          table: 'share_access_events',
+          label: 'Programme document access events',
+          category: 'programmes',
+          condition: anyUuid('share_link_id', programmeShareLinkIds),
+        },
+        {
+          table: 'share_links',
+          label: 'Programme document share links',
+          category: 'programmes',
+          condition: anyUuid('id', programmeShareLinkIds),
+        },
+        {
+          table: 'generated_documents',
+          label: 'Programme generated documents',
+          category: 'programmes',
+          condition: anyUuid('id', programmeDocumentIds),
+          fileKeyColumns: ['file_key'],
+        },
+      );
+    }
     definitions.push({
       table: 'programmes',
       label: 'Programmes',
       category: 'programmes',
-      condition: sql`tenant_id = ${tenantId}`,
+      condition: anyUuid('id', programmeIds),
     });
   }
 

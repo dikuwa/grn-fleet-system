@@ -254,7 +254,12 @@ export async function createPlatformOperationalBackup(input: {
     const buffer = Buffer.from(JSON.stringify(payload, jsonReplacer), 'utf8');
     const checksum = createHash('sha256').update(buffer).digest('hex');
     const remainingStorageMs = Math.max(1, deadlineAt - Date.now());
-    const upload = await uploadFile(buffer, `backups/platform/${snapshot.id}.json`, {
+    const storageKey = `backups/platform/${snapshot.id}.json`;
+    await db
+      .update(platformBackups)
+      .set({ storageKey, updatedAt: new Date() })
+      .where(eq(platformBackups.id, snapshot.id));
+    const upload = await uploadFile(buffer, storageKey, {
       contentType: 'application/json',
       timeoutMs: remainingStorageMs,
     });
@@ -276,6 +281,7 @@ export async function createPlatformOperationalBackup(input: {
       .update(platformBackups)
       .set({
         status: 'failed',
+        isProtected: false,
         failureReason: error instanceof Error ? error.message : String(error),
         updatedAt: new Date(),
       })

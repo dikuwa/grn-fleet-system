@@ -29,6 +29,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { EmptyState } from '@/components/ui/empty-state';
+import { FilterTabs } from '@/components/ui/filter-tabs';
 import { Input, Label, Textarea } from '@/components/ui/input';
 import { StyledSelect } from '@/components/ui/styled-select';
 import { useConfirm } from '@/components/ui/confirm-dialog';
@@ -137,6 +138,8 @@ export default function PlatformResetPage() {
   const [recoveryPointId, setRecoveryPointId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
+  const [requestView, setRequestView] = useState<'current' | 'history'>('current');
+  const [viewCounts, setViewCounts] = useState({ current: 0, history: 0 });
   const [selected, setSelected] = useState<ResetRequest | null>(null);
   const [steps, setSteps] = useState<ResetStep[]>([]);
   const [detailOpen, setDetailOpen] = useState(false);
@@ -158,7 +161,7 @@ export default function PlatformResetPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({ limit: '100' });
+      const params = new URLSearchParams({ limit: '100', view: requestView });
       if (search.trim()) params.set('q', search.trim());
       if (status) params.set('status', status);
       const [resetRes, tenantRes] = await Promise.all([
@@ -170,6 +173,7 @@ export default function PlatformResetPage() {
       if (!resetRes.ok) throw new Error(resetJson.error || 'Failed to load reset requests');
       if (!tenantRes.ok) throw new Error(tenantJson.error || 'Failed to load tenants');
       setRequests(resetJson.data?.requests ?? []);
+      setViewCounts(resetJson.data?.viewCounts ?? { current: 0, history: 0 });
       setStats((current) => resetJson.data?.stats ?? current);
       const tenantRows = (tenantJson.data?.tenants ?? []) as TenantOption[];
       const realTenants = tenantRows.filter((tenant) => tenant.type !== 'demo_sandbox');
@@ -184,7 +188,7 @@ export default function PlatformResetPage() {
     } finally {
       setLoading(false);
     }
-  }, [search, status, toast]);
+  }, [requestView, search, status, toast]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 250);
@@ -501,6 +505,20 @@ export default function PlatformResetPage() {
       </section>
 
       <section className="border-border grid gap-3 border-y py-4 sm:grid-cols-[minmax(0,1fr)_200px_auto]">
+        <div className="sm:col-span-3">
+          <FilterTabs
+            items={[
+              { value: 'current', label: 'Current & recent', count: viewCounts.current },
+              { value: 'history', label: 'Historical', count: viewCounts.history },
+            ]}
+            value={requestView}
+            onValueChange={(nextView) => {
+              setRequestView(nextView);
+              setStatus('');
+            }}
+            label="Reset request view"
+          />
+        </div>
         <div className="relative">
           <Search className="text-ink-400 pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
           <Input

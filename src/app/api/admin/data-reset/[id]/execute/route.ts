@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { revalidatePath } from 'next/cache';
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { tenantResetRequests } from '@/db/schema/reset-requests';
@@ -195,9 +196,14 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           notes: failureNotes,
         }),
       ]).catch((notificationError) => {
-        console.error('[Tenant Data Reset Execute] Outcome notification failed:', notificationError);
+        console.error(
+          '[Tenant Data Reset Execute] Outcome notification failed:',
+          notificationError,
+        );
       });
     }
+
+    if (result.result === 'completed') revalidatePath('/dashboard', 'layout');
 
     return NextResponse.json(
       { success: result.result === 'completed', data: result },

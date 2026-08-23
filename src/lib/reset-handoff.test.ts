@@ -45,7 +45,7 @@ describe('tenant reset execution handoff boundary', () => {
 
   it('uses a transaction-local governed-reset boundary without weakening ordinary trip immutability', () => {
     const service = source('src/lib/data-protection/reset-service.ts');
-    const migration = source('src/db/migrations/0089_governed_reset_financial_boundary.sql');
+    const migration = source('src/db/migrations/0090_governed_reset_financial_boundary.sql');
 
     expect(service).toContain("set_config('govfleet.governed_reset', 'on', true)");
     expect(migration).toContain("current_setting('govfleet.governed_reset', true) = 'on'");
@@ -76,6 +76,20 @@ describe('tenant reset execution handoff boundary', () => {
     expect(storage).toContain('Promise.race([send(controller.signal), timeout])');
     expect(page).toContain('Creating and verifying recovery point…');
     expect(page).toContain('two-minute storage deadline');
+  });
+
+  it('cleans ordinary tenant communications while preserving reset governance notifications', () => {
+    const plan = source('src/lib/data-reset/plan.ts');
+    expect(plan).toContain("entity_type IS DISTINCT FROM 'reset_request'");
+    expect(plan).toContain('n.created_at < ${cutoff}');
+  });
+
+  it('includes programme-derived documents and notification history in selective cleanup', () => {
+    const plan = source('src/lib/data-protection/advanced-reset-plan.ts');
+    expect(plan).toContain('Programme generated documents');
+    expect(plan).toContain('Programme document access events');
+    expect(plan).toContain('Programme notification deliveries');
+    expect(plan).toContain("entity_type = 'programme'");
   });
 
   it('platform execution refuses tenant-owned operational/selective plans', () => {
@@ -117,7 +131,8 @@ describe('reset notification delivery contract', () => {
     expect(notifications).toContain("status: 'action_required'");
     expect(notifications).toContain('mandatory: true');
     expect(notifications).toContain('WorkspaceIds.TENANT_ADMIN');
-    expect(notifications).toContain('.onConflictDoUpdate({');
+    expect(notifications).toContain('.onConflictDoNothing()');
+    expect(notifications).toContain('.where(eq(notifications.dedupeKey, dedupeKey))');
     expect(notifications).toContain('resolvedAt: null');
 
     const backupRoute = source('src/app/api/platform/reset/[id]/backup/route.ts');

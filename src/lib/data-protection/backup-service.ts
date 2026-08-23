@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { and, desc, eq, isNull, lte, or, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, lte, notInArray, or, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { platformBackups, platformBackupSchedules } from '@/db/schema/data-protection';
 import { tenantResetRequests } from '@/db/schema/reset-requests';
@@ -13,6 +13,7 @@ import {
 import { quoteTable } from '@/lib/data-reset/config';
 import { exportAdvancedResetRows, type AdvancedResetPlan } from './advanced-reset-plan';
 import type { ResetSpec } from '@/lib/reset-catalog';
+import { recoveryPointReleaseBlockReason } from './backup-policy';
 import {
   downloadFile,
   getSignedFileUrl,
@@ -53,6 +54,7 @@ export async function failStaleCreatingBackups(now = new Date()) {
     .update(platformBackups)
     .set({
       status: 'failed',
+      isProtected: false,
       failureReason:
         'Recovery point creation exceeded the storage deadline. Retry to create a fresh recovery point.',
       updatedAt: now,
@@ -217,6 +219,10 @@ export async function createTenantOperationalBackup(input: CreateBackupInput) {
       .toLowerCase()
       .replace(/[^a-z0-9_-]/g, '-');
     const storageKey = `backups/tenants/${safeCode}/${snapshot.id}.json`;
+    await db
+      .update(platformBackups)
+      .set({ storageKey, updatedAt: new Date() })
+      .where(eq(platformBackups.id, snapshot.id));
     const remainingStorageMs = Math.max(1, deadlineAt - Date.now());
     const upload = await uploadFile(buffer, storageKey, {
       contentType: 'application/json',
@@ -274,6 +280,7 @@ export async function createTenantOperationalBackup(input: CreateBackupInput) {
       .update(platformBackups)
       .set({
         status: 'failed',
+        isProtected: false,
         failureReason: error instanceof Error ? error.message : String(error),
         updatedAt: new Date(),
       })
@@ -282,37 +289,80 @@ export async function createTenantOperationalBackup(input: CreateBackupInput) {
   }
 }
 
-export async function listBackups(limit = 100) {
+export type BackupListView = 'current' | 'history';
+
+export async function listBackups(
+  input: { view?: BackupListView; page?: number; limit?: number } = {},
+) {
   const db = getDb();
   await failStaleCreatingBackups();
-  return db
-    .select({
-      id: platformBackups.id,
-      tenantId: platformBackups.tenantId,
-      tenantName: sql<string>`CASE WHEN ${platformBackups.scope} = 'platform_operational' THEN 'Platform operations' ELSE ${tenants.name} END`,
-      tenantCode: sql<
-        string | null
-      >`CASE WHEN ${platformBackups.scope} = 'platform_operational' THEN 'PLATFORM' ELSE ${tenants.code} END`,
-      resetRequestId: platformBackups.resetRequestId,
-      scope: platformBackups.scope,
-      source: platformBackups.source,
-      reason: platformBackups.reason,
-      status: platformBackups.status,
-      storageKey: platformBackups.storageKey,
-      checksum: platformBackups.checksum,
-      sizeBytes: platformBackups.sizeBytes,
-      recordCount: platformBackups.recordCount,
-      retentionDays: platformBackups.retentionDays,
-      expiresAt: platformBackups.expiresAt,
-      isProtected: platformBackups.isProtected,
-      restoredAt: platformBackups.restoredAt,
-      failureReason: platformBackups.failureReason,
-      createdAt: platformBackups.createdAt,
-    })
-    .from(platformBackups)
-    .leftJoin(tenants, eq(platformBackups.tenantId, tenants.id))
-    .orderBy(desc(platformBackups.createdAt))
-    .limit(limit);
+  const view = input.view ?? 'current';
+  const limit = Math.min(50, Math.max(5, input.limit ?? 20));
+  const page = Math.max(1, input.page ?? 1);
+  const currentStatuses = ['creating', 'ready'];
+  const condition =
+    view === 'history'
+      ? notInArray(platformBackups.status, currentStatuses)
+      : inArray(platformBackups.status, currentStatuses);
+  const selection = {
+    id: platformBackups.id,
+    tenantId: platformBackups.tenantId,
+    tenantName: sql<string>`CASE WHEN ${platformBackups.scope} = 'platform_operational' THEN 'Platform operations' ELSE ${tenants.name} END`,
+    tenantCode: sql<
+      string | null
+    >`CASE WHEN ${platformBackups.scope} = 'platform_operational' THEN 'PLATFORM' ELSE ${tenants.code} END`,
+    resetRequestId: platformBackups.resetRequestId,
+    scope: platformBackups.scope,
+    source: platformBackups.source,
+    reason: platformBackups.reason,
+    status: platformBackups.status,
+    storageKey: platformBackups.storageKey,
+    checksum: platformBackups.checksum,
+    sizeBytes: platformBackups.sizeBytes,
+    recordCount: platformBackups.recordCount,
+    retentionDays: platformBackups.retentionDays,
+    expiresAt: platformBackups.expiresAt,
+    isProtected: platformBackups.isProtected,
+    restoredAt: platformBackups.restoredAt,
+    failureReason: platformBackups.failureReason,
+    createdAt: platformBackups.createdAt,
+  };
+  const [items, totals, viewCounts] = await Promise.all([
+    db
+      .select(selection)
+      .from(platformBackups)
+      .leftJoin(tenants, eq(platformBackups.tenantId, tenants.id))
+      .where(condition)
+      .orderBy(desc(platformBackups.createdAt))
+      .limit(limit)
+      .offset((page - 1) * limit),
+    db
+      .select({ count: sql<number>`COUNT(*)::int` })
+      .from(platformBackups)
+      .where(condition),
+    db
+      .select({
+        current: sql<number>`COUNT(*) FILTER (WHERE ${platformBackups.status} IN ('creating', 'ready'))::int`,
+        history: sql<number>`COUNT(*) FILTER (WHERE ${platformBackups.status} NOT IN ('creating', 'ready'))::int`,
+        ready: sql<number>`COUNT(*) FILTER (WHERE ${platformBackups.status} = 'ready')::int`,
+        protected: sql<number>`COUNT(*) FILTER (WHERE ${platformBackups.status} = 'ready' AND ${platformBackups.isProtected} = true)::int`,
+      })
+      .from(platformBackups),
+  ]);
+  const total = Number(totals[0]?.count ?? 0);
+  return {
+    items,
+    page,
+    limit,
+    total,
+    totalPages: Math.max(1, Math.ceil(total / limit)),
+    counts: {
+      current: Number(viewCounts[0]?.current ?? 0),
+      history: Number(viewCounts[0]?.history ?? 0),
+      ready: Number(viewCounts[0]?.ready ?? 0),
+      protected: Number(viewCounts[0]?.protected ?? 0),
+    },
+  };
 }
 
 export async function getBackupDownloadUrl(backupId: string) {
@@ -331,6 +381,15 @@ export async function getBackupDownloadUrl(backupId: string) {
 
 export async function setBackupProtection(backupId: string, isProtected: boolean) {
   const db = getDb();
+  if (!isProtected) {
+    const [backup] = await db
+      .select()
+      .from(platformBackups)
+      .where(eq(platformBackups.id, backupId))
+      .limit(1);
+    if (!backup) throw new Error('Backup not found');
+    await assertRecoveryPointCanBeReleased(backup, 'unprotect');
+  }
   const [updated] = await db
     .update(platformBackups)
     .set({ isProtected, updatedAt: new Date() })
@@ -348,12 +407,37 @@ export async function deleteBackup(backupId: string) {
     .where(eq(platformBackups.id, backupId))
     .limit(1);
   if (!backup) throw new Error('Backup not found');
-  if (backup.isProtected) throw new Error('Protected backups must be unprotected before deletion');
+  await assertRecoveryPointCanBeReleased(backup, 'delete');
   if (backup.storageKey) await deleteFile(backup.storageKey);
-  await db
+  const [deleted] = await db
     .update(platformBackups)
     .set({ status: 'deleted', storageKey: null, updatedAt: new Date() })
-    .where(eq(platformBackups.id, backupId));
+    .where(eq(platformBackups.id, backupId))
+    .returning();
+  return deleted;
+}
+
+async function assertRecoveryPointCanBeReleased(
+  backup: typeof platformBackups.$inferSelect,
+  action: 'delete' | 'unprotect',
+) {
+  const db = getDb();
+  const [resetRequest] = backup.resetRequestId
+    ? await db
+        .select({ status: tenantResetRequests.status })
+        .from(tenantResetRequests)
+        .where(eq(tenantResetRequests.id, backup.resetRequestId))
+        .limit(1)
+    : [];
+  const reason = recoveryPointReleaseBlockReason({
+    action,
+    isProtected: backup.isProtected,
+    backupStatus: backup.status,
+    source: backup.source,
+    expiresAt: backup.expiresAt,
+    resetStatus: resetRequest?.status ?? null,
+  });
+  if (reason) throw new Error(reason);
 }
 
 async function bodyToText(body: ReadableStream | null) {
