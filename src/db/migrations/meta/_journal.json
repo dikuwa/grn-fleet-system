@@ -90,6 +90,7 @@
     { "idx": 85, "version": "7", "when": 1787348400000, "tag": "0085_allocation_vehicle_safety_guard", "breakpoints": true },
     { "idx": 86, "version": "7", "when": 1787349000000, "tag": "0086_unified_incident_clearance_guard", "breakpoints": true },
     { "idx": 87, "version": "7", "when": 1787392800000, "tag": "0087_external_authority_drivers", "breakpoints": true },
-    { "idx": 88, "version": "7", "when": 1787423700000, "tag": "0088_reset_request_creation_concurrency", "breakpoints": true }
+    { "idx": 88, "version": "7", "when": 1787423700000, "tag": "0088_reset_request_creation_concurrency", "breakpoints": true },
+    { "idx": 89, "version": "7", "when": 1787495700000, "tag": "0089_workflow_active_instance_uniqueness", "breakpoints": true }
   ]
 }
