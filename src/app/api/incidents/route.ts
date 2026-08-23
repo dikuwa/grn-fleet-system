@@ -17,8 +17,26 @@ import { resolveDashboardAccess } from '@/lib/dashboard-access';
 import { Permissions } from '@/lib/permissions';
 import { createIncident } from '@/lib/incidents/create-incident';
 import { getIncidentCategory } from '@/lib/incidents/categories';
+import { canAcceptLateOfflineIncident } from '@/lib/incidents/offline-incident-window';
 import { eq, and, desc, type SQL } from 'drizzle-orm';
 import { tripScopeCondition } from '@/lib/record-scope';
+
+const continuationStates = new Set([
+  'safe_to_continue',
+  'continue_with_caution',
+  'temporary_repair_completed',
+  'waiting_for_assistance',
+  'recovery_required',
+  'replacement_vehicle_required',
+  'trip_suspended',
+  'trip_terminated',
+]);
+
+const journeyContinuationStates = new Set([
+  'safe_to_continue',
+  'continue_with_caution',
+  'temporary_repair_completed',
+]);
 
 async function resolveIncidentAccess(session: Parameters<typeof requirePermission>[0]) {
   const [reportCheck, manageCheck, viewCheck] = await Promise.all([
@@ -114,6 +132,7 @@ export async function POST(req: NextRequest) {
     const {
       tripId,
       clientSyncId,
+      offlineCreatedAt,
       incidentType = 'damage',
       incidentCategoryCode,
       occurredAt,
@@ -163,6 +182,29 @@ export async function POST(req: NextRequest) {
         { status: 422 },
       );
     }
+    if (!continuationStates.has(String(continuationState))) {
+      return NextResponse.json({ error: 'Select a valid journey continuation state' }, { status: 422 });
+    }
+
+    const requestedContinuation = journeyContinuationStates.has(String(continuationState));
+    if (safeToContinue !== requestedContinuation) {
+      return NextResponse.json(
+        { error: 'Journey continuation safety does not match the selected continuation state' },
+        { status: 422 },
+      );
+    }
+    if (severity === 'critical' && requestedContinuation) {
+      return NextResponse.json(
+        { error: 'Critical safety events require Transport Office or technical clearance before the journey can continue' },
+        { status: 422 },
+      );
+    }
+    if (vehicleSafe === false && requestedContinuation) {
+      return NextResponse.json(
+        { error: 'A vehicle declared unsafe cannot be marked as continuing the journey' },
+        { status: 422 },
+      );
+    }
 
     const eventDate = occurredAt ? new Date(occurredAt) : new Date();
     if (Number.isNaN(eventDate.getTime())) {
@@ -170,6 +212,21 @@ export async function POST(req: NextRequest) {
     }
     if (eventDate.getTime() > Date.now() + 5 * 60 * 1000) {
       return NextResponse.json({ error: 'Incident time cannot be in the future' }, { status: 422 });
+    }
+
+    const offlineDate = offlineCreatedAt ? new Date(offlineCreatedAt) : null;
+    if (offlineCreatedAt && (!offlineDate || Number.isNaN(offlineDate.getTime()))) {
+      return NextResponse.json({ error: 'Offline creation time is invalid' }, { status: 422 });
+    }
+    if (offlineDate && offlineDate.getTime() > Date.now() + 5 * 60 * 1000) {
+      return NextResponse.json({ error: 'Offline creation time cannot be in the future' }, { status: 422 });
+    }
+
+    const syncId = typeof clientSyncId === 'string' && clientSyncId.trim()
+      ? clientSyncId.trim()
+      : null;
+    if (syncId && syncId.length > 128) {
+      return NextResponse.json({ error: 'Client sync ID is too long' }, { status: 422 });
     }
 
     const odometer =
@@ -187,28 +244,59 @@ export async function POST(req: NextRequest) {
     }
 
     const db = getDb();
-
-    // A report-only Driver must be assigned to the trip. Managers retain their
-    // tenant-wide operational reporting capability. Return 404 to avoid leaking
-    // whether an unassigned/other-tenant trip exists.
+    const tripConditions: SQL[] = [
+      eq(trips.id, tripId),
+      eq(trips.tenantId, session.tenantId),
+    ];
     if (!access.canManage) {
-      const [assignedTrip] = await db
-        .select({ id: trips.id })
-        .from(trips)
-        .where(
-          and(
-            eq(trips.id, tripId),
-            tripScopeCondition({
-              tenantId: session.tenantId,
-              userId: session.user.id,
-              recordScope: 'assigned',
-            }),
-          ),
-        )
-        .limit(1);
-      if (!assignedTrip) {
-        return NextResponse.json({ error: 'Trip not found' }, { status: 404 });
-      }
+      tripConditions.push(
+        tripScopeCondition({
+          tenantId: session.tenantId,
+          userId: session.user.id,
+          recordScope: 'assigned',
+        }),
+      );
+    }
+
+    // Resolve the trip through the caller's authorised record scope first. This
+    // keeps other-tenant/unassigned trips indistinguishable while still giving
+    // the lifecycle check the actual journey timestamps needed for late offline
+    // recovery.
+    const [trip] = await db
+      .select({
+        id: trips.id,
+        status: trips.status,
+        startedAt: trips.startedAt,
+        returnedAt: trips.returnedAt,
+        closedAt: trips.closedAt,
+      })
+      .from(trips)
+      .where(and(...tripConditions))
+      .limit(1);
+    if (!trip) {
+      return NextResponse.json({ error: 'Trip not found' }, { status: 404 });
+    }
+
+    const activeForJourney = ['in_progress', 'return_due'].includes(trip.status);
+    const acceptedLateOfflineIncident =
+      !activeForJourney &&
+      canAcceptLateOfflineIncident({
+        tripStatus: trip.status,
+        startedAt: trip.startedAt,
+        returnedAt: trip.returnedAt,
+        closedAt: trip.closedAt,
+        occurredAt: eventDate,
+        offlineCreatedAt: offlineDate,
+        clientSyncId: syncId,
+      });
+    if (!activeForJourney && !acceptedLateOfflineIncident) {
+      return NextResponse.json(
+        {
+          error:
+            'This trip is no longer active for new incident reports. A saved offline incident is accepted only when its occurrence and local draft timestamps both fall within the recorded journey window.',
+        },
+        { status: 409 },
+      );
     }
 
     // If no explicit category code was sent, treat the incident type as the
@@ -224,7 +312,7 @@ export async function POST(req: NextRequest) {
     const result = await createIncident({
       tenantId: session.tenantId,
       tripId,
-      clientSyncId: typeof clientSyncId === 'string' && clientSyncId.trim() ? clientSyncId.trim() : null,
+      clientSyncId: syncId,
       incidentType,
       incidentCategoryCode: categoryCode,
       requiresMvaForm: categoryRequiresMva,
@@ -239,16 +327,21 @@ export async function POST(req: NextRequest) {
       thirdPartyInvolvement: Boolean(thirdPartyInvolvement),
       policeReference: policeReference || null,
       emergencyServicesContacted: Boolean(emergencyServicesContacted),
-      safeToContinue,
-      continuationState,
+      safeToContinue: requestedContinuation,
+      continuationState: String(continuationState),
       actionTaken: actionTaken || null,
       attachmentKeys: attachmentKeys || [],
       attachmentHashes: body.attachmentHashes || {},
+      offlineCreatedAt: offlineDate,
       reportedByUserId: session.user.id,
     });
 
     return NextResponse.json(
-      { data: result.incident, idempotent: result.idempotent === true },
+      {
+        data: result.incident,
+        idempotent: result.idempotent === true,
+        acceptedLateOfflineIncident,
+      },
       { status: result.idempotent ? 200 : 201 },
     );
   } catch (error) {
