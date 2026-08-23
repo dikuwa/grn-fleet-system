@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { NextResponse } from 'next/server';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, isNull } from 'drizzle-orm';
 import { getDb } from '@/db';
 import {
   transportRequests,
@@ -12,26 +12,73 @@ import { Permissions } from '@/lib/permissions';
 import { WorkflowEngine, type EngineResult } from '@/lib/workflow-engine';
 import { runAtomicMutations } from '@/lib/db-atomic';
 
+function databaseErrorCode(error: unknown): string | null {
+  if (!error || typeof error !== 'object') return null;
+  const record = error as { code?: unknown; cause?: unknown };
+  if (typeof record.code === 'string') return record.code;
+  if (record.cause && typeof record.cause === 'object') {
+    const cause = record.cause as { code?: unknown };
+    if (typeof cause.code === 'string') return cause.code;
+  }
+  return null;
+}
+
+function databaseErrorText(error: unknown): string {
+  if (!error || typeof error !== 'object') return String(error || '');
+  const record = error as {
+    message?: unknown;
+    detail?: unknown;
+    constraint?: unknown;
+    cause?: unknown;
+  };
+  const parts = [record.message, record.detail, record.constraint]
+    .filter((value): value is string => typeof value === 'string');
+  if (record.cause && typeof record.cause === 'object') {
+    const cause = record.cause as {
+      message?: unknown;
+      detail?: unknown;
+      constraint?: unknown;
+    };
+    parts.push(
+      ...[cause.message, cause.detail, cause.constraint]
+        .filter((value): value is string => typeof value === 'string'),
+    );
+  }
+  return parts.join(' ');
+}
+
+function isConcurrentFallbackPublish(error: unknown) {
+  return (
+    databaseErrorCode(error) === '23505' &&
+    databaseErrorText(error).includes('workflow_definitions_one_active_per_route')
+  );
+}
+
 /**
- * Guarantee that standard tenants have a real workflow definition before the
- * engine initialises a request. This keeps new/legacy tenants on the same
- * five-stage workflows as the production seed and prevents the engine's
- * historical ad-hoc fallback from becoming an accidental second business
- * process.
+ * Guarantee that standard tenants have a real fallback workflow definition
+ * before the engine initialises a request. Scoped region/office/department
+ * routes do not count as a fallback because they cannot safely serve unrelated
+ * requests. This prevents a tenant with only a specialised route from leaving
+ * other submissions or corrected/resubmitted requests without an approval
+ * path.
  */
 async function ensureDefaultWorkflowDefinition(
   tenantId: string,
   scope: 'regional' | 'national',
 ): Promise<void> {
   const db = getDb();
+  const fallbackConditions = and(
+    eq(workflowDefinitions.tenantId, tenantId),
+    eq(workflowDefinitions.tripScope, scope),
+    eq(workflowDefinitions.isActive, true),
+    isNull(workflowDefinitions.regionId),
+    isNull(workflowDefinitions.officeId),
+    isNull(workflowDefinitions.departmentId),
+  );
   const [existing] = await db
     .select({ id: workflowDefinitions.id })
     .from(workflowDefinitions)
-    .where(and(
-      eq(workflowDefinitions.tenantId, tenantId),
-      eq(workflowDefinitions.tripScope, scope),
-      eq(workflowDefinitions.isActive, true),
-    ))
+    .where(fallbackConditions)
     .limit(1);
   if (existing) return;
 
@@ -115,17 +162,31 @@ async function ensureDefaultWorkflowDefinition(
     allowsEmergencyOverride: false,
   };
 
-  await runAtomicMutations((tx) => [
-    tx.insert(workflowDefinitions).values({
-      id: definitionId,
-      tenantId,
-      tripScope: scope,
-      version: 1,
-      name,
-      isActive: true,
-    }),
-    tx.insert(workflowSteps).values([...common, ...scoped, driverStep]),
-  ]);
+  try {
+    await runAtomicMutations((tx) => [
+      tx.insert(workflowDefinitions).values({
+        id: definitionId,
+        tenantId,
+        tripScope: scope,
+        version: 1,
+        name,
+        isActive: true,
+      }),
+      tx.insert(workflowSteps).values([...common, ...scoped, driverStep]),
+    ]);
+  } catch (error) {
+    // Migration 0090 guarantees one active exact route. Two first-time
+    // submissions can still race between the read above and the insert; if the
+    // other request successfully created the fallback, recover instead of
+    // failing an otherwise valid submission/resubmission.
+    if (!isConcurrentFallbackPublish(error)) throw error;
+    const [concurrentFallback] = await db
+      .select({ id: workflowDefinitions.id })
+      .from(workflowDefinitions)
+      .where(fallbackConditions)
+      .limit(1);
+    if (!concurrentFallback) throw error;
+  }
 }
 
 /**
