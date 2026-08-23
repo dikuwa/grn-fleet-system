@@ -12,6 +12,7 @@ import { recordAuditEvent } from '@/lib/audit-event';
 import { runAtomicMutations } from '@/lib/db-atomic';
 import { onTripIssued } from '@/lib/document-generator';
 import { namibiaLicenceClassCovers } from '@/lib/namibia-licence';
+import { createScopedNotifications } from '@/lib/notification-service';
 import { Permissions } from '@/lib/permissions';
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
 
@@ -92,6 +93,9 @@ export async function POST(request: NextRequest) {
           reference: transportRequests.reference,
           status: transportRequests.status,
           requesterType: transportRequests.requesterType,
+          requesterUserId: transportRequests.requesterUserId,
+          externalRequesterId: transportRequests.externalRequesterId,
+          preferredDriverExternalPartyId: transportRequests.preferredDriverExternalPartyId,
         })
         .from(transportRequests)
         .where(and(eq(transportRequests.id, requestId), eq(transportRequests.tenantId, tenantId)))
@@ -208,16 +212,70 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'External driver already has an overlapping live assignment' }, { status: 409 });
     }
 
-    const [existingNomination] = await db
-      .select({ id: externalRequestDrivers.id })
-      .from(externalRequestDrivers)
-      .where(
-        and(
-          eq(externalRequestDrivers.requestId, requestId),
-          eq(externalRequestDrivers.externalPartyId, externalDriverPartyId),
+    const [nominatedDrivers, [existingNomination], [externalRequester]] = await Promise.all([
+      db
+        .select({ externalPartyId: externalRequestDrivers.externalPartyId })
+        .from(externalRequestDrivers)
+        .where(
+          and(
+            eq(externalRequestDrivers.requestId, requestId),
+            eq(externalRequestDrivers.driverType, 'nominated'),
+          ),
         ),
-      )
-      .limit(1);
+      db
+        .select({ id: externalRequestDrivers.id })
+        .from(externalRequestDrivers)
+        .where(
+          and(
+            eq(externalRequestDrivers.requestId, requestId),
+            eq(externalRequestDrivers.externalPartyId, externalDriverPartyId),
+          ),
+        )
+        .limit(1),
+      transportRequest.externalRequesterId
+        ? db
+            .select({
+              id: externalParties.id,
+              firstName: externalParties.firstName,
+              lastName: externalParties.lastName,
+              email: externalParties.email,
+            })
+            .from(externalParties)
+            .where(
+              and(
+                eq(externalParties.id, transportRequest.externalRequesterId),
+                eq(externalParties.tenantId, tenantId),
+              ),
+            )
+            .limit(1)
+        : Promise.resolve([]),
+    ]);
+
+    const requesterNominatedDriverIds = Array.from(
+      new Set(nominatedDrivers.map((driver) => driver.externalPartyId).filter(Boolean)),
+    );
+    if (
+      transportRequest.preferredDriverExternalPartyId &&
+      !requesterNominatedDriverIds.includes(transportRequest.preferredDriverExternalPartyId)
+    ) {
+      requesterNominatedDriverIds.push(transportRequest.preferredDriverExternalPartyId);
+    }
+    const driverNominationOverridden = Boolean(
+      requesterNominatedDriverIds.length > 0 &&
+        !requesterNominatedDriverIds.includes(externalDriverPartyId),
+    );
+    const assignmentNote = body.notes?.trim() || '';
+    if (driverNominationOverridden && assignmentNote.length < 3) {
+      return NextResponse.json(
+        {
+          error:
+            'The requester nominated a different external driver. Add a clear override reason in the Transport note before assigning another driver.',
+          requiresDriverOverrideReason: true,
+          nominatedExternalDriverPartyIds: requesterNominatedDriverIds,
+        },
+        { status: 400 },
+      );
+    }
 
     const allocationId = randomUUID();
     const tripId = randomUUID();
@@ -246,7 +304,7 @@ export async function POST(request: NextRequest) {
           endAt,
           state: 'confirmed',
           allocatedByUserId: session.user.id,
-          overrideReason: body.notes?.trim() || null,
+          overrideReason: assignmentNote || null,
           createdAt: now,
           updatedAt: now,
         }),
@@ -341,7 +399,7 @@ export async function POST(request: NextRequest) {
         entityType: 'allocation',
         entityId: allocationId,
         summary: `External driver assigned to ${transportRequest.reference} for vehicle ${vehicle.licenceNumber}; acceptance pending`,
-        before: {},
+        before: { requesterNominatedExternalDriverPartyIds: requesterNominatedDriverIds },
         after: {
           requestId,
           vehicleId,
@@ -350,9 +408,24 @@ export async function POST(request: NextRequest) {
           licenceId: driverRecord.licence.id,
           startAt: startAt.toISOString(),
           endAt: endAt.toISOString(),
+          assignmentNote: assignmentNote || null,
+          driverNominationOverridden,
+          driverOverrideReason: driverNominationOverridden ? assignmentNote : null,
           documentId,
         },
       }),
+      driverNominationOverridden
+        ? recordAuditEvent({
+            tenantId,
+            actorUserId: session.user.id,
+            action: 'allocation.external_driver_nomination_overridden',
+            entityType: 'allocation',
+            entityId: allocationId,
+            summary: `Requester external-driver nomination overridden for ${transportRequest.reference}.`,
+            before: { nominatedExternalDriverPartyIds: requesterNominatedDriverIds },
+            after: { assignedExternalDriverPartyId: externalDriverPartyId, reason: assignmentNote },
+          })
+        : Promise.resolve(),
       recordTenantRequestActivity({
         tenantId,
         requestId,
@@ -362,6 +435,40 @@ export async function POST(request: NextRequest) {
       }),
     ]);
 
+    if (driverNominationOverridden && transportRequest.requesterUserId) {
+      await createScopedNotifications({
+        tenantId,
+        recipientUserIds: [transportRequest.requesterUserId],
+        category: 'awareness',
+        eventType: 'external_driver.nomination_overridden',
+        title: 'External driver nomination updated',
+        body: `Transport Office assigned a different verified external driver to ${transportRequest.reference}. Reason: ${assignmentNote}`,
+        entityType: 'allocation',
+        entityId: allocationId,
+        actionUrl: `/dashboard/requests/${requestId}`,
+      }).catch((notificationError) =>
+        console.warn('[allocations/external] requester override notification failed:', notificationError),
+      );
+    }
+
+    if (driverNominationOverridden && externalRequester?.email) {
+      try {
+        const { sendNotificationEmail } = await import('@/lib/email');
+        await sendNotificationEmail({
+          to: externalRequester.email,
+          type: 'allocation_created',
+          title: 'Vehicle and external driver allocated',
+          body: `Transport Office assigned a different verified external driver to request ${transportRequest.reference}. Reason: ${assignmentNote}`,
+          actionUrl: `/dashboard/requests/${requestId}`,
+          recipientName:
+            `${externalRequester.firstName || ''} ${externalRequester.lastName || ''}`.trim() ||
+            'Requester',
+        });
+      } catch (emailError) {
+        console.warn('[allocations/external] external requester override email failed:', emailError);
+      }
+    }
+
     return NextResponse.json(
       {
         success: true,
@@ -369,6 +476,7 @@ export async function POST(request: NextRequest) {
         trip,
         externalDriverAssignment: assignment,
         acceptanceRequired: true,
+        driverNominationOverridden,
         documentId,
       },
       { status: 201 },
