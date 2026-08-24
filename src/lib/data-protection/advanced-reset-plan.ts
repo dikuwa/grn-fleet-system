@@ -456,6 +456,12 @@ async function buildDefinitions(
       : [];
     definitions.push(
       {
+        table: 'request_intake_links',
+        label: 'External request intake links',
+        category: 'people',
+        condition: sql`tenant_id = ${tenantId}`,
+      },
+      {
         table: 'external_driver_licences',
         label: 'External driver licence versions',
         category: 'people',

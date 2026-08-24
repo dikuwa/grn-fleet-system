@@ -53,6 +53,7 @@ export const RESETTABLE_TABLES = [
   'request_attachments',
   'request_drivers',
   'request_goods_equipment',
+  'request_intake_links',
   'request_passengers',
   'request_reference_sequences',
   'request_revisions',
