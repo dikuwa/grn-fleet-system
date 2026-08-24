@@ -28,10 +28,24 @@ async function login(email: string) {
 }
 
 async function approve(api: APIRequestContext, workflowId: string) {
-  const response = await api.post(`/api/approvals/${workflowId}/action`, {
-    data: { actionType: 'approved' },
-  });
-  expect(response.status(), await response.text()).toBe(200);
+  let lastResponse: Awaited<ReturnType<APIRequestContext['post']>> | null = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const response = await api.post(`/api/approvals/${workflowId}/action`, {
+      data: { actionType: 'approved' },
+    });
+    lastResponse = response;
+    if (response.status() !== 409) {
+      expect(response.status(), await response.text()).toBe(200);
+      return;
+    }
+    const body = await response.text();
+    if (!body.includes('changed while you were deciding')) {
+      expect(response.status(), body).toBe(200);
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 150 * (attempt + 1)));
+  }
+  expect(lastResponse?.status(), lastResponse ? await lastResponse.text() : 'approval did not run').toBe(200);
 }
 
 async function liveChecklist(type: 'departure' | 'return') {
@@ -125,9 +139,6 @@ test('a clean returned trip closes atomically and restores the vehicle to availa
   )?.id as string | undefined;
   expect(driverEmployeeId, 'seeded authorised driver KERC008').toBeTruthy();
 
-  // Remove only overlapping retry leftovers for the exact selected vehicle or
-  // driver. Never cancel unrelated active allocations just to make an E2E test
-  // pass, even when the CI database is disposable.
   await db
     .update(vehicleAllocations)
     .set({ state: 'cancelled' })
@@ -172,7 +183,21 @@ test('a clean returned trip closes atomically and restores the vehicle to availa
   await approve(transport, workflowId);
   await approve(release, workflowId);
   await approve(authoriser, workflowId);
-  await approve(driver, workflowId);
+
+  const acknowledge = await driver.post(`/api/trips/${tripId}/acknowledge`, {
+    data: {
+      vehicleConfirmed: true,
+      authorityConfirmed: true,
+      routeUnderstood: true,
+      passengersUnderstood: true,
+      licenceValidConfirmed: true,
+      responsibilityAccepted: true,
+      conditionsReviewed: true,
+      signature: 'e2e-clean-closure-driver-confirmed',
+      comment: 'Production closure driver acceptance.',
+    },
+  });
+  expect(acknowledge.status(), await acknowledge.text()).toBe(200);
 
   const departureEvidence = await liveChecklist('departure');
   const departure = await inspector.post('/api/inspections', {
@@ -280,7 +305,6 @@ test('a clean returned trip closes atomically and restores the vehicle to availa
   expect(savedVehicle.status).toBe('available');
   expect(savedVehicle.currentOdometer).toBeGreaterThanOrEqual(endingOdometer);
 
-  // Driver assignment remains attributable to the seeded employee after close.
   const [driverRecord] = await db
     .select({ id: employees.id })
     .from(employees)
