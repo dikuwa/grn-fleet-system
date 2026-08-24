@@ -48,7 +48,7 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U govfleet -d govfleet_test"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
@@ -166,9 +166,6 @@ jobs:
           src/e2e/driver-licence-upload-review.smoke.spec.ts
           --project=chromium --workers=1
         env:
-          # Reuse the already-running integration server. An empty CI value
-          # makes Playwright's configured reuseExistingServer guard true while
-          # GitHub Actions itself remains a CI environment.
           CI: ''
           DATABASE_URL: ${{ env.DATABASE_URL }}
           BETTER_AUTH_URL: ${{ env.BETTER_AUTH_URL }}
@@ -183,12 +180,18 @@ jobs:
           R2_BUCKET_NAME: ${{ env.R2_BUCKET_NAME }}
           R2_ENDPOINT: ${{ env.R2_ENDPOINT }}
 
-      - name: Upload production-closure Playwright report on failure
+      - name: Show dev server log on failure
+        if: failure()
+        run: tail -n 800 /tmp/dev-server.log || true
+
+      - name: Upload production-closure diagnostics on failure
         if: failure()
         uses: actions/upload-artifact@v4
         with:
-          name: production-closure-playwright-report
-          path: playwright-report/
+          name: production-closure-diagnostics
+          path: |
+            playwright-report/
+            /tmp/dev-server.log
           if-no-files-found: ignore
 
       - name: Stop dev server
