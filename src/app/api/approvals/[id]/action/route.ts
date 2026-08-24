@@ -269,6 +269,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       requestId: instance.requestId,
       result: semanticResult,
       stepLabel: status.currentStep.label,
+      comment: typeof comment === 'string' ? comment : undefined,
     });
 
     return NextResponse.json({
