@@ -55,7 +55,8 @@ export default function ExternalIntakeLinksPage() {
   }, []);
 
   useEffect(() => {
-    void loadLinks();
+    const timer = window.setTimeout(() => void loadLinks(), 0);
+    return () => window.clearTimeout(timer);
   }, [loadLinks]);
 
   async function createLink() {
