@@ -45,6 +45,7 @@ export async function findPendingAuthorityAmendmentAcceptance(input: {
 
   const db = getDb();
   const effectiveAt = sql<Date>`coalesce(${tripAmendments.approvedAt}, ${tripAmendments.createdAt})`;
+  const acceptedAtIso = input.acceptedAt.toISOString();
   const [amendment] = await db
     .select({
       id: tripAmendments.id,
@@ -65,7 +66,7 @@ export async function findPendingAuthorityAmendmentAcceptance(input: {
         eq(tripAmendments.authorityId, input.authorityId),
         inArray(tripAmendments.amendmentType, [...DRIVER_REACCEPTANCE_AMENDMENT_TYPES]),
         eq(tripAmendments.status, 'approved'),
-        sql`${effectiveAt} > ${input.acceptedAt}`,
+        sql`${effectiveAt} > ${acceptedAtIso}::timestamptz`,
         eq(trips.status, 'pending'),
         isNull(trips.issuedAt),
       ),
