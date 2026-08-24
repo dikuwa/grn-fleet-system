@@ -129,6 +129,7 @@ jobs:
           src/e2e/cross-tenant-isolation.spec.ts
           src/e2e/all-role-ui-smoke.spec.ts
           src/e2e/document-native-print.spec.ts
+          src/e2e/revised-authority-closure.spec.ts
           --project=chromium --workers=1
         env:
           # Reuse the already-running integration server. An empty CI value
