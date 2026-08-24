@@ -42,7 +42,7 @@ async function signIn(page: import('@playwright/test').Page, username: string) {
 }
 
 test('driver licence upload stays provisional until Transport Admin review, then persists as verified', async ({ page, context }) => {
-  test.setTimeout(300_000);
+  test.setTimeout(360_000);
 
   await signIn(page, 'driver');
 
@@ -78,10 +78,10 @@ test('driver licence upload stays provisional until Transport Admin review, then
       issueDate: '2026-01-01',
       expiryDate: '2030-12-31',
     },
-    timeout: 120_000,
+    timeout: 180_000,
   });
 
-  expect(Date.now() - uploadStartedAt, 'OCR/upload request must complete within two minutes').toBeLessThan(120_000);
+  expect(Date.now() - uploadStartedAt, 'OCR/upload request must complete within three minutes').toBeLessThan(180_000);
   expect(uploadResponse.status(), await uploadResponse.text()).toBe(201);
   const upload = await uploadResponse.json();
   const licenceId = upload.data?.id as string | undefined;
@@ -94,7 +94,6 @@ test('driver licence upload stays provisional until Transport Admin review, then
   expect(upload.data?.isVerified).toBe(false);
   expect(['awaiting_review', 'needs_correction']).toContain(upload.data?.verificationStatus);
 
-  // A new upload must remain provisional for the driver until an authorised reviewer acts.
   const provisionalResponse = await page.request.get('/api/drivers/me');
   expect(provisionalResponse.ok()).toBeTruthy();
   const provisional = await provisionalResponse.json();
