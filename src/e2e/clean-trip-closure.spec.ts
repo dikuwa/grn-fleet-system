@@ -112,7 +112,10 @@ test('a clean returned trip closes atomically and restores the vehicle to availa
   const vehicle = fleetRows.find((row: { status: string }) => row.status === 'available') as
     | { id: string; currentOdometer: number }
     | undefined;
-  test.skip(!vehicle, 'No available vehicle for clean closure E2E');
+  if (!vehicle) {
+    test.skip(true, 'No available vehicle for clean closure E2E');
+    return;
+  }
 
   const driversResponse = await transport.get('/api/drivers');
   expect(driversResponse.status(), await driversResponse.text()).toBe(200);
