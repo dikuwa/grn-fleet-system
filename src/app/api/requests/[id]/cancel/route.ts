@@ -10,6 +10,7 @@ import {
   requireAnyPermission,
 } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
+import { notifyRequestCancelled } from '@/lib/request-lifecycle-notifications';
 
 /**
  * PATCH /api/requests/[id]/cancel
@@ -183,6 +184,15 @@ export async function PATCH(
         ELSE 'atomic_request_cancel_failed_' || (SELECT count(*) FROM request_claim)::text
       END AS integer) AS committed
     `);
+
+    await notifyRequestCancelled({
+      tenantId: session.tenantId,
+      requestId: id,
+      actorUserId: session.user.id,
+      reason,
+    }).catch((notificationError) => {
+      console.warn('[request-cancel] Post-commit lifecycle notification failed:', notificationError);
+    });
 
     return NextResponse.json({ success: true, status: 'cancelled' });
   } catch (error) {
