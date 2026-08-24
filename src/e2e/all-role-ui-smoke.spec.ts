@@ -4,31 +4,31 @@ const BASE = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 const PASSWORD = process.env.SEED_ADMIN_PASSWORD || 'changeme';
 
 const accounts = [
-  'platform.admin@grnfleet.test',
-  'admin@kavangoeast.gov.na',
-  'transport.admin@kavangoeast.test',
-  'requester@kavangoeast.test',
-  'supervisor@kavangoeast.test',
-  'release.officer@kavangoeast.test',
-  'regional.authoriser@kavangoeast.test',
-  'national.release@kavangoeast.test',
-  'national.authoriser@kavangoeast.test',
-  'driver@kavangoeast.test',
-  'inspector@kavangoeast.test',
-  'maintenance@kavangoeast.test',
-  'auditor@kavangoeast.test',
+  { email: 'platform.admin@grnfleet.test', documents: false },
+  { email: 'admin@kavangoeast.gov.na', documents: false },
+  { email: 'transport.admin@kavangoeast.test', documents: true },
+  { email: 'requester@kavangoeast.test', documents: true },
+  { email: 'supervisor@kavangoeast.test', documents: false },
+  { email: 'release.officer@kavangoeast.test', documents: false },
+  { email: 'regional.authoriser@kavangoeast.test', documents: false },
+  { email: 'national.release@kavangoeast.test', documents: false },
+  { email: 'national.authoriser@kavangoeast.test', documents: false },
+  { email: 'driver@kavangoeast.test', documents: true },
+  { email: 'inspector@kavangoeast.test', documents: false },
+  { email: 'maintenance@kavangoeast.test', documents: false },
+  { email: 'auditor@kavangoeast.test', documents: true },
 ] as const;
 
-test.describe.serial('Every seeded role — responsive shell smoke', () => {
-  test.setTimeout(300_000);
+test.describe.serial('Every seeded role — responsive, theme, notification and document matrix', () => {
+  test.setTimeout(600_000);
 
-  for (const email of accounts) {
-    test(`${email} receives the responsive, theme-aware dashboard shell`, async ({ browser }) => {
+  for (const account of accounts) {
+    test(`${account.email} receives only its intended personal workspace capabilities`, async ({ browser }) => {
       const api = await playwrightRequest.newContext({ baseURL: BASE });
       const signIn = await api.post('/api/auth/sign-in', {
-        data: { email, password: PASSWORD },
+        data: { email: account.email, password: PASSWORD },
       });
-      expect(signIn.status(), `sign in ${email}`).toBe(200);
+      expect(signIn.status(), `sign in ${account.email}`).toBe(200);
 
       const context = await browser.newContext({
         storageState: await api.storageState(),
@@ -42,11 +42,52 @@ test.describe.serial('Every seeded role — responsive shell smoke', () => {
       await expect(page.getByRole('button', { name: /open search/i }).first()).toBeVisible();
       await expect(page.getByRole('button', { name: /open account menu/i }).first()).toBeVisible();
 
+      // Exercise the real theme selector for every role rather than merely
+      // asserting that the trigger exists.
+      await page.getByRole('button', { name: /select theme/i }).first().click();
+      await page.getByRole('menuitemradio', { name: 'Dark' }).click();
+      await expect(page.locator('html')).toHaveClass(/dark/);
+      expect(await page.evaluate(() => localStorage.getItem('govfleet-theme'))).toBe('dark');
+
+      await page.getByRole('button', { name: /select theme/i }).first().click();
+      await page.getByRole('menuitemradio', { name: 'Light' }).click();
+      await expect(page.locator('html')).not.toHaveClass(/dark/);
+      expect(await page.evaluate(() => localStorage.getItem('govfleet-theme'))).toBe('light');
+
+      // Notifications are a personal route for every workspace. Verify the
+      // actual page rather than only the navigation link.
+      const notifications = await page.goto('/dashboard/notifications', {
+        waitUntil: 'domcontentloaded',
+        timeout: 60_000,
+      });
+      expect(notifications?.status(), `${account.email} notifications response`).toBe(200);
+      await expect(page).toHaveURL(/\/dashboard\/notifications/);
+
+      // Documents intentionally belong only to PERSONAL, DRIVER,
+      // TRANSPORT_ADMIN and AUDIT workspaces. Verify both sides of that matrix
+      // so broadening the route later cannot silently leak document access.
+      const documents = await page.goto('/dashboard/documents', {
+        waitUntil: 'domcontentloaded',
+        timeout: 60_000,
+      });
+      if (account.documents) {
+        expect(documents?.status(), `${account.email} documents response`).toBe(200);
+        await expect(page).toHaveURL(/\/dashboard\/documents/);
+      } else {
+        const status = documents?.status() ?? 0;
+        const stillOnDocuments = /\/dashboard\/documents(?:\/|$)/.test(page.url());
+        expect(
+          status === 403 || status === 404 || !stillOnDocuments,
+          `${account.email} must not gain Documents workspace access`,
+        ).toBe(true);
+      }
+
+      await page.goto('/dashboard', { waitUntil: 'domcontentloaded', timeout: 60_000 });
       const dimensions = await page.evaluate(() => ({
         content: document.documentElement.scrollWidth,
         viewport: window.innerWidth,
       }));
-      expect(dimensions.content, `${email} horizontal overflow`).toBeLessThanOrEqual(
+      expect(dimensions.content, `${account.email} horizontal overflow`).toBeLessThanOrEqual(
         dimensions.viewport + 5,
       );
 
