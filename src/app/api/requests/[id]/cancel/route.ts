@@ -10,6 +10,7 @@ import {
   requireAnyPermission,
 } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
+import { resolveActionNotifications } from '@/lib/notification-service';
 
 /**
  * PATCH /api/requests/[id]/cancel
@@ -57,6 +58,7 @@ export async function PATCH(
         id: transportRequests.id,
         status: transportRequests.status,
         requesterUserId: transportRequests.requesterUserId,
+        workflowInstanceId: transportRequests.workflowInstanceId,
       })
       .from(transportRequests)
       .where(and(eq(transportRequests.id, id), eq(transportRequests.tenantId, session.tenantId)))
@@ -183,6 +185,16 @@ export async function PATCH(
         ELSE 'atomic_request_cancel_failed_' || (SELECT count(*) FROM request_claim)::text
       END AS integer) AS committed
     `);
+
+    if (req.workflowInstanceId) {
+      await resolveActionNotifications({
+        tenantId: session.tenantId,
+        entityType: 'workflow_instance',
+        entityId: req.workflowInstanceId,
+      }).catch((notificationError) => {
+        console.warn('[requests/cancel] Could not resolve cancelled workflow notifications:', notificationError);
+      });
+    }
 
     return NextResponse.json({ success: true, status: 'cancelled' });
   } catch (error) {
