@@ -4,7 +4,7 @@ import {
   test,
   type APIRequestContext,
 } from '@playwright/test';
-import { and, desc, eq, isNull } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, isNull, lt } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { generatedDocuments } from '@/db/schema/documents';
 import { externalDriverAssignments } from '@/db/schema/external-driver-assignments';
@@ -115,7 +115,14 @@ test('verified external driver can be accepted, issued, departed, returned, insp
     .limit(1);
   expect(transportEmployee?.userId).toBeTruthy();
 
-  const [vehicle] = await db
+  const run = crypto.randomUUID();
+  const externalPartyId = crypto.randomUUID();
+  const externalLicenceId = crypto.randomUUID();
+  const requestId = crypto.randomUUID();
+  const startAt = new Date(Date.now() - 30 * 60_000);
+  const endAt = new Date(Date.now() + 8 * 60 * 60_000);
+
+  const candidateVehicles = await db
     .select({
       id: vehicles.id,
       currentOdometer: vehicles.currentOdometer,
@@ -129,16 +136,27 @@ test('verified external driver can be accepted, issued, departed, returned, insp
         eq(vehicles.professionalAuthorisationRequired, false),
         isNull(vehicles.requiredLicenceClass),
       ),
-    )
-    .limit(1);
-  test.skip(!vehicle, 'No available non-professional vehicle with unrestricted licence class');
-
-  const run = crypto.randomUUID();
-  const externalPartyId = crypto.randomUUID();
-  const externalLicenceId = crypto.randomUUID();
-  const requestId = crypto.randomUUID();
-  const startAt = new Date(Date.now() - 30 * 60_000);
-  const endAt = new Date(Date.now() + 8 * 60 * 60_000);
+    );
+  const candidateIds = candidateVehicles.map((row) => row.id);
+  const conflicts = candidateIds.length
+    ? await db
+        .select({ vehicleId: vehicleAllocations.vehicleId })
+        .from(vehicleAllocations)
+        .where(
+          and(
+            inArray(vehicleAllocations.vehicleId, candidateIds),
+            inArray(vehicleAllocations.state, ['provisional', 'confirmed', 'issued']),
+            lt(vehicleAllocations.startAt, endAt),
+            gt(vehicleAllocations.endAt, startAt),
+          ),
+        )
+    : [];
+  const conflictingVehicleIds = new Set(conflicts.map((row) => row.vehicleId));
+  const vehicle = candidateVehicles.find((row) => !conflictingVehicleIds.has(row.id));
+  if (!vehicle) {
+    test.skip(true, 'No conflict-free available non-professional vehicle with unrestricted licence class');
+    return;
+  }
 
   await db.insert(externalParties).values({
     id: externalPartyId,
@@ -224,9 +242,6 @@ test('verified external driver can be accepted, issued, departed, returned, insp
   expect(acceptedAssignment.state).toBe('accepted');
   expect(acceptedAssignment.acceptedAt).toBeTruthy();
 
-  // The normal approval chain is separately covered. For this lifecycle test,
-  // model its final result explicitly so every external-only operational API is
-  // exercised without conflating an unrelated approval failure.
   await db
     .update(transportRequests)
     .set({ status: 'authorised', updatedAt: new Date() })
@@ -277,9 +292,6 @@ test('verified external driver can be accepted, issued, departed, returned, insp
     .limit(1);
   expect(authorityAfterInspection.status).toBe('ready_for_departure');
 
-  // Formal document issuance is a separate document workflow. Ensure the
-  // external physical-issue route sees the exact current immutable authority
-  // snapshot it requires rather than weakening that production guard.
   const [latestDocument] = await db
     .select({ id: generatedDocuments.id })
     .from(generatedDocuments)
@@ -390,7 +402,6 @@ test('verified external driver can be accepted, issued, departed, returned, insp
   expect(savedVehicle.status).toBe('available');
   expect(savedVehicle.currentOdometer).toBeGreaterThanOrEqual(endingOdometer);
 
-  // The external driver remains outside the employee directory throughout.
   const accidentalStaff = await db
     .select({ id: employees.id })
     .from(employees)
