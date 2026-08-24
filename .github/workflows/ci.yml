@@ -119,6 +119,38 @@ jobs:
           SEED_ADMIN_EMAIL: ${{ env.SEED_ADMIN_EMAIL }}
           SEED_ADMIN_PASSWORD: ${{ env.SEED_ADMIN_PASSWORD }}
 
+      - name: Install Chromium for production-closure browser checks
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run production-closure browser checks
+        run: >-
+          pnpm exec playwright test
+          src/e2e/request-return-cancellation-closure.spec.ts
+          src/e2e/cross-tenant-isolation.spec.ts
+          src/e2e/all-role-ui-smoke.spec.ts
+          src/e2e/document-native-print.spec.ts
+          --project=chromium --workers=1
+        env:
+          # Reuse the already-running integration server. An empty CI value
+          # makes Playwright's configured reuseExistingServer guard true while
+          # GitHub Actions itself remains a CI environment.
+          CI: ''
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+          BETTER_AUTH_URL: ${{ env.BETTER_AUTH_URL }}
+          BETTER_AUTH_SECRET: ${{ env.BETTER_AUTH_SECRET }}
+          NEXT_PUBLIC_APP_URL: ${{ env.NEXT_PUBLIC_APP_URL }}
+          NEXT_PUBLIC_APP_NAME: ${{ env.NEXT_PUBLIC_APP_NAME }}
+          SEED_ADMIN_EMAIL: ${{ env.SEED_ADMIN_EMAIL }}
+          SEED_ADMIN_PASSWORD: ${{ env.SEED_ADMIN_PASSWORD }}
+
+      - name: Upload production-closure Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-closure-playwright-report
+          path: playwright-report/
+          if-no-files-found: ignore
+
       - name: Stop dev server
         if: always()
         run: kill $(lsof -ti :3000) 2>/dev/null || true
