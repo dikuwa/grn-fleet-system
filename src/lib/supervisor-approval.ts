@@ -126,8 +126,6 @@ export async function processSupervisorDecisionAtomic(input: {
         requestRecord.travellerEmployeeId === actorEmployee.id),
     );
   if (conflict) {
-    // Re-use the engine only for the conflict branch. It resolves/reassigns the
-    // responsible holder before any workflow action row is written.
     return engine.processAction(
       {
         instanceId,
@@ -293,9 +291,9 @@ export async function processSupervisorDecisionAtomic(input: {
         END AS integer
       ) AS committed
     `);
-    const committed = Number(
-      (commit.rows?.[0] as { committed?: number | string } | undefined)?.committed ?? 0,
-    );
+    const commitRow = (commit as unknown as Array<{ committed?: number | string }>)[0] ??
+      (commit.rows?.[0] as { committed?: number | string } | undefined);
+    const committed = Number(commitRow?.committed ?? 0);
     if (committed !== 1) {
       return {
         ok: false,
@@ -320,8 +318,6 @@ export async function processSupervisorDecisionAtomic(input: {
     throw error;
   }
 
-  // Everything below is post-commit. A notification/reminder outage must not
-  // make a durable supervisor decision look as if it failed.
   await resolveActionNotifications({
     tenantId: session.tenantId,
     entityType: 'workflow_instance',
