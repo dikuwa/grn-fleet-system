@@ -11,6 +11,7 @@ import {
 import { Permissions } from '@/lib/permissions';
 import { WorkflowEngine, type EngineResult } from '@/lib/workflow-engine';
 import { runAtomicMutations } from '@/lib/db-atomic';
+import { resolveActionNotifications } from '@/lib/notification-service';
 
 function databaseErrorCode(error: unknown): string | null {
   if (!error || typeof error !== 'object') return null;
@@ -302,4 +303,12 @@ export async function abandonRequestWorkflow(
         eq(transportRequests.workflowInstanceId, instanceId),
       )),
   ]);
+
+  await resolveActionNotifications({
+    tenantId,
+    entityType: 'workflow_instance',
+    entityId: instanceId,
+  }).catch((notificationError) => {
+    console.warn('[request-workflow] Could not resolve abandoned workflow notifications:', notificationError);
+  });
 }
