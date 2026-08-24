@@ -23,6 +23,7 @@ import { statusConfig, TRIP_STATUS_GROUPS } from '@/lib/request-status';
 import { StyledSelect } from '@/components/ui/styled-select';
 import { LiveSearchInput } from '@/components/ui/live-search-input';
 import { FilterToolbar } from '@/components/ui/filter-toolbar';
+import { FilterTabLinks } from '@/components/ui/navigation-tabs';
 import { buildFilterUrl, hasActiveFilters, normalizeOptionalFilter } from '@/lib/filter-state';
 import { groupedCountMap, sumGroupedCounts } from '@/lib/statistics';
 import Link from 'next/link';
@@ -161,7 +162,9 @@ async function fetchTrips(
       .groupBy(trips.status),
   ]);
 
-  const driverNameMap = new Map(driverList.map((driver) => [driver.id, `${driver.firstName} ${driver.lastName}`]));
+  const driverNameMap = new Map(
+    driverList.map((driver) => [driver.id, `${driver.firstName} ${driver.lastName}`]),
+  );
   const enrichedRows = rows.map((row) => ({
     ...row,
     driverName: row.driverEmployeeId ? (driverNameMap.get(row.driverEmployeeId) ?? null) : null,
@@ -196,7 +199,11 @@ export default async function TripsPage({ searchParams }: PageProps) {
       <div className="space-y-6">
         <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Trips' }]} />
         <PageHeader title="Trips" description="Manage operational trips and vehicle assignments" />
-        <EmptyState icon={<Database className="h-6 w-6" />} title="Authentication Required" description="Please sign in to view trips." />
+        <EmptyState
+          icon={<Database className="h-6 w-6" />}
+          title="Authentication Required"
+          description="Please sign in to view trips."
+        />
       </div>
     );
   }
@@ -206,7 +213,11 @@ export default async function TripsPage({ searchParams }: PageProps) {
       <div className="space-y-6">
         <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Trips' }]} />
         <PageHeader title="Trips" description="Manage operational trips and vehicle assignments" />
-        <EmptyState icon={<Database className="h-6 w-6" />} title="Database Not Configured" description="Set DATABASE_URL and run migrations." />
+        <EmptyState
+          icon={<Database className="h-6 w-6" />}
+          title="Database Not Configured"
+          description="Set DATABASE_URL and run migrations."
+        />
       </div>
     );
   }
@@ -228,7 +239,11 @@ export default async function TripsPage({ searchParams }: PageProps) {
       <div className="space-y-6">
         <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Trips' }]} />
         <PageHeader title="Trips" description="Manage operational trips and vehicle assignments" />
-        <EmptyState icon={<Database className="h-6 w-6" />} title="Unable to Load Trips" description="The database query failed. Run migrations first." />
+        <EmptyState
+          icon={<Database className="h-6 w-6" />}
+          title="Unable to Load Trips"
+          description="The database query failed. Run migrations first."
+        />
       </div>
     );
   }
@@ -236,7 +251,11 @@ export default async function TripsPage({ searchParams }: PageProps) {
   const metrics = [
     { label: 'Total Trips', value: result.metrics.total, className: 'text-ink-950' },
     { label: 'Active', value: result.metrics.active, className: 'text-status-info-text' },
-    { label: 'Return Due', value: result.metrics.returnDue, className: 'text-status-emergency-text' },
+    {
+      label: 'Return Due',
+      value: result.metrics.returnDue,
+      className: 'text-status-emergency-text',
+    },
     { label: 'Closed', value: result.metrics.closed, className: 'text-status-success-text' },
   ];
 
@@ -251,7 +270,11 @@ export default async function TripsPage({ searchParams }: PageProps) {
               ? 'Trip Monitoring'
               : 'Trips'
         }
-        description={access.actions.includes('update') ? 'Manage operational trips and vehicle assignments' : 'Read-only trips within your permitted scope'}
+        description={
+          access.actions.includes('update')
+            ? 'Manage operational trips and vehicle assignments'
+            : 'Read-only trips within your permitted scope'
+        }
       >
         {canPerformDashboardAction('/dashboard/trips', roleNames, 'export') && (
           <Button variant="tertiary" size="sm" asChild>
@@ -263,62 +286,85 @@ export default async function TripsPage({ searchParams }: PageProps) {
         )}
       </PageHeader>
 
-      <section aria-label="Trip summary" className="border-border grid grid-cols-2 gap-px overflow-hidden rounded-[10px] border bg-border lg:grid-cols-4">
+      <section
+        aria-label="Trip summary"
+        className="border-border bg-border grid grid-cols-2 gap-px overflow-hidden rounded-[10px] border lg:grid-cols-4"
+      >
         {metrics.map((metric) => (
           <div key={metric.label} className="bg-surface px-4 py-4 sm:px-5">
-            <p className={`text-2xl font-semibold tabular-nums ${metric.className}`}>{metric.value}</p>
+            <p className={`text-2xl font-semibold tabular-nums ${metric.className}`}>
+              {metric.value}
+            </p>
             <p className="text-ink-500 mt-0.5 text-xs">{metric.label}</p>
           </div>
         ))}
       </section>
 
-      <nav className="flex flex-wrap gap-2" aria-label="Trip status filters">
-        {[
+      <FilterTabLinks
+        label="Trip status filters"
+        items={[
           { label: 'All', value: '', statusCode: null },
           { label: 'Active', value: 'in_progress', statusCode: 'in_progress' },
           { label: 'Return Due', value: 'return_due', statusCode: 'return_due' },
-          { label: 'Return Inspection', value: 'return_inspection', statusCode: 'return_inspection' },
+          {
+            label: 'Return Inspection',
+            value: 'return_inspection',
+            statusCode: 'return_inspection',
+          },
           { label: 'Closure Review', value: 'closure_review', statusCode: 'closure_review' },
           { label: 'Closed', value: 'closed', statusCode: 'closed' },
           { label: 'Pending', value: 'pending', statusCode: 'pending' },
-        ].map((filter) => {
-          const isActive = (result.filters.status ?? '') === filter.value;
-          return (
-            <Link
-              key={filter.value}
-              href={buildFilterUrl('/dashboard/trips', sp, { status: filter.value, page: undefined })}
-              aria-current={isActive ? 'page' : undefined}
-              className={`focus-ring inline-flex min-h-8 items-center gap-1.5 rounded-full border px-3.5 text-xs font-medium transition-colors motion-reduce:transition-none ${
-                isActive
-                  ? 'border-brand-700 bg-brand-700 text-white'
-                  : 'border-border bg-surface text-ink-600 hover:bg-muted'
-              }`}
-            >
-              {filter.statusCode ? <StatusBadgeWithIcon status={filter.statusCode} iconOnly iconSize={14} className="[&_svg]:text-current" /> : null}
-              {filter.label}
-            </Link>
-          );
-        })}
-      </nav>
+        ].map((filter) => ({
+          href: buildFilterUrl('/dashboard/trips', sp, { status: filter.value, page: undefined }),
+          label: filter.label,
+          active: (result.filters.status ?? '') === filter.value,
+          icon: filter.statusCode ? (
+            <StatusBadgeWithIcon
+              status={filter.statusCode}
+              iconOnly
+              iconSize={14}
+              className="[&_svg]:text-current"
+            />
+          ) : undefined,
+        }))}
+      />
 
       <Card>
         <CardContent className="pt-4">
           <FilterToolbar resetHref="/dashboard/trips" isFiltered={hasActiveFilters(result.filters)}>
             <div className="min-w-[200px] flex-1">
               <label className="text-ink-500 mb-1 block text-xs font-medium">Search</label>
-              <LiveSearchInput name="search" defaultValue={result.filters.search ?? ''} placeholder="GRN number, make, model…" />
+              <LiveSearchInput
+                name="search"
+                defaultValue={result.filters.search ?? ''}
+                placeholder="GRN number, make, model…"
+              />
             </div>
             <div className="w-full sm:w-[180px]">
               <label className="text-ink-500 mb-1 block text-xs font-medium">Status</label>
-              <StyledSelect name="status" defaultValue={result.filters.status ?? ''} placeholder="All Statuses">
-                {Object.entries(TRIP_STATUS_LABELS).map(([value, label]) => <option key={value} value={value}>{label}</option>)}
+              <StyledSelect
+                name="status"
+                defaultValue={result.filters.status ?? ''}
+                placeholder="All Statuses"
+              >
+                {Object.entries(TRIP_STATUS_LABELS).map(([value, label]) => (
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
+                ))}
               </StyledSelect>
             </div>
             <div className="w-full sm:w-[220px]">
               <label className="text-ink-500 mb-1 block text-xs font-medium">Driver</label>
-              <StyledSelect name="driverId" defaultValue={result.filters.driverId ?? ''} placeholder="All Drivers">
+              <StyledSelect
+                name="driverId"
+                defaultValue={result.filters.driverId ?? ''}
+                placeholder="All Drivers"
+              >
                 {result.driverList.map((driver) => (
-                  <option key={driver.id} value={driver.id}>{driver.firstName} {driver.lastName} ({driver.employeeNumber})</option>
+                  <option key={driver.id} value={driver.id}>
+                    {driver.firstName} {driver.lastName} ({driver.employeeNumber})
+                  </option>
                 ))}
               </StyledSelect>
             </div>
@@ -330,17 +376,24 @@ export default async function TripsPage({ searchParams }: PageProps) {
         <EmptyState
           icon={<Truck className="h-8 w-8" />}
           title="No trips found"
-          description={hasActiveFilters(result.filters) ? 'No matching records found. Clear filters to view all records.' : 'No trips have been recorded yet.'}
+          description={
+            hasActiveFilters(result.filters)
+              ? 'No matching records found. Clear filters to view all records.'
+              : 'No trips have been recorded yet.'
+          }
         />
       ) : (
         <div className="border-border bg-surface overflow-hidden rounded-[10px] border">
           {result.rows.map((trip) => {
-            const requesterName = trip.requesterFirstName && trip.requesterLastName ? `${trip.requesterFirstName} ${trip.requesterLastName}` : null;
+            const requesterName =
+              trip.requesterFirstName && trip.requesterLastName
+                ? `${trip.requesterFirstName} ${trip.requesterLastName}`
+                : null;
             return (
               <Link
                 key={trip.id}
                 href={`/dashboard/trips/${trip.id}`}
-                className="focus-ring border-border group block border-b p-4 transition-colors last:border-b-0 hover:bg-muted/40 motion-reduce:transition-none sm:p-5"
+                className="focus-ring border-border group hover:bg-muted/40 block border-b p-4 transition-colors last:border-b-0 motion-reduce:transition-none sm:p-5"
               >
                 <div className="flex items-start gap-3 sm:gap-4">
                   <div className="bg-brand-50 text-brand-700 hidden h-10 w-10 shrink-0 items-center justify-center rounded-[8px] sm:flex">
@@ -348,7 +401,9 @@ export default async function TripsPage({ searchParams }: PageProps) {
                   </div>
                   <div className="min-w-0 flex-1">
                     <div className="flex flex-wrap items-center gap-2">
-                      <p className="text-ink-950 text-sm font-semibold">{trip.make} {trip.model}</p>
+                      <p className="text-ink-950 text-sm font-semibold">
+                        {trip.make} {trip.model}
+                      </p>
                       <StatusBadgeWithIcon status={trip.status} />
                     </div>
                     <div className="text-ink-500 mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
@@ -359,7 +414,10 @@ export default async function TripsPage({ searchParams }: PageProps) {
                       <span className="tabular-nums">{formatDate(trip.createdAt)}</span>
                     </div>
                   </div>
-                  <ChevronRight className="text-ink-300 group-hover:text-brand-700 mt-1 h-4 w-4 shrink-0" aria-hidden="true" />
+                  <ChevronRight
+                    className="text-ink-300 group-hover:text-brand-700 mt-1 h-4 w-4 shrink-0"
+                    aria-hidden="true"
+                  />
                 </div>
               </Link>
             );
@@ -369,16 +427,26 @@ export default async function TripsPage({ searchParams }: PageProps) {
 
       {result.totalPages > 1 && (
         <div className="border-border flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-ink-500 text-xs">Page {result.page} of {result.totalPages} ({result.totalCount} trips)</p>
+          <p className="text-ink-500 text-xs">
+            Page {result.page} of {result.totalPages} ({result.totalCount} trips)
+          </p>
           <div className="flex items-center gap-2">
             {result.page > 1 && (
               <Button variant="secondary" size="sm" asChild>
-                <Link href={buildFilterUrl('/dashboard/trips', sp, { page: String(result.page - 1) })}><ChevronLeft className="h-3 w-3" aria-hidden="true" /> Previous</Link>
+                <Link
+                  href={buildFilterUrl('/dashboard/trips', sp, { page: String(result.page - 1) })}
+                >
+                  <ChevronLeft className="h-3 w-3" aria-hidden="true" /> Previous
+                </Link>
               </Button>
             )}
             {result.page < result.totalPages && (
               <Button variant="secondary" size="sm" asChild>
-                <Link href={buildFilterUrl('/dashboard/trips', sp, { page: String(result.page + 1) })}>Next <ChevronRight className="h-3 w-3" aria-hidden="true" /></Link>
+                <Link
+                  href={buildFilterUrl('/dashboard/trips', sp, { page: String(result.page + 1) })}
+                >
+                  Next <ChevronRight className="h-3 w-3" aria-hidden="true" />
+                </Link>
               </Button>
             )}
           </div>

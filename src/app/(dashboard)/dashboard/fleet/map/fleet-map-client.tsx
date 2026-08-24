@@ -13,6 +13,7 @@ import { useState, useEffect, useRef, useCallback } from 'react';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { FilterTabs } from '@/components/ui/filter-tabs';
 import { Badge } from '@/components/ui/badge';
 import { Car, AlertTriangle, Loader2, RefreshCw, WifiOff } from 'lucide-react';
 import L from 'leaflet';
@@ -266,7 +267,10 @@ export default function FleetMapClient() {
 
       {loading ? (
         <div className="flex items-center justify-center py-16" role="status" aria-live="polite">
-          <Loader2 className="text-ink-400 h-8 w-8 animate-spin motion-reduce:animate-none" aria-hidden="true" />
+          <Loader2
+            className="text-ink-400 h-8 w-8 animate-spin motion-reduce:animate-none"
+            aria-hidden="true"
+          />
           <span className="sr-only">Loading fleet map</span>
         </div>
       ) : error ? (
@@ -280,11 +284,44 @@ export default function FleetMapClient() {
       ) : (
         <>
           <ResponsiveStatsGrid className="lg:grid-cols-5">
-            <Card><CardContent className="pt-3 text-center"><p className="text-ink-950 text-lg font-semibold tabular-nums">{summary.total}</p><p className="text-ink-500 text-xs">Total</p></CardContent></Card>
-            <Card><CardContent className="pt-3 text-center"><p className="text-status-success-text text-lg font-semibold tabular-nums">{summary.available}</p><p className="text-ink-500 text-xs">Available</p></CardContent></Card>
-            <Card><CardContent className="pt-3 text-center"><p className="text-status-info-text text-lg font-semibold tabular-nums">{summary.onTrip}</p><p className="text-ink-500 text-xs">On Trip</p></CardContent></Card>
-            <Card><CardContent className="pt-3 text-center"><p className="text-status-warning-text text-lg font-semibold tabular-nums">{summary.maintenance}</p><p className="text-ink-500 text-xs">Maintenance</p></CardContent></Card>
-            <Card><CardContent className="pt-3 text-center"><p className="text-status-error-text text-lg font-semibold tabular-nums">{summary.outOfService}</p><p className="text-ink-500 text-xs">Out of Service</p></CardContent></Card>
+            <Card>
+              <CardContent className="pt-3 text-center">
+                <p className="text-ink-950 text-lg font-semibold tabular-nums">{summary.total}</p>
+                <p className="text-ink-500 text-xs">Total</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="pt-3 text-center">
+                <p className="text-status-success-text text-lg font-semibold tabular-nums">
+                  {summary.available}
+                </p>
+                <p className="text-ink-500 text-xs">Available</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="pt-3 text-center">
+                <p className="text-status-info-text text-lg font-semibold tabular-nums">
+                  {summary.onTrip}
+                </p>
+                <p className="text-ink-500 text-xs">On Trip</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="pt-3 text-center">
+                <p className="text-status-warning-text text-lg font-semibold tabular-nums">
+                  {summary.maintenance}
+                </p>
+                <p className="text-ink-500 text-xs">Maintenance</p>
+              </CardContent>
+            </Card>
+            <Card>
+              <CardContent className="pt-3 text-center">
+                <p className="text-status-error-text text-lg font-semibold tabular-nums">
+                  {summary.outOfService}
+                </p>
+                <p className="text-ink-500 text-xs">Out of Service</p>
+              </CardContent>
+            </Card>
           </ResponsiveStatsGrid>
 
           <div className="flex flex-col gap-4 lg:flex-row">
@@ -293,36 +330,36 @@ export default function FleetMapClient() {
                 <div ref={mapRef} className="h-full w-full" aria-label="Fleet vehicle map" />
               </ResponsiveMapContainer>
               {!vehicles.some((vehicle) => vehicle.location) && (
-                <p className="bg-muted text-ink-500 mt-2 rounded-[8px] px-3 py-2 text-sm" role="status">
+                <p
+                  className="bg-muted text-ink-500 mt-2 rounded-[8px] px-3 py-2 text-sm"
+                  role="status"
+                >
                   No static or GPS positions are available for the current vehicles.
                 </p>
               )}
             </div>
 
-            <aside className="w-full space-y-3 lg:w-72" aria-label="Fleet map controls and selected vehicle">
+            <aside
+              className="w-full space-y-3 lg:w-72"
+              aria-label="Fleet map controls and selected vehicle"
+            >
               <Card>
                 <CardContent className="pt-3">
-                  <div className="flex flex-wrap gap-2" aria-label="Filter vehicles by status">
-                    {STATUS_FILTERS.map((option) => {
-                      const active = filterStatus === option.value;
-                      return (
-                        <button
-                          key={option.value}
-                          type="button"
-                          onClick={() => setFilterStatus(option.value)}
-                          aria-pressed={active}
-                          className={`focus-ring inline-flex min-h-8 items-center gap-1.5 rounded-full border px-3 text-xs font-medium transition-colors motion-reduce:transition-none ${
-                            active
-                              ? 'border-brand-700 bg-brand-700 text-white'
-                              : 'border-border bg-surface text-ink-600 hover:bg-muted'
-                          }`}
-                        >
-                          <span className={`h-1.5 w-1.5 rounded-full ${option.dotClass}`} aria-hidden="true" />
-                          {option.label}
-                        </button>
-                      );
-                    })}
-                  </div>
+                  <FilterTabs
+                    items={STATUS_FILTERS.map((option) => ({
+                      value: option.value,
+                      label: option.label,
+                      icon: (
+                        <span
+                          className={`h-1.5 w-1.5 rounded-full ${option.dotClass}`}
+                          aria-hidden="true"
+                        />
+                      ),
+                    }))}
+                    value={filterStatus}
+                    onValueChange={setFilterStatus}
+                    label="Filter vehicles by status"
+                  />
                 </CardContent>
               </Card>
 
@@ -341,11 +378,14 @@ export default function FleetMapClient() {
                         {selectedVehicle.status.replace(/_/g, ' ')}
                       </Badge>
                       <p className="text-ink-500">Office: {selectedVehicle.office.name}</p>
-                      <p className="text-ink-500">Odometer: {selectedVehicle.currentOdometer.toLocaleString()} km</p>
+                      <p className="text-ink-500">
+                        Odometer: {selectedVehicle.currentOdometer.toLocaleString()} km
+                      </p>
                       {selectedVehicle.openDefects > 0 && (
                         <p className="text-status-error-text flex items-center gap-1">
                           <AlertTriangle className="h-3.5 w-3.5" aria-hidden="true" />
-                          {selectedVehicle.openDefects} open defect{selectedVehicle.openDefects === 1 ? '' : 's'}
+                          {selectedVehicle.openDefects} open defect
+                          {selectedVehicle.openDefects === 1 ? '' : 's'}
                         </p>
                       )}
                     </div>
@@ -354,12 +394,17 @@ export default function FleetMapClient() {
               )}
 
               <Card>
-                <CardHeader><CardTitle className="text-sm">Legend</CardTitle></CardHeader>
+                <CardHeader>
+                  <CardTitle className="text-sm">Legend</CardTitle>
+                </CardHeader>
                 <CardContent>
                   <div className="text-ink-500 space-y-1.5 text-xs">
                     {STATUS_FILTERS.slice(1).map((option) => (
                       <div key={option.value} className="flex items-center gap-2">
-                        <span className={`h-3 w-3 rounded-full ${option.dotClass}`} aria-hidden="true" />
+                        <span
+                          className={`h-3 w-3 rounded-full ${option.dotClass}`}
+                          aria-hidden="true"
+                        />
                         {option.label}
                       </div>
                     ))}

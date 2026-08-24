@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
 import { EmptyState } from '@/components/ui/empty-state';
+import { FilterTabs, SegmentedControl } from '@/components/ui/filter-tabs';
 import {
   AlertCircle,
   AlertTriangle,
@@ -405,34 +406,23 @@ export default function NotificationsPage() {
       </PageHeader>
 
       <div className="border-border space-y-3 border-y py-4">
-        <div className="flex flex-wrap gap-1" role="tablist" aria-label="Notification type">
-          {(Object.entries(typeLabels) as [NotificationType, string][]).map(([value, label]) => (
-            <button
-              key={value}
-              type="button"
-              role="tab"
-              aria-selected={selectedType === value}
-              onClick={() => setSelectedType(value)}
-              className={`focus-ring inline-flex min-h-9 items-center gap-1.5 rounded-[7px] px-3 text-xs font-medium transition-colors motion-reduce:transition-none ${selectedType === value ? 'bg-brand-800 text-white' : 'text-ink-500 hover:bg-muted hover:text-ink-800'}`}
-            >
-              {typePresentation[value].icon}
-              {label}
-            </button>
-          ))}
-        </div>
-        <div className="flex flex-wrap gap-1" role="group" aria-label="Read status">
-          {(['all', 'unread', 'read'] as NotificationFilter[]).map((filter) => (
-            <button
-              key={filter}
-              type="button"
-              onClick={() => setFilterMode(filter)}
-              aria-pressed={filterMode === filter}
-              className={`focus-ring min-h-8 rounded-[7px] px-2.5 text-xs font-medium transition-colors motion-reduce:transition-none ${filterMode === filter ? 'bg-muted text-ink-950' : 'text-ink-500 hover:text-ink-800'}`}
-            >
-              {filter.charAt(0).toUpperCase() + filter.slice(1)}
-            </button>
-          ))}
-        </div>
+        <FilterTabs
+          items={(Object.entries(typeLabels) as [NotificationType, string][]).map(
+            ([value, label]) => ({ value, label, icon: typePresentation[value].icon }),
+          )}
+          value={selectedType}
+          onValueChange={setSelectedType}
+          label="Notification type"
+        />
+        <SegmentedControl
+          items={(['all', 'unread', 'read'] as NotificationFilter[]).map((filter) => ({
+            value: filter,
+            label: filter.charAt(0).toUpperCase() + filter.slice(1),
+          }))}
+          value={filterMode}
+          onValueChange={setFilterMode}
+          label="Read status"
+        />
       </div>
 
       {notificationQuery.isLoading ? (

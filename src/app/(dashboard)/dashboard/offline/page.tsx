@@ -7,6 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
+import { FilterTabs } from '@/components/ui/filter-tabs';
 import { syncSingleDraft } from '@/lib/offline-sync';
 import { listDrafts, deleteDraft, getDraft } from '@/lib/offline-drafts';
 import type { OfflineDraft } from '@/lib/offline-drafts';
@@ -81,7 +82,10 @@ function allowedDraftTypes(roleNames: string[]): OfflineDraft['draftType'][] {
       allowed.add(type as OfflineDraft['draftType']),
     );
   }
-  if (roleNames.includes(SystemRoles.INSPECTOR) || roleNames.includes(SystemRoles.RELEASE_OFFICER)) {
+  if (
+    roleNames.includes(SystemRoles.INSPECTOR) ||
+    roleNames.includes(SystemRoles.RELEASE_OFFICER)
+  ) {
     allowed.add('inspection_departure');
     allowed.add('inspection_return');
   }
@@ -144,8 +148,7 @@ export default function OfflinePage() {
     () =>
       drafts.filter(
         (draft) =>
-          isSyncAllowed(draft) &&
-          (draft.syncStatus === 'pending' || draft.syncStatus === 'failed'),
+          isSyncAllowed(draft) && (draft.syncStatus === 'pending' || draft.syncStatus === 'failed'),
       ),
     [drafts, isSyncAllowed],
   );
@@ -250,7 +253,9 @@ export default function OfflinePage() {
               {legacyDraftCount} legacy draft{legacyDraftCount === 1 ? '' : 's'} kept for recovery
             </p>
             <p className="text-ink-600 mt-1 text-xs">
-              These drafts were created under an older role capability and are now read-only. They remain visible so no offline work is lost, but they cannot be synced unless the account currently has authority for that record type.
+              These drafts were created under an older role capability and are now read-only. They
+              remain visible so no offline work is lost, but they cannot be synced unless the
+              account currently has authority for that record type.
             </p>
           </div>
         </div>
@@ -319,26 +324,16 @@ export default function OfflinePage() {
         </Card>
       </div>
 
-      <div className="flex flex-wrap gap-2">
-        {(['all', 'pending', 'failed', 'conflict', 'synced'] as const).map((status) => (
-          <button
-            key={status}
-            onClick={() => setStatusFilter(status)}
-            className={`rounded-[8px] px-3 py-1.5 text-xs font-medium transition-colors ${
-              statusFilter === status
-                ? 'bg-brand-900 text-white dark:bg-brand-800'
-                : 'bg-surface text-ink-500 hover:bg-muted hover:text-ink-700'
-            }`}
-          >
-            {status === 'all' ? 'All' : STATUS_LABELS[status]}
-            {status !== 'all' && (
-              <span className="ml-1.5 tabular-nums">
-                ({summary[status as keyof typeof summary]})
-              </span>
-            )}
-          </button>
-        ))}
-      </div>
+      <FilterTabs
+        items={(['all', 'pending', 'failed', 'conflict', 'synced'] as const).map((status) => ({
+          value: status,
+          label: status === 'all' ? 'All' : STATUS_LABELS[status],
+          count: status === 'all' ? undefined : summary[status as keyof typeof summary],
+        }))}
+        value={statusFilter}
+        onValueChange={setStatusFilter}
+        label="Offline draft status"
+      />
 
       <Card>
         <CardHeader>
@@ -404,12 +399,13 @@ export default function OfflinePage() {
                         </p>
                         {!syncAllowed && (
                           <p className="text-status-pending-text mt-1 max-w-md text-xs">
-                            Current role permissions do not allow this draft type to create an official record.
+                            Current role permissions do not allow this draft type to create an
+                            official record.
                           </p>
                         )}
                         {draft.syncError && (
                           <p className="text-status-error-text mt-1 max-w-md truncate text-xs">
-                            <AlertTriangle className="mr-1 -mt-0.5 inline-block h-3 w-3" />
+                            <AlertTriangle className="-mt-0.5 mr-1 inline-block h-3 w-3" />
                             {draft.syncError}
                           </p>
                         )}
@@ -472,9 +468,12 @@ export default function OfflinePage() {
             <CardContent className="space-y-4">
               {!isSyncAllowed(selectedDraft) && (
                 <div className="border-status-pending-bg bg-status-pending-bg/40 rounded-[8px] border p-3">
-                  <p className="text-status-pending-text text-xs font-medium">Legacy read-only draft</p>
+                  <p className="text-status-pending-text text-xs font-medium">
+                    Legacy read-only draft
+                  </p>
                   <p className="text-ink-700 mt-1 text-xs">
-                    This draft is preserved for recovery, but your current workspace no longer has authority to sync this record type.
+                    This draft is preserved for recovery, but your current workspace no longer has
+                    authority to sync this record type.
                   </p>
                 </div>
               )}
@@ -537,7 +536,8 @@ export default function OfflinePage() {
                   Close
                 </Button>
                 {isSyncAllowed(selectedDraft) &&
-                  (selectedDraft.syncStatus === 'failed' || selectedDraft.syncStatus === 'conflict') && (
+                  (selectedDraft.syncStatus === 'failed' ||
+                    selectedDraft.syncStatus === 'conflict') && (
                     <Button
                       variant="primary"
                       size="sm"

@@ -5,6 +5,7 @@ import Image from 'next/image';
 import { useSession } from '@/lib/auth-client';
 import { Breadcrumbs, PageHeader } from '@/components/layout/page-header';
 import { Button } from '@/components/ui/button';
+import { PageTabs } from '@/components/ui/page-tabs';
 import { Checkbox } from '@/components/ui/checkbox';
 import { FieldWrapper, Input, Label, Textarea } from '@/components/ui/input';
 import { StyledDateInput, StyledSelect } from '@/components/ui/styled-select';
@@ -254,32 +255,20 @@ export default function SettingsPage() {
         </div>
       )}
 
-      <div
-        className="border-border overflow-x-auto border-b"
-        role="tablist"
-        aria-label="Tenant settings sections"
-      >
-        <div className="flex min-w-max gap-1">
-          {tabs.map((tab) => {
-            const Icon = tab.icon;
-            const selected = activeTab === tab.value;
-            return (
-              <button
-                key={tab.value}
-                type="button"
-                role="tab"
-                aria-selected={selected}
-                aria-controls={`settings-panel-${tab.value}`}
-                onClick={() => setActiveTab(tab.value)}
-                className={`focus-ring -mb-px inline-flex min-h-11 items-center gap-2 border-b-2 px-4 text-sm font-medium transition-colors motion-reduce:transition-none ${selected ? 'border-brand-700 text-brand-700' : 'text-ink-500 hover:text-ink-800 border-transparent'}`}
-              >
-                <Icon className="h-4 w-4" aria-hidden="true" />
-                {tab.label}
-              </button>
-            );
-          })}
-        </div>
-      </div>
+      <PageTabs
+        items={tabs.map((tab) => {
+          const Icon = tab.icon;
+          return {
+            value: tab.value,
+            label: tab.label,
+            icon: <Icon className="h-4 w-4" aria-hidden="true" />,
+          };
+        })}
+        value={activeTab}
+        onValueChange={setActiveTab}
+        label="Tenant settings sections"
+        panelId={(value) => `settings-panel-${value}`}
+      />
 
       {activeTab === 'general' && (
         <section id="settings-panel-general" role="tabpanel" className="space-y-5">

@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Eraser, Loader2, PenLine, Trash2, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { SegmentedControl } from '@/components/ui/filter-tabs';
 import { Input, Label } from '@/components/ui/input';
 import { useToast } from '@/lib/use-toast';
 
@@ -148,20 +149,30 @@ export function SignatureProfile({ defaultName }: { defaultName: string }) {
           )}
         </div>
       )}
-      <div className="flex flex-wrap gap-2" role="tablist" aria-label="Signature method">
-        {(['typed', 'uploaded', 'drawn'] as const).map((method) => (
-          <Button
-            key={method}
-            type="button"
-            variant={mode === method ? 'primary' : 'secondary'}
-            size="sm"
-            onClick={() => setMode(method)}
-          >
-            {method === 'typed' ? <PenLine className="h-4 w-4" /> : <Upload className="h-4 w-4" />}
-            {method === 'typed' ? 'Type' : method === 'uploaded' ? 'Upload PNG' : 'Draw'}
-          </Button>
-        ))}
-      </div>
+      <SegmentedControl
+        items={(
+          [
+            {
+              value: 'typed',
+              label: 'Type',
+              icon: <PenLine className="h-4 w-4" aria-hidden="true" />,
+            },
+            {
+              value: 'uploaded',
+              label: 'Upload PNG',
+              icon: <Upload className="h-4 w-4" aria-hidden="true" />,
+            },
+            {
+              value: 'drawn',
+              label: 'Draw',
+              icon: <PenLine className="h-4 w-4" aria-hidden="true" />,
+            },
+          ] as const
+        ).map((item) => item)}
+        value={mode}
+        onValueChange={setMode}
+        label="Signature method"
+      />
       {mode === 'typed' && (
         <div className="space-y-2">
           <Label>Signature name</Label>

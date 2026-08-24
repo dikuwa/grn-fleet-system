@@ -18,6 +18,7 @@ import { getSessionRoleNames, hasPermission } from '@/lib/auth-helpers';
 import { canPerformDashboardAction, resolveDashboardAccess } from '@/lib/dashboard-access';
 import { Permissions } from '@/lib/permissions';
 import { FilterToolbar } from '@/components/ui/filter-toolbar';
+import { FilterTabLinks } from '@/components/ui/navigation-tabs';
 import { buildFilterUrl, hasActiveFilters, normalizeOptionalFilter } from '@/lib/filter-state';
 import { numericCount } from '@/lib/statistics';
 import { inspectionScopeCondition } from '@/lib/record-scope';
@@ -85,7 +86,10 @@ async function fetchInspections(
       .orderBy(desc(vehicleInspections.createdAt))
       .limit(limit)
       .offset(offset),
-    db.select({ count: sql<number>`count(*)` }).from(vehicleInspections).where(where),
+    db
+      .select({ count: sql<number>`count(*)` })
+      .from(vehicleInspections)
+      .where(where),
     db
       .select({
         type: vehicleInspections.type,
@@ -101,10 +105,18 @@ async function fetchInspections(
   const totalCount = Number(totalResult[0]?.count ?? 0);
   const totalPages = Math.ceil(totalCount / limit);
   const totalInspections = summary.reduce((sum, row) => sum + numericCount(row.count), 0);
-  const departureCount = summary.filter((row) => row.type === 'departure').reduce((sum, row) => sum + numericCount(row.count), 0);
-  const returnCount = summary.filter((row) => row.type === 'return').reduce((sum, row) => sum + numericCount(row.count), 0);
-  const passCount = summary.filter((row) => row.pass === true).reduce((sum, row) => sum + numericCount(row.count), 0);
-  const failCount = summary.filter((row) => row.pass === false).reduce((sum, row) => sum + numericCount(row.count), 0);
+  const departureCount = summary
+    .filter((row) => row.type === 'departure')
+    .reduce((sum, row) => sum + numericCount(row.count), 0);
+  const returnCount = summary
+    .filter((row) => row.type === 'return')
+    .reduce((sum, row) => sum + numericCount(row.count), 0);
+  const passCount = summary
+    .filter((row) => row.pass === true)
+    .reduce((sum, row) => sum + numericCount(row.count), 0);
+  const failCount = summary
+    .filter((row) => row.pass === false)
+    .reduce((sum, row) => sum + numericCount(row.count), 0);
   const passRate = totalInspections > 0 ? Math.round((passCount / totalInspections) * 100) : 0;
 
   return {
@@ -125,9 +137,18 @@ export default async function InspectionsPage({ searchParams }: PageProps) {
   if (!session) {
     return (
       <div className="space-y-6">
-        <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Inspections' }]} />
-        <PageHeader title="Vehicle Inspections" description="Pre-trip departure and post-trip return inspections" />
-        <EmptyState icon={<Database className="h-6 w-6" />} title="Authentication Required" description="Please sign in to view inspections." />
+        <Breadcrumbs
+          items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Inspections' }]}
+        />
+        <PageHeader
+          title="Vehicle Inspections"
+          description="Pre-trip departure and post-trip return inspections"
+        />
+        <EmptyState
+          icon={<Database className="h-6 w-6" />}
+          title="Authentication Required"
+          description="Please sign in to view inspections."
+        />
       </div>
     );
   }
@@ -135,8 +156,13 @@ export default async function InspectionsPage({ searchParams }: PageProps) {
   if (!isDbConnected()) {
     return (
       <div className="space-y-6">
-        <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Inspections' }]} />
-        <PageHeader title="Vehicle Inspections" description="Pre-trip departure and post-trip return inspections" />
+        <Breadcrumbs
+          items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Inspections' }]}
+        />
+        <PageHeader
+          title="Vehicle Inspections"
+          description="Pre-trip departure and post-trip return inspections"
+        />
         <EmptyState icon={<Database className="h-6 w-6" />} title="Database Not Configured" />
       </div>
     );
@@ -146,7 +172,7 @@ export default async function InspectionsPage({ searchParams }: PageProps) {
   const access = resolveDashboardAccess('/dashboard/inspections', roleNames);
   const canCreate =
     canPerformDashboardAction('/dashboard/inspections/new', roleNames, 'create') &&
-    await hasPermission(session, Permissions.INSPECTION_PERFORM);
+    (await hasPermission(session, Permissions.INSPECTION_PERFORM));
   let result: Awaited<ReturnType<typeof fetchInspections>>;
   try {
     result = await fetchInspections(sp, session.tenantId, session.user.id, access.recordScope);
@@ -154,8 +180,13 @@ export default async function InspectionsPage({ searchParams }: PageProps) {
     console.error('Inspections query failed:', error);
     return (
       <div className="space-y-6">
-        <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Inspections' }]} />
-        <PageHeader title="Vehicle Inspections" description="Pre-trip departure and post-trip return inspections" />
+        <Breadcrumbs
+          items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Inspections' }]}
+        />
+        <PageHeader
+          title="Vehicle Inspections"
+          description="Pre-trip departure and post-trip return inspections"
+        />
         <EmptyState icon={<Database className="h-6 w-6" />} title="Unable to Load Inspections" />
       </div>
     );
@@ -173,38 +204,77 @@ export default async function InspectionsPage({ searchParams }: PageProps) {
   return (
     <div className="space-y-6">
       <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Inspections' }]} />
-      <PageHeader title="Vehicle Inspections" description={canCreate ? 'Perform and review official vehicle inspections' : 'View official inspection records within your assigned scope'}>
+      <PageHeader
+        title="Vehicle Inspections"
+        description={
+          canCreate
+            ? 'Perform and review official vehicle inspections'
+            : 'View official inspection records within your assigned scope'
+        }
+      >
         {canCreate && (
           <>
-            <Button variant="secondary" size="sm" asChild><Link href="/dashboard/inspections/new?type=departure"><ClipboardCheck className="h-4 w-4" aria-hidden="true" /> Departure Inspection</Link></Button>
-            <Button variant="secondary" size="sm" asChild><Link href="/dashboard/inspections/new?type=return"><ClipboardCheck className="h-4 w-4" aria-hidden="true" /> Return Inspection</Link></Button>
+            <Button variant="secondary" size="sm" asChild>
+              <Link href="/dashboard/inspections/new?type=departure">
+                <ClipboardCheck className="h-4 w-4" aria-hidden="true" /> Departure Inspection
+              </Link>
+            </Button>
+            <Button variant="secondary" size="sm" asChild>
+              <Link href="/dashboard/inspections/new?type=return">
+                <ClipboardCheck className="h-4 w-4" aria-hidden="true" /> Return Inspection
+              </Link>
+            </Button>
           </>
         )}
       </PageHeader>
 
-      <nav className="flex flex-wrap gap-2" aria-label="Inspection type filters">
-        <Link href="/dashboard/inspections" aria-current={!activeTab ? 'page' : undefined} className={`focus-ring inline-flex min-h-8 items-center rounded-full border px-3.5 text-xs font-medium transition-colors motion-reduce:transition-none ${!activeTab ? 'border-brand-700 bg-brand-700 text-white' : 'border-border bg-surface text-ink-600 hover:bg-muted'}`}>All</Link>
-        {Object.entries(INSPECTION_TYPE_LABELS).map(([value, label]) => (
-          <Link key={value} href={buildFilterUrl('/dashboard/inspections', {}, { type: value })} aria-current={activeTab === value ? 'page' : undefined} className={`focus-ring inline-flex min-h-8 items-center rounded-full border px-3.5 text-xs font-medium transition-colors motion-reduce:transition-none ${activeTab === value ? 'border-brand-700 bg-brand-700 text-white' : 'border-border bg-surface text-ink-600 hover:bg-muted'}`}>{label}</Link>
-        ))}
-      </nav>
+      <FilterTabLinks
+        label="Inspection type filters"
+        items={[
+          { href: '/dashboard/inspections', label: 'All', active: !activeTab },
+          ...Object.entries(INSPECTION_TYPE_LABELS).map(([value, label]) => ({
+            href: buildFilterUrl('/dashboard/inspections', {}, { type: value }),
+            label,
+            active: activeTab === value,
+          })),
+        ]}
+      />
 
-      <section aria-label="Inspection summary" className="border-border grid grid-cols-2 gap-px overflow-hidden rounded-[10px] border bg-border sm:grid-cols-3 xl:grid-cols-6">
+      <section
+        aria-label="Inspection summary"
+        className="border-border bg-border grid grid-cols-2 gap-px overflow-hidden rounded-[10px] border sm:grid-cols-3 xl:grid-cols-6"
+      >
         {summary.map((item) => (
-          <div key={item.label} className="bg-surface px-4 py-4"><p className={`text-xl font-semibold tabular-nums ${item.tone}`}>{item.value}</p><p className="text-ink-500 mt-0.5 text-xs">{item.label}</p></div>
+          <div key={item.label} className="bg-surface px-4 py-4">
+            <p className={`text-xl font-semibold tabular-nums ${item.tone}`}>{item.value}</p>
+            <p className="text-ink-500 mt-0.5 text-xs">{item.label}</p>
+          </div>
         ))}
       </section>
 
       <Card>
         <CardContent className="pt-4">
-          <FilterToolbar resetHref={activeTab ? `/dashboard/inspections?type=${activeTab}` : '/dashboard/inspections'} isFiltered={hasActiveFilters(result.filters, ['page', 'type'])}>
+          <FilterToolbar
+            resetHref={
+              activeTab ? `/dashboard/inspections?type=${activeTab}` : '/dashboard/inspections'
+            }
+            isFiltered={hasActiveFilters(result.filters, ['page', 'type'])}
+          >
             <div className="min-w-[200px] flex-1">
               <label className="text-ink-500 mb-1 block text-xs font-medium">Search Vehicle</label>
-              <LiveSearchInput name="search" defaultValue={result.filters.search ?? ''} placeholder="Licence, make, model…" />
+              <LiveSearchInput
+                name="search"
+                defaultValue={result.filters.search ?? ''}
+                placeholder="Licence, make, model…"
+              />
             </div>
             <div className="w-full sm:w-[180px]">
               <label className="text-ink-500 mb-1 block text-xs font-medium">Status</label>
-              <StyledSelect name="status" defaultValue={result.filters.status ?? ''} placeholder="All Statuses">
+              <StyledSelect
+                name="status"
+                defaultValue={result.filters.status ?? ''}
+                placeholder="All Statuses"
+              >
                 <option value="completed">Completed</option>
                 <option value="failed">Failed</option>
               </StyledSelect>
@@ -218,25 +288,60 @@ export default async function InspectionsPage({ searchParams }: PageProps) {
         <EmptyState
           icon={<ClipboardCheck className="h-8 w-8" />}
           title="No inspections found"
-          description={hasActiveFilters(result.filters, ['page', 'type']) ? 'No matching records found. Clear filters to view all records.' : activeTab ? `No ${activeTab} inspections recorded yet.` : 'No vehicle inspections recorded yet.'}
+          description={
+            hasActiveFilters(result.filters, ['page', 'type'])
+              ? 'No matching records found. Clear filters to view all records.'
+              : activeTab
+                ? `No ${activeTab} inspections recorded yet.`
+                : 'No vehicle inspections recorded yet.'
+          }
         />
       ) : (
         <div className="border-border bg-surface overflow-hidden rounded-[10px] border">
           {result.rows.map((inspection) => (
-            <Link key={inspection.id} href={`/dashboard/inspections/${inspection.id}`} className="focus-ring border-border group block border-b p-4 transition-colors last:border-b-0 hover:bg-muted/40 motion-reduce:transition-none sm:p-5">
+            <Link
+              key={inspection.id}
+              href={`/dashboard/inspections/${inspection.id}`}
+              className="focus-ring border-border group hover:bg-muted/40 block border-b p-4 transition-colors last:border-b-0 motion-reduce:transition-none sm:p-5"
+            >
               <div className="flex items-start gap-3 sm:gap-4">
-                <div className={`hidden h-10 w-10 shrink-0 items-center justify-center rounded-[8px] sm:flex ${inspection.overallPass === true ? 'bg-status-success-bg text-status-success-text' : inspection.overallPass === false ? 'bg-status-error-bg text-status-error-text' : 'bg-muted text-ink-500'}`}><ClipboardCheck className="h-5 w-5" aria-hidden="true" /></div>
+                <div
+                  className={`hidden h-10 w-10 shrink-0 items-center justify-center rounded-[8px] sm:flex ${inspection.overallPass === true ? 'bg-status-success-bg text-status-success-text' : inspection.overallPass === false ? 'bg-status-error-bg text-status-error-text' : 'bg-muted text-ink-500'}`}
+                >
+                  <ClipboardCheck className="h-5 w-5" aria-hidden="true" />
+                </div>
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
-                    <p className="text-ink-950 text-sm font-semibold capitalize">{inspection.type} Inspection</p>
-                    <Badge variant={inspection.status === 'completed' ? 'success' : 'error'} size="sm">{inspection.status?.replace(/_/g, ' ')}</Badge>
-                    {inspection.overallPass != null && <Badge variant={inspection.overallPass ? 'success' : 'error'} size="sm">{inspection.overallPass ? 'Pass' : 'Fail'}</Badge>}
+                    <p className="text-ink-950 text-sm font-semibold capitalize">
+                      {inspection.type} Inspection
+                    </p>
+                    <Badge
+                      variant={inspection.status === 'completed' ? 'success' : 'error'}
+                      size="sm"
+                    >
+                      {inspection.status?.replace(/_/g, ' ')}
+                    </Badge>
+                    {inspection.overallPass != null && (
+                      <Badge variant={inspection.overallPass ? 'success' : 'error'} size="sm">
+                        {inspection.overallPass ? 'Pass' : 'Fail'}
+                      </Badge>
+                    )}
                   </div>
                   <div className="text-ink-500 mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs">
-                    <span>{inspection.make} {inspection.model}</span><span className="tabular-nums">{inspection.licenceNumber}</span>{inspection.odometerReading != null && <span>{inspection.odometerReading.toLocaleString()} km</span>}<span className="tabular-nums">{formatDate(inspection.createdAt)}</span>
+                    <span>
+                      {inspection.make} {inspection.model}
+                    </span>
+                    <span className="tabular-nums">{inspection.licenceNumber}</span>
+                    {inspection.odometerReading != null && (
+                      <span>{inspection.odometerReading.toLocaleString()} km</span>
+                    )}
+                    <span className="tabular-nums">{formatDate(inspection.createdAt)}</span>
                   </div>
                 </div>
-                <ChevronRight className="text-ink-300 group-hover:text-brand-700 mt-1 h-4 w-4 shrink-0" aria-hidden="true" />
+                <ChevronRight
+                  className="text-ink-300 group-hover:text-brand-700 mt-1 h-4 w-4 shrink-0"
+                  aria-hidden="true"
+                />
               </div>
             </Link>
           ))}
@@ -245,10 +350,32 @@ export default async function InspectionsPage({ searchParams }: PageProps) {
 
       {result.totalPages > 1 && (
         <div className="border-border flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-ink-500 text-xs">Page {result.page} of {result.totalPages} ({result.totalCount} inspections)</p>
+          <p className="text-ink-500 text-xs">
+            Page {result.page} of {result.totalPages} ({result.totalCount} inspections)
+          </p>
           <div className="flex items-center gap-2">
-            {result.page > 1 && <Button variant="secondary" size="sm" asChild><Link href={buildFilterUrl('/dashboard/inspections', sp, { page: String(result.page - 1) })}><ChevronLeft className="h-3 w-3" aria-hidden="true" /> Previous</Link></Button>}
-            {result.page < result.totalPages && <Button variant="secondary" size="sm" asChild><Link href={buildFilterUrl('/dashboard/inspections', sp, { page: String(result.page + 1) })}>Next <ChevronRight className="h-3 w-3" aria-hidden="true" /></Link></Button>}
+            {result.page > 1 && (
+              <Button variant="secondary" size="sm" asChild>
+                <Link
+                  href={buildFilterUrl('/dashboard/inspections', sp, {
+                    page: String(result.page - 1),
+                  })}
+                >
+                  <ChevronLeft className="h-3 w-3" aria-hidden="true" /> Previous
+                </Link>
+              </Button>
+            )}
+            {result.page < result.totalPages && (
+              <Button variant="secondary" size="sm" asChild>
+                <Link
+                  href={buildFilterUrl('/dashboard/inspections', sp, {
+                    page: String(result.page + 1),
+                  })}
+                >
+                  Next <ChevronRight className="h-3 w-3" aria-hidden="true" />
+                </Link>
+              </Button>
+            )}
           </div>
         </div>
       )}

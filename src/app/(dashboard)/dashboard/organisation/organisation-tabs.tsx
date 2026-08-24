@@ -80,7 +80,7 @@ export function StaffStatusBreakdown({
       {shown.map((part, index) => (
         <span key={part.label} className="flex items-center gap-1">
           {index > 0 && <span className="text-ink-300">·</span>}
-          <span className={`tabular-nums font-semibold ${part.className}`}>{part.count}</span>
+          <span className={`font-semibold tabular-nums ${part.className}`}>{part.count}</span>
           <span className="text-ink-500">{part.label}</span>
         </span>
       ))}
@@ -106,10 +106,7 @@ const OFFICE_TYPES: Record<string, string> = {
 
 function StatusPill({ active }: { active: boolean }) {
   return (
-    <StatusBadge
-      status={active ? 'success' : 'cancelled'}
-      label={active ? 'Active' : 'Archived'}
-    />
+    <StatusBadge status={active ? 'success' : 'cancelled'} label={active ? 'Active' : 'Archived'} />
   );
 }
 
@@ -215,30 +212,68 @@ function OfficeFormDialog({
             </div>
             <div className="space-y-1.5">
               <Label required>Type</Label>
-              <StyledSelect value={type} onChange={(event) => setType(event.target.value)} aria-label="Office type">
+              <StyledSelect
+                value={type}
+                onChange={(event) => setType(event.target.value)}
+                aria-label="Office type"
+              >
                 {Object.entries(OFFICE_TYPES).map(([value, label]) => (
-                  <option key={value} value={value}>{label}</option>
+                  <option key={value} value={value}>
+                    {label}
+                  </option>
                 ))}
               </StyledSelect>
             </div>
           </div>
           <div className="space-y-1.5">
             <Label>Parent Office</Label>
-            <StyledSelect value={parentId} onChange={(event) => setParentId(event.target.value)} aria-label="Parent office">
+            <StyledSelect
+              value={parentId}
+              onChange={(event) => setParentId(event.target.value)}
+              aria-label="Parent office"
+            >
               <option value="">— None —</option>
               {offices
                 .filter((office) => office.id !== editing?.id && office.isActive)
-                .map((office) => <option key={office.id} value={office.id}>{office.name}</option>)}
+                .map((office) => (
+                  <option key={office.id} value={office.id}>
+                    {office.name}
+                  </option>
+                ))}
             </StyledSelect>
           </div>
           <div className="space-y-1.5">
             <Label>Address</Label>
-            <Input placeholder="Physical address" value={address} onChange={(event) => setAddress(event.target.value)} />
+            <Input
+              placeholder="Physical address"
+              value={address}
+              onChange={(event) => setAddress(event.target.value)}
+            />
           </div>
-          {error && <p className="text-status-error-text text-xs" role="alert">{error}</p>}
+          {error && (
+            <p className="text-status-error-text text-xs" role="alert">
+              {error}
+            </p>
+          )}
           <div className="mobile-action-bar border-border flex flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:justify-end">
-            <Button variant="secondary" size="sm" type="button" onClick={() => onOpenChange(false)} className="w-full sm:w-auto">Cancel</Button>
-            <Button variant="primary" size="sm" type="submit" loading={saving} className="w-full sm:w-auto">{editing ? 'Save Changes' : 'Create Office'}</Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              type="button"
+              onClick={() => onOpenChange(false)}
+              className="w-full sm:w-auto"
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              type="submit"
+              loading={saving}
+              className="w-full sm:w-auto"
+            >
+              {editing ? 'Save Changes' : 'Create Office'}
+            </Button>
           </div>
         </form>
       </DialogContent>
@@ -350,7 +385,11 @@ function DepartmentFormDialog({
             </div>
             <div className="space-y-1.5">
               <Label required>Type</Label>
-              <StyledSelect value={type} onChange={(event) => setType(event.target.value)} aria-label="Organisation unit type">
+              <StyledSelect
+                value={type}
+                onChange={(event) => setType(event.target.value)}
+                aria-label="Organisation unit type"
+              >
                 <option value="directorate">Directorate</option>
                 <option value="department">Department</option>
                 <option value="unit">Unit</option>
@@ -359,41 +398,76 @@ function DepartmentFormDialog({
           </div>
           <div className="space-y-1.5">
             <Label>Parent Unit</Label>
-            <StyledSelect value={parentId} onChange={(event) => setParentId(event.target.value)} aria-label="Parent organisation unit">
+            <StyledSelect
+              value={parentId}
+              onChange={(event) => setParentId(event.target.value)}
+              aria-label="Parent organisation unit"
+            >
               <option value="">— None —</option>
               {departments
                 .filter((item) => item.id !== editing?.id && item.isActive)
-                .map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                .map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}
+                  </option>
+                ))}
             </StyledSelect>
           </div>
           <fieldset className="space-y-2">
             <legend className="text-ink-700 text-sm font-medium">Linked Offices</legend>
             <div className="border-border max-h-48 space-y-1 overflow-y-auto rounded-[8px] border p-2">
-              {offices.filter((office) => office.isActive).map((office) => (
-                <label key={office.id} className="hover:bg-muted flex min-h-11 cursor-pointer items-center gap-3 rounded-[6px] px-2 py-1.5 transition-colors motion-reduce:transition-none">
-                  <Checkbox
-                    checked={officeIds.includes(office.id)}
-                    onCheckedChange={(checked) =>
-                      setOfficeIds((current) =>
-                        checked === true
-                          ? current.includes(office.id) ? current : [...current, office.id]
-                          : current.filter((id) => id !== office.id),
-                      )
-                    }
-                    aria-label={`Link ${office.name}`}
-                  />
-                  <span className="text-ink-800 min-w-0 break-words text-sm">{office.name}</span>
-                </label>
-              ))}
+              {offices
+                .filter((office) => office.isActive)
+                .map((office) => (
+                  <label
+                    key={office.id}
+                    className="hover:bg-muted flex min-h-11 cursor-pointer items-center gap-3 rounded-[6px] px-2 py-1.5 transition-colors motion-reduce:transition-none"
+                  >
+                    <Checkbox
+                      checked={officeIds.includes(office.id)}
+                      onCheckedChange={(checked) =>
+                        setOfficeIds((current) =>
+                          checked === true
+                            ? current.includes(office.id)
+                              ? current
+                              : [...current, office.id]
+                            : current.filter((id) => id !== office.id),
+                        )
+                      }
+                      aria-label={`Link ${office.name}`}
+                    />
+                    <span className="text-ink-800 min-w-0 text-sm break-words">{office.name}</span>
+                  </label>
+                ))}
               {offices.every((office) => !office.isActive) && (
                 <p className="text-ink-500 p-2 text-xs">No active offices are available.</p>
               )}
             </div>
           </fieldset>
-          {error && <p className="text-status-error-text text-xs" role="alert">{error}</p>}
+          {error && (
+            <p className="text-status-error-text text-xs" role="alert">
+              {error}
+            </p>
+          )}
           <div className="mobile-action-bar border-border flex flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:justify-end">
-            <Button variant="secondary" size="sm" type="button" onClick={() => onOpenChange(false)} className="w-full sm:w-auto">Cancel</Button>
-            <Button variant="primary" size="sm" type="submit" loading={saving} className="w-full sm:w-auto">{editing ? 'Save Changes' : 'Create Organisation Unit'}</Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              type="button"
+              onClick={() => onOpenChange(false)}
+              className="w-full sm:w-auto"
+            >
+              Cancel
+            </Button>
+            <Button
+              variant="primary"
+              size="sm"
+              type="submit"
+              loading={saving}
+              className="w-full sm:w-auto"
+            >
+              {editing ? 'Save Changes' : 'Create Organisation Unit'}
+            </Button>
           </div>
         </form>
       </DialogContent>
@@ -465,7 +539,9 @@ export function OrganisationTabs({ offices, departments }: OrganisationTabsProps
 
   const deleteRecord = useCallback(
     async (kind: 'office' | 'department', id: string, name: string) => {
-      const response = await fetch(`/api/${kind === 'office' ? 'offices' : 'departments'}/${id}`, { method: 'DELETE' });
+      const response = await fetch(`/api/${kind === 'office' ? 'offices' : 'departments'}/${id}`, {
+        method: 'DELETE',
+      });
       const data = await response.json();
       if (!response.ok) throw new Error(data.error || `Failed to delete ${kind}`);
       router.refresh();
@@ -473,7 +549,8 @@ export function OrganisationTabs({ offices, departments }: OrganisationTabsProps
         title: data.archived
           ? `${kind === 'office' ? 'Office' : 'Organisation Unit'} archived`
           : `${kind === 'office' ? 'Office' : 'Organisation Unit'} deleted`,
-        description: data.message || `${name} was permanently deleted because it had no references.`,
+        description:
+          data.message || `${name} was permanently deleted because it had no references.`,
         variant: 'success',
       });
     },
@@ -493,13 +570,15 @@ export function OrganisationTabs({ offices, departments }: OrganisationTabsProps
       <Button
         variant="secondary"
         size="sm"
-        onClick={() => confirm({
-          title: office.isActive ? 'Archive Office' : 'Restore Office',
-          description: `${office.name} will ${office.isActive ? 'remain in historical records and be unavailable for new assignments' : 'become available for new assignments'}.`,
-          confirmLabel: office.isActive ? 'Archive' : 'Restore',
-          variant: office.isActive ? 'destructive' : 'default',
-          onConfirm: () => archiveOffice(office),
-        })}
+        onClick={() =>
+          confirm({
+            title: office.isActive ? 'Archive Office' : 'Restore Office',
+            description: `${office.name} will ${office.isActive ? 'remain in historical records and be unavailable for new assignments' : 'become available for new assignments'}.`,
+            confirmLabel: office.isActive ? 'Archive' : 'Restore',
+            variant: office.isActive ? 'destructive' : 'default',
+            onConfirm: () => archiveOffice(office),
+          })
+        }
         className={compact ? 'w-full' : undefined}
       >
         <Archive className="h-3.5 w-3.5" /> {office.isActive ? 'Archive' : 'Restore'}
@@ -507,13 +586,15 @@ export function OrganisationTabs({ offices, departments }: OrganisationTabsProps
       <Button
         variant="ghost"
         size="sm"
-        onClick={() => confirm({
-          title: 'Delete Office',
-          description: `Permanently delete ${office.name} if it is unused? Referenced offices will be archived instead to preserve history.`,
-          confirmLabel: 'Delete or Archive',
-          variant: 'destructive',
-          onConfirm: () => deleteRecord('office', office.id, office.name),
-        })}
+        onClick={() =>
+          confirm({
+            title: 'Delete Office',
+            description: `Permanently delete ${office.name} if it is unused? Referenced offices will be archived instead to preserve history.`,
+            confirmLabel: 'Delete or Archive',
+            variant: 'destructive',
+            onConfirm: () => deleteRecord('office', office.id, office.name),
+          })
+        }
         className={`text-status-error-text ${compact ? 'col-span-2 w-full' : ''}`}
       >
         <Trash2 className="h-3.5 w-3.5" /> Delete
@@ -534,13 +615,15 @@ export function OrganisationTabs({ offices, departments }: OrganisationTabsProps
       <Button
         variant="secondary"
         size="sm"
-        onClick={() => confirm({
-          title: department.isActive ? 'Archive Organisation Unit' : 'Restore Organisation Unit',
-          description: `${department.name} will ${department.isActive ? 'remain in historical records and be unavailable for new assignments' : 'become available for new assignments'}.`,
-          confirmLabel: department.isActive ? 'Archive' : 'Restore',
-          variant: department.isActive ? 'destructive' : 'default',
-          onConfirm: () => archiveDepartment(department),
-        })}
+        onClick={() =>
+          confirm({
+            title: department.isActive ? 'Archive Organisation Unit' : 'Restore Organisation Unit',
+            description: `${department.name} will ${department.isActive ? 'remain in historical records and be unavailable for new assignments' : 'become available for new assignments'}.`,
+            confirmLabel: department.isActive ? 'Archive' : 'Restore',
+            variant: department.isActive ? 'destructive' : 'default',
+            onConfirm: () => archiveDepartment(department),
+          })
+        }
         className={compact ? 'w-full' : undefined}
       >
         <Archive className="h-3.5 w-3.5" /> {department.isActive ? 'Archive' : 'Restore'}
@@ -548,13 +631,15 @@ export function OrganisationTabs({ offices, departments }: OrganisationTabsProps
       <Button
         variant="ghost"
         size="sm"
-        onClick={() => confirm({
-          title: 'Delete Organisation Unit',
-          description: `Permanently delete ${department.name} if it is unused? Referenced units will be archived instead to preserve history.`,
-          confirmLabel: 'Delete or Archive',
-          variant: 'destructive',
-          onConfirm: () => deleteRecord('department', department.id, department.name),
-        })}
+        onClick={() =>
+          confirm({
+            title: 'Delete Organisation Unit',
+            description: `Permanently delete ${department.name} if it is unused? Referenced units will be archived instead to preserve history.`,
+            confirmLabel: 'Delete or Archive',
+            variant: 'destructive',
+            onConfirm: () => deleteRecord('department', department.id, department.name),
+          })
+        }
         className={`text-status-error-text ${compact ? 'col-span-2 w-full' : ''}`}
       >
         <Trash2 className="h-3.5 w-3.5" /> Delete
@@ -566,8 +651,8 @@ export function OrganisationTabs({ offices, departments }: OrganisationTabsProps
     <>
       <Tabs value={tab} onValueChange={(value) => setTab(value as 'offices' | 'departments')}>
         <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-          <div className="-mx-1 overflow-x-auto px-1 pb-1">
-            <TabsList className="min-w-max">
+          <div className="min-w-0">
+            <TabsList>
               <TabsTrigger value="offices" className="gap-1.5">
                 <Building2 className="h-3.5 w-3.5" /> Offices
               </TabsTrigger>
@@ -577,11 +662,21 @@ export function OrganisationTabs({ offices, departments }: OrganisationTabsProps
             </TabsList>
           </div>
           {tab === 'offices' ? (
-            <Button variant="primary" size="sm" onClick={() => setOfficeDialog({ open: true, editing: null })} className="w-full sm:w-auto">
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => setOfficeDialog({ open: true, editing: null })}
+              className="w-full sm:w-auto"
+            >
               <Plus className="h-4 w-4" /> Add Office
             </Button>
           ) : (
-            <Button variant="primary" size="sm" onClick={() => setDeptDialog({ open: true, editing: null })} className="w-full sm:w-auto">
+            <Button
+              variant="primary"
+              size="sm"
+              onClick={() => setDeptDialog({ open: true, editing: null })}
+              className="w-full sm:w-auto"
+            >
               <Plus className="h-4 w-4" /> Add Organisation Unit
             </Button>
           )}
@@ -592,11 +687,18 @@ export function OrganisationTabs({ offices, departments }: OrganisationTabsProps
             <div className="border-border rounded-[10px] border border-dashed p-8 text-center sm:p-10">
               <Building2 className="text-ink-300 mx-auto mb-2 h-8 w-8" />
               <p className="text-ink-800 text-sm font-medium">No offices yet</p>
-              <p className="text-ink-500 mt-1 text-xs">Add your first office to begin building the organisation structure.</p>
+              <p className="text-ink-500 mt-1 text-xs">
+                Add your first office to begin building the organisation structure.
+              </p>
             </div>
           ) : (
-            <div className="border-border bg-surface overflow-hidden rounded-[10px] border">
-              <table className="hidden w-full text-left text-sm lg:table">
+            <div
+              className="app-scrollbar border-border bg-surface max-w-full overflow-x-auto rounded-[10px] border"
+              role="region"
+              aria-label="Offices table"
+              tabIndex={0}
+            >
+              <table className="hidden w-full min-w-[1120px] text-left text-sm lg:table">
                 <thead className="border-border bg-muted/60 border-b">
                   <tr className="text-ink-500 text-xs tracking-wide uppercase">
                     <th className="px-4 py-2.5 font-medium">Office</th>
@@ -611,18 +713,49 @@ export function OrganisationTabs({ offices, departments }: OrganisationTabsProps
                 </thead>
                 <tbody className="divide-border divide-y">
                   {offices.map((office) => (
-                    <tr key={office.id} className="hover:bg-muted/30 transition-colors motion-reduce:transition-none">
+                    <tr
+                      key={office.id}
+                      className="hover:bg-muted/30 transition-colors motion-reduce:transition-none"
+                    >
                       <td className="px-4 py-3">
                         <p className="text-ink-950 font-medium">{office.name}</p>
-                        {office.address && <p className="text-ink-500 mt-0.5 flex max-w-64 items-start gap-1 text-xs"><MapPin className="mt-0.5 h-3 w-3 shrink-0" /> <span className="min-w-0 break-words">{office.address}</span></p>}
+                        {office.address && (
+                          <p className="text-ink-500 mt-0.5 flex max-w-64 items-start gap-1 text-xs">
+                            <MapPin className="mt-0.5 h-3 w-3 shrink-0" />{' '}
+                            <span className="min-w-0 break-words">{office.address}</span>
+                          </p>
+                        )}
                       </td>
-                      <td className="text-ink-600 px-4 py-3">{OFFICE_TYPES[office.type] ?? office.type}</td>
-                      <td className="text-ink-500 px-4 py-3 font-mono text-xs">{office.code ?? '—'}</td>
+                      <td className="text-ink-600 px-4 py-3">
+                        {OFFICE_TYPES[office.type] ?? office.type}
+                      </td>
+                      <td className="text-ink-500 px-4 py-3 font-mono text-xs">
+                        {office.code ?? '—'}
+                      </td>
                       <td className="text-ink-500 px-4 py-3">{office.parentName ?? '—'}</td>
-                      <td className="px-4 py-3 text-center"><div className="flex flex-col items-center gap-0.5"><span className="text-ink-950 font-semibold tabular-nums">{office.employeeCount}</span><StaffStatusBreakdown active={office.activeCount} inactive={office.inactiveCount} archived={office.archivedCount} /></div></td>
-                      <td className="text-ink-950 px-4 py-3 text-center font-semibold tabular-nums">{office.deptCount}</td>
-                      <td className="px-4 py-3"><StatusPill active={office.isActive} /></td>
-                      <td className="px-4 py-3"><div className="flex items-center justify-end gap-1">{officeActionButtons(office)}</div></td>
+                      <td className="px-4 py-3 text-center">
+                        <div className="flex flex-col items-center gap-0.5">
+                          <span className="text-ink-950 font-semibold tabular-nums">
+                            {office.employeeCount}
+                          </span>
+                          <StaffStatusBreakdown
+                            active={office.activeCount}
+                            inactive={office.inactiveCount}
+                            archived={office.archivedCount}
+                          />
+                        </div>
+                      </td>
+                      <td className="text-ink-950 px-4 py-3 text-center font-semibold tabular-nums">
+                        {office.deptCount}
+                      </td>
+                      <td className="px-4 py-3">
+                        <StatusPill active={office.isActive} />
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center justify-end gap-1">
+                          {officeActionButtons(office)}
+                        </div>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -633,19 +766,37 @@ export function OrganisationTabs({ offices, departments }: OrganisationTabsProps
                   <article key={office.id} className="space-y-3 p-4 sm:p-5">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <p className="text-ink-950 break-words font-medium">{office.name}</p>
-                        <p className="text-ink-500 mt-0.5 text-xs">{OFFICE_TYPES[office.type] ?? office.type}{office.code ? ` · ${office.code}` : ''}</p>
+                        <p className="text-ink-950 font-medium break-words">{office.name}</p>
+                        <p className="text-ink-500 mt-0.5 text-xs">
+                          {OFFICE_TYPES[office.type] ?? office.type}
+                          {office.code ? ` · ${office.code}` : ''}
+                        </p>
                       </div>
                       <StatusPill active={office.isActive} />
                     </div>
-                    {office.address && <p className="text-ink-500 flex min-w-0 items-start gap-1.5 text-xs"><MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0" /><span className="min-w-0 break-words">{office.address}</span></p>}
+                    {office.address && (
+                      <p className="text-ink-500 flex min-w-0 items-start gap-1.5 text-xs">
+                        <MapPin className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+                        <span className="min-w-0 break-words">{office.address}</span>
+                      </p>
+                    )}
                     <div className="text-ink-500 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
-                      <span className="flex items-center gap-1"><Users className="h-3 w-3" /> {office.employeeCount} staff</span>
-                      <StaffStatusBreakdown active={office.activeCount} inactive={office.inactiveCount} archived={office.archivedCount} />
-                      <span className="flex items-center gap-1"><GitBranch className="h-3 w-3" /> {office.deptCount} departments</span>
+                      <span className="flex items-center gap-1">
+                        <Users className="h-3 w-3" /> {office.employeeCount} staff
+                      </span>
+                      <StaffStatusBreakdown
+                        active={office.activeCount}
+                        inactive={office.inactiveCount}
+                        archived={office.archivedCount}
+                      />
+                      <span className="flex items-center gap-1">
+                        <GitBranch className="h-3 w-3" /> {office.deptCount} departments
+                      </span>
                       {office.parentName && <span>Parent: {office.parentName}</span>}
                     </div>
-                    <div className="grid grid-cols-2 gap-2">{officeActionButtons(office, true)}</div>
+                    <div className="grid grid-cols-2 gap-2">
+                      {officeActionButtons(office, true)}
+                    </div>
                   </article>
                 ))}
               </div>
@@ -658,11 +809,18 @@ export function OrganisationTabs({ offices, departments }: OrganisationTabsProps
             <div className="border-border rounded-[10px] border border-dashed p-8 text-center sm:p-10">
               <Layers className="text-ink-300 mx-auto mb-2 h-8 w-8" />
               <p className="text-ink-800 text-sm font-medium">No organisation units yet</p>
-              <p className="text-ink-500 mt-1 text-xs">Add your first department, directorate or unit.</p>
+              <p className="text-ink-500 mt-1 text-xs">
+                Add your first department, directorate or unit.
+              </p>
             </div>
           ) : (
-            <div className="border-border bg-surface overflow-hidden rounded-[10px] border">
-              <table className="hidden w-full text-left text-sm lg:table">
+            <div
+              className="app-scrollbar border-border bg-surface max-w-full overflow-x-auto rounded-[10px] border"
+              role="region"
+              aria-label="Departments and directorates table"
+              tabIndex={0}
+            >
+              <table className="hidden w-full min-w-[1020px] text-left text-sm lg:table">
                 <thead className="border-border bg-muted/60 border-b">
                   <tr className="text-ink-500 text-xs tracking-wide uppercase">
                     <th className="px-4 py-2.5 font-medium">Organisation Unit</th>
@@ -676,14 +834,54 @@ export function OrganisationTabs({ offices, departments }: OrganisationTabsProps
                 </thead>
                 <tbody className="divide-border divide-y">
                   {departments.map((department) => (
-                    <tr key={department.id} className="hover:bg-muted/30 transition-colors motion-reduce:transition-none">
-                      <td className="px-4 py-3"><span className="text-ink-950 block font-medium">{department.name}</span><span className="text-ink-500 text-xs font-normal capitalize">{department.type}{department.parentName ? ` · ${department.parentName}` : ''}</span></td>
-                      <td className="text-ink-500 px-4 py-3 font-mono text-xs">{department.code ?? '—'}</td>
+                    <tr
+                      key={department.id}
+                      className="hover:bg-muted/30 transition-colors motion-reduce:transition-none"
+                    >
+                      <td className="px-4 py-3">
+                        <span className="text-ink-950 block font-medium">{department.name}</span>
+                        <span className="text-ink-500 text-xs font-normal capitalize">
+                          {department.type}
+                          {department.parentName ? ` · ${department.parentName}` : ''}
+                        </span>
+                      </td>
+                      <td className="text-ink-500 px-4 py-3 font-mono text-xs">
+                        {department.code ?? '—'}
+                      </td>
                       <td className="text-ink-600 px-4 py-3">{department.headName ?? '—'}</td>
-                      <td className="px-4 py-3 text-center"><div className="flex flex-col items-center gap-0.5"><span className="text-ink-950 font-semibold tabular-nums">{department.staffCount}</span><StaffStatusBreakdown active={department.activeCount} inactive={department.inactiveCount} archived={department.archivedCount} /></div></td>
-                      <td className="text-ink-500 px-4 py-3">{department.officeCount > 0 ? `${department.officeCount} office${department.officeCount === 1 ? '' : 's'}` : '—'}{department.officeNames && <span className="text-ink-400 block max-w-[240px] truncate text-xs" title={department.officeNames}>{department.officeNames}</span>}</td>
-                      <td className="px-4 py-3"><StatusPill active={department.isActive} /></td>
-                      <td className="px-4 py-3"><div className="flex items-center justify-end gap-1">{departmentActionButtons(department)}</div></td>
+                      <td className="px-4 py-3 text-center">
+                        <div className="flex flex-col items-center gap-0.5">
+                          <span className="text-ink-950 font-semibold tabular-nums">
+                            {department.staffCount}
+                          </span>
+                          <StaffStatusBreakdown
+                            active={department.activeCount}
+                            inactive={department.inactiveCount}
+                            archived={department.archivedCount}
+                          />
+                        </div>
+                      </td>
+                      <td className="text-ink-500 px-4 py-3">
+                        {department.officeCount > 0
+                          ? `${department.officeCount} office${department.officeCount === 1 ? '' : 's'}`
+                          : '—'}
+                        {department.officeNames && (
+                          <span
+                            className="text-ink-400 block max-w-[240px] truncate text-xs"
+                            title={department.officeNames}
+                          >
+                            {department.officeNames}
+                          </span>
+                        )}
+                      </td>
+                      <td className="px-4 py-3">
+                        <StatusPill active={department.isActive} />
+                      </td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center justify-end gap-1">
+                          {departmentActionButtons(department)}
+                        </div>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -694,19 +892,37 @@ export function OrganisationTabs({ offices, departments }: OrganisationTabsProps
                   <article key={department.id} className="space-y-3 p-4 sm:p-5">
                     <div className="flex items-start justify-between gap-3">
                       <div className="min-w-0">
-                        <p className="text-ink-950 break-words font-medium">{department.name}</p>
-                        <p className="text-ink-500 mt-0.5 text-xs capitalize">{department.type}{department.code ? ` · ${department.code}` : ''}{department.parentName ? ` · Parent: ${department.parentName}` : ''}</p>
+                        <p className="text-ink-950 font-medium break-words">{department.name}</p>
+                        <p className="text-ink-500 mt-0.5 text-xs capitalize">
+                          {department.type}
+                          {department.code ? ` · ${department.code}` : ''}
+                          {department.parentName ? ` · Parent: ${department.parentName}` : ''}
+                        </p>
                       </div>
                       <StatusPill active={department.isActive} />
                     </div>
                     <div className="text-ink-500 flex flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
-                      <span className="flex items-center gap-1"><Users className="h-3 w-3" /> {department.staffCount} staff</span>
-                      <StaffStatusBreakdown active={department.activeCount} inactive={department.inactiveCount} archived={department.archivedCount} />
-                      <span className="flex items-center gap-1"><Building2 className="h-3 w-3" /> {department.officeCount} offices</span>
+                      <span className="flex items-center gap-1">
+                        <Users className="h-3 w-3" /> {department.staffCount} staff
+                      </span>
+                      <StaffStatusBreakdown
+                        active={department.activeCount}
+                        inactive={department.inactiveCount}
+                        archived={department.archivedCount}
+                      />
+                      <span className="flex items-center gap-1">
+                        <Building2 className="h-3 w-3" /> {department.officeCount} offices
+                      </span>
                     </div>
-                    {department.headName && <p className="text-ink-500 text-xs">Head: {department.headName}</p>}
-                    {department.officeNames && <p className="text-ink-400 break-words text-xs">{department.officeNames}</p>}
-                    <div className="grid grid-cols-2 gap-2">{departmentActionButtons(department, true)}</div>
+                    {department.headName && (
+                      <p className="text-ink-500 text-xs">Head: {department.headName}</p>
+                    )}
+                    {department.officeNames && (
+                      <p className="text-ink-400 text-xs break-words">{department.officeNames}</p>
+                    )}
+                    <div className="grid grid-cols-2 gap-2">
+                      {departmentActionButtons(department, true)}
+                    </div>
                   </article>
                 ))}
               </div>

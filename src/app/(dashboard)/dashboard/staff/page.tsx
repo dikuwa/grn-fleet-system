@@ -386,7 +386,9 @@ export default async function StaffDirectoryPage({
         {staffList.map((row) => (
           <div key={row.id} className="border-border bg-surface rounded-[10px] border p-4">
             <div className="flex items-start gap-3">
-              {canManageLifecycle && <StaffBulkCheckbox id={row.id} label={`${row.firstName} ${row.lastName}`} />}
+              {canManageLifecycle && (
+                <StaffBulkCheckbox id={row.id} label={`${row.firstName} ${row.lastName}`} />
+              )}
               <div className="bg-brand-50 text-brand-800 flex h-10 w-10 shrink-0 items-center justify-center overflow-hidden rounded-[8px] text-xs font-semibold">
                 {row.profilePhotoUrl ? (
                   // eslint-disable-next-line @next/next/no-img-element -- dynamic signed R2 URL
@@ -405,10 +407,23 @@ export default async function StaffDirectoryPage({
                 >
                   {row.firstName} {row.lastName}
                 </Link>
-                <LongValue value={`${row.employeeNumber} · ${row.jobTitle || 'Position not recorded'}`} className="text-ink-500 text-xs" ariaLabel="Employee number and job title" />
-                <LongValue value={row.officeName} fallback="Office not recorded" className="text-ink-500 text-xs" ariaLabel="Office" />
+                <LongValue
+                  value={`${row.employeeNumber} · ${row.jobTitle || 'Position not recorded'}`}
+                  className="text-ink-500 text-xs"
+                  ariaLabel="Employee number and job title"
+                />
+                <LongValue
+                  value={row.officeName}
+                  fallback="Office not recorded"
+                  className="text-ink-500 text-xs"
+                  ariaLabel="Office"
+                />
                 {row.roleNames && (
-                  <LongValue value={row.roleNames} className="text-brand-700 mt-0.5 text-xs font-medium" ariaLabel="Roles" />
+                  <LongValue
+                    value={row.roleNames}
+                    className="text-brand-700 mt-0.5 text-xs font-medium"
+                    ariaLabel="Roles"
+                  />
                 )}
               </div>
               <div className="flex shrink-0 flex-col items-end gap-1.5">
@@ -439,16 +454,14 @@ export default async function StaffDirectoryPage({
               </summary>
               <div className="mt-2 space-y-1.5 text-xs">
                 <p className="text-ink-500 min-w-0 [overflow-wrap:anywhere]">
-                  <span className="font-medium text-ink-700">Department:</span>{' '}
+                  <span className="text-ink-700 font-medium">Department:</span>{' '}
                   {row.departmentName || '—'}
                 </p>
                 <p className="text-ink-500 min-w-0 [overflow-wrap:anywhere]">
-                  <span className="font-medium text-ink-700">Office:</span>{' '}
-                  {row.officeName || '—'}
+                  <span className="text-ink-700 font-medium">Office:</span> {row.officeName || '—'}
                 </p>
                 <p className="text-ink-500 min-w-0 [overflow-wrap:anywhere]">
-                  <span className="font-medium text-ink-700">Employee #:</span>{' '}
-                  {row.employeeNumber}
+                  <span className="text-ink-700 font-medium">Employee #:</span> {row.employeeNumber}
                 </p>
                 {row.isActing && (
                   <p className="text-brand-700">Currently acting in a delegated role</p>
@@ -475,8 +488,13 @@ export default async function StaffDirectoryPage({
       </div>
 
       <div className="border-border bg-surface hidden overflow-hidden rounded-[10px] border md:block">
-        <div className="overflow-x-auto">
-          <table className="w-full text-sm">
+        <div
+          className="app-scrollbar max-w-full overflow-x-auto"
+          role="region"
+          aria-label="Staff directory table"
+          tabIndex={0}
+        >
+          <table className="w-full min-w-[1120px] text-sm">
             <thead>
               <tr className="border-border bg-muted border-b">
                 {canManageLifecycle && (
@@ -519,7 +537,10 @@ export default async function StaffDirectoryPage({
             <tbody className="divide-border divide-y">
               {staffList.length === 0 ? (
                 <tr>
-                  <td colSpan={canManageLifecycle ? 11 : 10} className="text-ink-500 px-4 py-12 text-center text-sm">
+                  <td
+                    colSpan={canManageLifecycle ? 11 : 10}
+                    className="text-ink-500 px-4 py-12 text-center text-sm"
+                  >
                     {query || officeFilter || departmentFilter || statusFilter || availabilityFilter
                       ? 'No employees match your search criteria.'
                       : 'No active employees have been added yet.'}
@@ -546,15 +567,23 @@ export default async function StaffDirectoryPage({
                           >
                             {row.firstName} {row.lastName}
                           </Link>
-                          <LongValue value={row.jobTitle} className="max-w-48 text-ink-500 text-xs" ariaLabel="Job title" />
+                          <LongValue
+                            value={row.jobTitle}
+                            className="text-ink-500 max-w-48 text-xs"
+                            ariaLabel="Job title"
+                          />
                         </div>
                       </div>
                     </td>
                     <td className="text-ink-500 max-w-40 px-4 py-3 text-xs tabular-nums">
                       <LongValue value={row.employeeNumber} copyable ariaLabel="Employee number" />
                     </td>
-                    <td className="text-ink-700 max-w-52 px-4 py-3 text-sm"><LongValue value={row.departmentName} ariaLabel="Department" /></td>
-                    <td className="text-ink-700 max-w-52 px-4 py-3 text-sm"><LongValue value={row.officeName} ariaLabel="Office" /></td>
+                    <td className="text-ink-700 max-w-52 px-4 py-3 text-sm">
+                      <LongValue value={row.departmentName} ariaLabel="Department" />
+                    </td>
+                    <td className="text-ink-700 max-w-52 px-4 py-3 text-sm">
+                      <LongValue value={row.officeName} ariaLabel="Office" />
+                    </td>
                     <td className="px-4 py-3">
                       <EmployeeStatusBadge status={row.employmentStatus} />
                     </td>
