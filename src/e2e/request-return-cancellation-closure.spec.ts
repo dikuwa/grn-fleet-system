@@ -45,6 +45,25 @@ async function createRegionalRequest(requester: APIRequestContext, label: string
   };
 }
 
+async function supervisorReturn(api: APIRequestContext, workflowId: string) {
+  let finalResponse: Awaited<ReturnType<APIRequestContext['post']>> | null = null;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const response = await api.post(`/api/approvals/${workflowId}/action`, {
+      data: {
+        actionType: 'returned',
+        comment: 'Please correct the operational justification before resubmission.',
+      },
+    });
+    finalResponse = response;
+    if (response.status() !== 409) return response;
+
+    const body = await response.text();
+    if (!body.includes('changed while you were deciding')) return response;
+    await new Promise((resolve) => setTimeout(resolve, 150 * (attempt + 1)));
+  }
+  return finalResponse!;
+}
+
 async function actionRequiredNotificationIds(workflowId: string) {
   const db = getDb();
   const rows = await db
@@ -84,12 +103,7 @@ test.describe.serial('Request return/resubmit and cancellation notification clos
     const initialNotificationIds = await actionRequiredNotificationIds(created.workflowId);
     expect(initialNotificationIds.length).toBeGreaterThan(0);
 
-    const returned = await supervisor.post(`/api/approvals/${created.workflowId}/action`, {
-      data: {
-        actionType: 'returned',
-        comment: 'Please correct the operational justification before resubmission.',
-      },
-    });
+    const returned = await supervisorReturn(supervisor, created.workflowId);
     expect(returned.status(), await returned.text()).toBe(200);
     await expectNotificationsResolved(initialNotificationIds);
 
