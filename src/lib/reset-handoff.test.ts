@@ -45,7 +45,7 @@ describe('tenant reset execution handoff boundary', () => {
 
   it('uses a transaction-local governed-reset boundary without weakening ordinary trip immutability', () => {
     const service = source('src/lib/data-protection/reset-service.ts');
-    const migration = source('src/db/migrations/0090_governed_reset_financial_boundary.sql');
+    const migration = source('src/db/migrations/0091_governed_reset_financial_boundary.sql');
 
     expect(service).toContain("set_config('govfleet.governed_reset', 'on', true)");
     expect(migration).toContain("current_setting('govfleet.governed_reset', true) = 'on'");

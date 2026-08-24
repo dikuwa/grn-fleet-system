@@ -13,24 +13,43 @@ import { tenants } from './tenants';
 import { transportRequests } from './requests';
 
 /**
- * Workflow definitions (versioned per tenant and trip scope)
+ * Workflow definitions (versioned per tenant and trip scope).
+ *
+ * Historical versions remain available for existing workflow instances, but a
+ * tenant may only have one active definition for an exact routing scope. The
+ * partial unique index mirrors migration 0090 and closes the race where two
+ * administrators could publish duplicate active routes concurrently.
  */
-export const workflowDefinitions = pgTable('workflow_definitions', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  tenantId: uuid('tenant_id')
-    .notNull()
-    .references(() => tenants.id, { onDelete: 'cascade' }),
-  tripScope: text('trip_scope').notNull(), // regional, national
-  regionId: uuid('region_id'),
-  officeId: uuid('office_id'),
-  departmentId: uuid('department_id'),
-  version: integer('version').notNull().default(1),
-  name: text('name').notNull(),
-  isActive: boolean('is_active').notNull().default(true),
-  config: jsonb('config').$type<Record<string, unknown>>().default({}),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
+export const workflowDefinitions = pgTable(
+  'workflow_definitions',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    tripScope: text('trip_scope').notNull(), // regional, national
+    regionId: uuid('region_id'),
+    officeId: uuid('office_id'),
+    departmentId: uuid('department_id'),
+    version: integer('version').notNull().default(1),
+    name: text('name').notNull(),
+    isActive: boolean('is_active').notNull().default(true),
+    config: jsonb('config').$type<Record<string, unknown>>().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('workflow_definitions_one_active_per_route')
+      .on(
+        table.tenantId,
+        table.tripScope,
+        sql`COALESCE(${table.regionId}, '00000000-0000-0000-0000-000000000000'::uuid)`,
+        sql`COALESCE(${table.officeId}, '00000000-0000-0000-0000-000000000000'::uuid)`,
+        sql`COALESCE(${table.departmentId}, '00000000-0000-0000-0000-000000000000'::uuid)`,
+      )
+      .where(sql`${table.isActive} = true`),
+  ],
+);
 
 /**
  * Workflow steps (ordered actions in a workflow)
