@@ -138,10 +138,14 @@ function IncidentDetailInner() {
         throw new Error(json.error || 'Download failed');
       }
       const blob = await res.blob();
+      const disposition = res.headers.get('Content-Disposition') || '';
+      const headerFilename = disposition.match(/filename="?([^";]+)"?/i)?.[1];
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `MVA-Report-${incident?.officialNumber || incidentId.slice(0, 8)}.pdf`;
+      a.download =
+        headerFilename ||
+        `MVA Report - ${incident?.officialNumber || 'Incident'} - ${new Date().toISOString().slice(0, 10)}.pdf`;
       document.body.appendChild(a);
       a.click();
       document.body.removeChild(a);

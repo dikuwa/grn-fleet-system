@@ -36,6 +36,7 @@ import { employees } from '@/db/schema/people';
 import { workflowActions, workflowInstances } from '@/db/schema/workflows';
 import { eq, and, desc, sql } from 'drizzle-orm';
 import { resolveTenantDocumentBranding, type ResolvedTenantBranding } from '@/lib/tenant-branding';
+import { buildFleetPdfFilename, referenceFromDocumentSnapshot } from './document-filename';
 
 function applySnapshotIdentity(
   current: ResolvedTenantBranding | null,
@@ -698,7 +699,12 @@ export async function generateDocumentPdf(
 
   if (!buffer) return null;
 
-  const filename = `${doc.documentType}_${doc.id.slice(0, 8)}.pdf`;
+  const snapshot = doc.snapshotData as Record<string, unknown> | null;
+  const filename = buildFleetPdfFilename({
+    documentType: doc.documentType,
+    date: doc.createdAt,
+    reference: referenceFromDocumentSnapshot(snapshot, doc.entityId.slice(0, 8)),
+  });
 
   return { buffer, filename };
 }
