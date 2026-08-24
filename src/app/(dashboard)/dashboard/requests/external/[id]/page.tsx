@@ -37,6 +37,7 @@ import { getSessionPermissions, getSessionRoleNames } from '@/lib/auth-helpers';
 import type { PermissionCode } from '@/lib/permissions';
 import { canPerformDashboardAction, resolveDashboardAccess } from '@/lib/dashboard-access';
 import { CancelRequestButton } from '../../[id]/CancelRequestButton';
+import { ResubmitRequestButton } from '../../[id]/ResubmitRequestButton';
 
 interface PageProps {
   params: Promise<{ id: string }>;
@@ -49,6 +50,7 @@ const ALLOCATABLE_STATUSES = [
   'release_pending',
   'vehicle_allocated',
 ];
+const CORRECTABLE_STATUSES = ['returned', 'rejected', 'supervisor_rejected'];
 
 async function fetchExternalRequest(id: string, tenantId: string) {
   const db = getDb();
@@ -224,6 +226,7 @@ export default async function ExternalRequestDetailPage({ params }: PageProps) {
       : 'Responsible internal employee';
   const canModify =
     access.actions.includes('update') && (access.recordScope === 'tenant' || isEnteredBy);
+  const canCorrect = canModify && CORRECTABLE_STATUSES.includes(request.status);
   const canAllocate =
     canPerformDashboardAction('/dashboard/allocations', roleNames, 'create') &&
     ALLOCATABLE_STATUSES.includes(request.status);
@@ -242,6 +245,7 @@ export default async function ExternalRequestDetailPage({ params }: PageProps) {
         title={request.reference}
         description={request.purpose || 'External transport request'}
       >
+        {canCorrect && <ResubmitRequestButton requestId={request.id} />}
         {canAllocate && (
           <Button size="sm" asChild>
             <Link href={`/dashboard/allocations/external/new?requestId=${request.id}`}>
@@ -258,6 +262,13 @@ export default async function ExternalRequestDetailPage({ params }: PageProps) {
           </Link>
         </Button>
       </PageHeader>
+
+      {canCorrect && (
+        <div className="border-status-pending-text/20 bg-status-pending-bg text-status-pending-text rounded-[8px] border px-4 py-3 text-sm">
+          <strong>Correction required.</strong>{' '}
+          Review the authority feedback, update the request on behalf of the external requester, and resubmit it through the normal approval route. Previous approval history remains preserved.
+        </div>
+      )}
 
       <div className="border-status-info-text/20 bg-status-info-bg text-status-info-text flex flex-wrap items-center gap-2 rounded-[8px] border px-4 py-3 text-sm">
         <Building2 className="h-4 w-4" aria-hidden="true" />
