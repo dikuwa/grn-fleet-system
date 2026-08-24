@@ -1,10 +1,37 @@
 import { expect, test } from '@playwright/test';
 import { HeadObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import sharp from 'sharp';
 
-const PNG_1X1 = Buffer.from(
-  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAusB9Y9ZQmcAAAAASUVORK5CYII=',
-  'base64',
-);
+async function licenceImage(input: {
+  licenceNumber: string;
+  side: 'FRONT' | 'BACK';
+  issueDate?: string;
+  expiryDate?: string;
+}) {
+  const svg = Buffer.from(`
+    <svg width="1200" height="720" xmlns="http://www.w3.org/2000/svg">
+      <rect width="1200" height="720" fill="white"/>
+      <text x="70" y="95" font-size="48" font-family="Arial" fill="black">NAMIBIA DRIVING LICENCE</text>
+      <text x="70" y="165" font-size="34" font-family="Arial" fill="black">${input.side}</text>
+      <text x="70" y="255" font-size="38" font-family="Arial" fill="black">LICENCE NO ${input.licenceNumber}</text>
+      <text x="70" y="335" font-size="38" font-family="Arial" fill="black">CLASS B</text>
+      <text x="70" y="415" font-size="34" font-family="Arial" fill="black">ISSUED ${input.issueDate ?? '2026-01-01'}</text>
+      <text x="70" y="490" font-size="34" font-family="Arial" fill="black">VALID UNTIL ${input.expiryDate ?? '2030-12-31'}</text>
+      <text x="70" y="570" font-size="34" font-family="Arial" fill="black">HOLDER E2E DRIVER</text>
+    </svg>
+  `);
+  return sharp({
+    create: {
+      width: 1200,
+      height: 720,
+      channels: 3,
+      background: { r: 255, g: 255, b: 255 },
+    },
+  })
+    .composite([{ input: svg }])
+    .png()
+    .toBuffer();
+}
 
 async function signIn(page: import('@playwright/test').Page, username: string) {
   await page.goto('/login');
@@ -15,11 +42,6 @@ async function signIn(page: import('@playwright/test').Page, username: string) {
 }
 
 test('driver licence upload stays provisional until Transport Admin review, then persists as verified', async ({ page, context }) => {
-  // OCR + object-storage cold starts on the remote audit database can exceed
-  // two minutes even when the lifecycle is healthy. Keep a finite production-
-  // readiness budget, but align it with the other stateful remote E2E flows so
-  // a slow first OCR/storage request is not misclassified as a functional
-  // failure midway through a versioned licence submission.
   test.setTimeout(300_000);
 
   await signIn(page, 'driver');
@@ -33,26 +55,33 @@ test('driver licence upload stays provisional until Transport Admin review, then
   const uniqueSuffix = Date.now().toString();
   const uploadedNumber = `E2E-${uniqueSuffix.slice(-8)}`;
   const correctedNumber = `${uploadedNumber}-OK`;
+  const [frontImage, backImage] = await Promise.all([
+    licenceImage({ licenceNumber: uploadedNumber, side: 'FRONT' }),
+    licenceImage({ licenceNumber: uploadedNumber, side: 'BACK' }),
+  ]);
 
+  const uploadStartedAt = Date.now();
   const uploadResponse = await page.request.post(`/api/drivers/${employeeId}/licences`, {
     multipart: {
       front: {
         name: `licence-front-${uniqueSuffix}.png`,
         mimeType: 'image/png',
-        buffer: PNG_1X1,
+        buffer: frontImage,
       },
       back: {
         name: `licence-back-${uniqueSuffix}.png`,
         mimeType: 'image/png',
-        buffer: PNG_1X1,
+        buffer: backImage,
       },
       licenceNumber: uploadedNumber,
       licenceClass: 'B',
       issueDate: '2026-01-01',
       expiryDate: '2030-12-31',
     },
+    timeout: 120_000,
   });
 
+  expect(Date.now() - uploadStartedAt, 'OCR/upload request must complete within two minutes').toBeLessThan(120_000);
   expect(uploadResponse.status(), await uploadResponse.text()).toBe(201);
   const upload = await uploadResponse.json();
   const licenceId = upload.data?.id as string | undefined;
@@ -93,7 +122,6 @@ test('driver licence upload stays provisional until Transport Admin review, then
   await context.clearCookies();
   await signIn(page, 'transport-admin');
 
-  // The provisional submission must be visible in the tenant-scoped review queue.
   const queueResponse = await page.request.get(`/api/drivers/licences/queue?status=all&q=${encodeURIComponent(uploadedNumber)}`);
   expect(queueResponse.ok()).toBeTruthy();
   const queue = await queueResponse.json();
@@ -140,7 +168,6 @@ test('driver licence upload stays provisional until Transport Admin review, then
   expect(updated.isActive).toBe(true);
   expect(refreshed.driver?.driverStatus).toBe('authorised');
 
-  // Persistence check after a second fresh session: verification must not be UI-only state.
   await context.clearCookies();
   await signIn(page, 'driver');
   const persistedResponse = await page.request.get('/api/drivers/me');
