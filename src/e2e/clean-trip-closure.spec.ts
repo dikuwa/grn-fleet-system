@@ -122,13 +122,26 @@ test('a clean returned trip closes atomically and restores the vehicle to availa
   )?.id as string | undefined;
   expect(driverEmployeeId, 'seeded authorised driver KERC008').toBeTruthy();
 
-  // Remove only overlapping active E2E leftovers. This makes retries
-  // deterministic without changing closed historical records.
+  // Remove only overlapping retry leftovers for the exact selected vehicle or
+  // driver. Never cancel unrelated active allocations just to make an E2E test
+  // pass, even when the CI database is disposable.
   await db
     .update(vehicleAllocations)
     .set({ state: 'cancelled' })
     .where(
       and(
+        eq(vehicleAllocations.vehicleId, vehicle.id),
+        inArray(vehicleAllocations.state, ['provisional', 'confirmed', 'issued']),
+        lt(vehicleAllocations.startAt, end),
+        gt(vehicleAllocations.endAt, start),
+      ),
+    );
+  await db
+    .update(vehicleAllocations)
+    .set({ state: 'cancelled' })
+    .where(
+      and(
+        eq(vehicleAllocations.driverEmployeeId, driverEmployeeId!),
         inArray(vehicleAllocations.state, ['provisional', 'confirmed', 'issued']),
         lt(vehicleAllocations.startAt, end),
         gt(vehicleAllocations.endAt, start),
