@@ -15,7 +15,12 @@ async function signIn(page: import('@playwright/test').Page, username: string) {
 }
 
 test('driver licence upload stays provisional until Transport Admin review, then persists as verified', async ({ page, context }) => {
-  test.setTimeout(120_000);
+  // OCR + object-storage cold starts on the remote audit database can exceed
+  // two minutes even when the lifecycle is healthy. Keep a finite production-
+  // readiness budget, but align it with the other stateful remote E2E flows so
+  // a slow first OCR/storage request is not misclassified as a functional
+  // failure midway through a versioned licence submission.
+  test.setTimeout(300_000);
 
   await signIn(page, 'driver');
 
