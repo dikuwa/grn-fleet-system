@@ -42,6 +42,7 @@ async function resolveActiveLink(token: string) {
       createdByUserId: requestIntakeLinks.createdByUserId,
       tenantName: tenants.name,
       tenantSlug: tenants.slug,
+      sponsorUserId: employees.userId,
       sponsorFirstName: employees.firstName,
       sponsorLastName: employees.lastName,
       sponsorDepartmentId: employees.departmentId,
@@ -247,6 +248,7 @@ export async function POST(
   const externalPartyId = randomUUID();
   const trackingToken = randomBytes(32).toString('base64url');
   const publicActor = `public-intake:${link.linkId}`;
+  const correctionOwnerUserId = link.sponsorUserId || link.createdByUserId;
 
   try {
     await db.transaction(async (tx) => {
@@ -294,7 +296,7 @@ export async function POST(
         requesterEmployeeId: link.sponsorEmployeeId,
         externalRequesterId: externalPartyId,
         requesterUserId: null,
-        enteredByUserId: null,
+        enteredByUserId: correctionOwnerUserId,
         requestSource: 'external_public_link',
         requestChannel: 'public_sponsored_link',
         submissionMethod: 'external_secure_link',
@@ -404,6 +406,7 @@ export async function POST(
         requesterType: 'external',
         externalRequesterId: externalPartyId,
         sponsorEmployeeId: link.sponsorEmployeeId,
+        correctionOwnerUserId,
         workflowInstanceId: workflow.instance.id,
         documentId: document?.id || null,
       },
