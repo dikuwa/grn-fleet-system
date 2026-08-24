@@ -65,6 +65,10 @@ export async function notifyRequestCancelled(input: {
   }
 
   const createdAt = new Date();
+  const actionUrl =
+    request.requesterType === 'external'
+      ? `/dashboard/requests/external/${request.id}`
+      : `/dashboard/requests/${request.id}`;
   const notificationRows = Array.from(recipientUserIds).map((recipientUserId) => ({
     tenantId: input.tenantId,
     recipientUserId,
@@ -76,7 +80,7 @@ export async function notifyRequestCancelled(input: {
     body: `The transport request was cancelled. Reason: ${input.reason}`,
     entityType: 'transport_request',
     entityId: request.id,
-    actionUrl: `/dashboard/requests/${request.id}`,
+    actionUrl,
     priority: 'high',
     status: 'unread',
     dedupeKey: `request:${request.id}:cancelled:${recipientUserId}`,
