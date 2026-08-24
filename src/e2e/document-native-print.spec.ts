@@ -1,22 +1,59 @@
 import { expect, request as playwrightRequest, test } from '@playwright/test';
+import { and, desc, eq } from 'drizzle-orm';
+import { getDb } from '@/db';
+import { generatedDocuments } from '@/db/schema/documents';
 
 const BASE = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 const PASSWORD = process.env.SEED_ADMIN_PASSWORD || 'changeme';
-const TRANSPORT_REQUEST_FIXTURE_ID = '10000000-0000-4000-8000-000000000001';
+const TENANT_ID = '00000000-0000-0000-0000-000000000001';
 
 test('browser Print opens the standalone official PDF instead of dashboard chrome', async ({ browser }) => {
   test.setTimeout(180_000);
 
   const api = await playwrightRequest.newContext({ baseURL: BASE });
   const signIn = await api.post('/api/auth/sign-in', {
-    data: { email: 'transport.admin@kavangoeast.test', password: PASSWORD },
+    data: { email: 'requester@kavangoeast.test', password: PASSWORD },
   });
   expect(signIn.status(), await signIn.text()).toBe(200);
 
-  // The canonical print target is the exact PDF used by preview/download.
-  // Validate those bytes independently so this test does not depend on
-  // Chromium's internal PDF-viewer DOM implementation.
-  const pdfResponse = await api.get(`/api/documents/${TRANSPORT_REQUEST_FIXTURE_ID}/pdf?preview=1`, {
+  const start = new Date(Date.now() + 72 * 60 * 60_000);
+  const end = new Date(start.getTime() + 2 * 60 * 60_000);
+  const submission = await api.post('/api/transport-requests', {
+    headers: { 'idempotency-key': crypto.randomUUID() },
+    data: {
+      purpose: 'Production closure native print verification',
+      scope: 'regional',
+      activities: [
+        {
+          title: 'Print verification journey',
+          startDate: start.toISOString(),
+          endDate: end.toISOString(),
+          estimatedKilometres: 40,
+        },
+      ],
+    },
+  });
+  expect(submission.status(), await submission.text()).toBe(200);
+  const submitted = await submission.json();
+  const requestId = submitted.request.id as string;
+
+  const db = getDb();
+  const [document] = await db
+    .select({ id: generatedDocuments.id })
+    .from(generatedDocuments)
+    .where(
+      and(
+        eq(generatedDocuments.tenantId, TENANT_ID as never),
+        eq(generatedDocuments.entityType, 'transport_request'),
+        eq(generatedDocuments.entityId, requestId),
+      ),
+    )
+    .orderBy(desc(generatedDocuments.documentVersion))
+    .limit(1);
+  expect(document?.id, 'submitted request should generate an official document').toBeTruthy();
+  const documentId = document!.id;
+
+  const pdfResponse = await api.get(`/api/documents/${documentId}/pdf?preview=1`, {
     headers: { Accept: 'application/pdf' },
   });
   expect(pdfResponse.status(), await pdfResponse.text()).toBe(200);
@@ -31,15 +68,12 @@ test('browser Print opens the standalone official PDF instead of dashboard chrom
   });
   const page = await context.newPage();
 
-  await page.goto(`/dashboard/documents/${TRANSPORT_REQUEST_FIXTURE_ID}/print`, {
+  await page.goto(`/dashboard/documents/${documentId}/print`, {
     waitUntil: 'domcontentloaded',
     timeout: 60_000,
   });
   await expect(page.getByText('Opening document…')).toBeVisible({ timeout: 10_000 });
 
-  // NativeDocumentPrintLauncher fetches the authenticated official PDF and
-  // replaces the dashboard route with an object URL. Once this happens there
-  // is no dashboard sidebar/header/toast tree available to leak into Print.
   await page.waitForURL((url) => url.protocol === 'blob:', { timeout: 60_000 });
   expect(page.url()).toMatch(/^blob:/);
 
