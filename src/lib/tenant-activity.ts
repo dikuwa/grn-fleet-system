@@ -5,6 +5,7 @@ const stageLabels: Record<string, string> = {
   submitted: 'Submitted',
   returned: 'Returned for changes',
   rejected: 'Rejected',
+  cancelled: 'Cancelled',
   approved: 'Approved',
   released: 'Released',
   authorised: 'Authorised',
