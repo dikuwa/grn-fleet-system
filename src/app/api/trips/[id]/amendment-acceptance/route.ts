@@ -380,6 +380,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
     }
 
     const now = new Date();
+    const nowIso = now.toISOString();
+    const pendingCreatedAtIso = pending.createdAt.toISOString();
     const acceptanceEvidence = JSON.stringify({
       source: internalDriver ? 'driver_console_amendment' : 'transport_office_external_amendment',
       amendmentId: pending.amendmentId,
@@ -389,7 +391,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       acceptedVehicleId: record.vehicleId,
       acceptanceMethod,
       note,
-      acceptedAt: now.toISOString(),
+      acceptedAt: nowIso,
       recordedByUserId: session.user.id,
       externalDriverAssignmentId: record.externalAssignmentId ?? null,
       internalLicenceId: internalEligibility?.licenceId ?? null,
@@ -461,7 +463,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       WITH allocation_claim AS (
         UPDATE vehicle_allocations va
         SET version = version + 1,
-            updated_at = ${now}
+            updated_at = ${nowIso}::timestamptz
         WHERE va.id = ${record.allocationId}::uuid
           AND va.version = ${record.allocationVersion}
           AND va.vehicle_id = ${record.vehicleId}::uuid
@@ -499,26 +501,26 @@ export async function POST(request: NextRequest, context: RouteContext) {
       ),
       authority_claim AS (
         UPDATE trip_authorities ta
-        SET accepted_at = ${now},
+        SET accepted_at = ${nowIso}::timestamptz,
             accepted_by_employee_id = ${record.driverEmployeeId ?? null}::uuid,
             acceptance_data = COALESCE(ta.acceptance_data, '{}'::jsonb)
               || jsonb_build_object('latestAmendmentAcceptance', ${acceptanceEvidence}::jsonb),
             status = 'awaiting_pre_trip_inspection',
-            updated_at = ${now}
+            updated_at = ${nowIso}::timestamptz
         WHERE ta.id = ${record.authorityId}::uuid
           AND ta.tenant_id = ${tenantId}::uuid
           AND ta.trip_id = ${tripId}::uuid
           AND ta.allocation_id = ${record.allocationId}::uuid
           AND ta.accepted_at IS NOT NULL
-          AND ta.accepted_at < ${pending.createdAt}
+          AND ta.accepted_at < ${pendingCreatedAtIso}::timestamptz
           AND EXISTS (SELECT 1 FROM amendment_claim)
         RETURNING id
       ),
       trip_claim AS (
         UPDATE trips t
-        SET driver_acknowledged_at = ${now},
+        SET driver_acknowledged_at = ${nowIso}::timestamptz,
             driver_acknowledged_by_employee_id = ${record.driverEmployeeId ?? null}::uuid,
-            updated_at = ${now}
+            updated_at = ${nowIso}::timestamptz
         WHERE t.id = ${tripId}::uuid
           AND t.tenant_id = ${tenantId}::uuid
           AND t.status = 'pending'
@@ -603,7 +605,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       authorityId: record.authorityId,
       authorityVersion: pending.authorityVersion,
       documentId,
-      acceptedAt: now.toISOString(),
+      acceptedAt: nowIso,
       driverKind: internalDriver ? 'internal' : 'external',
       nextStage: 'awaiting_pre_trip_inspection',
     });
