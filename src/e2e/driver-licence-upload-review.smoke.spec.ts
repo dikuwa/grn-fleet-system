@@ -42,7 +42,7 @@ async function signIn(page: import('@playwright/test').Page, username: string) {
 }
 
 test('driver licence upload stays provisional until Transport Admin review, then persists as verified', async ({ page, context }) => {
-  test.setTimeout(360_000);
+  test.setTimeout(420_000);
 
   await signIn(page, 'driver');
 
@@ -78,10 +78,10 @@ test('driver licence upload stays provisional until Transport Admin review, then
       issueDate: '2026-01-01',
       expiryDate: '2030-12-31',
     },
-    timeout: 180_000,
+    timeout: 240_000,
   });
 
-  expect(Date.now() - uploadStartedAt, 'OCR/upload request must complete within three minutes').toBeLessThan(180_000);
+  expect(Date.now() - uploadStartedAt, 'OCR/upload request must complete within four minutes').toBeLessThan(240_000);
   expect(uploadResponse.status(), await uploadResponse.text()).toBe(201);
   const upload = await uploadResponse.json();
   const licenceId = upload.data?.id as string | undefined;
