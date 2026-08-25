@@ -552,10 +552,7 @@ export async function POST(
               AND wi.status = 'active'
             RETURNING wi.id
           )
-          SELECT CASE
-            WHEN (SELECT count(*) FROM request_claim) = 1 THEN 1
-            ELSE CAST('stale_request_resubmit' AS integer)
-          END AS committed
+          SELECT 1 / (SELECT count(*)::integer FROM request_claim) AS committed
         `),
         tx.delete(requestActivities).where(eq(requestActivities.requestId, id)),
         tx.delete(requestPassengers).where(eq(requestPassengers.requestId, id)),
@@ -632,7 +629,8 @@ export async function POST(
       return mutations;
     });
   } catch (error) {
-    if (String(error).includes('stale_request_resubmit')) {
+    const message = String(error);
+    if (message.includes('division by zero') || message.includes('stale_request_resubmit')) {
       return NextResponse.json(
         { error: 'This request changed while you were editing it. Refresh and review the latest version before resubmitting.' },
         { status: 409 },
