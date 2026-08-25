@@ -254,15 +254,11 @@ export async function processAtomicWorkflowDecision(input: {
         FROM action_inserted
         RETURNING id
       )
-      SELECT CAST(
-        CASE
-          WHEN (SELECT count(*) FROM claimed) = 1
-           AND (SELECT count(*) FROM request_updated) = 1
-           AND (SELECT count(*) FROM action_inserted) = 1
-           AND (SELECT count(*) FROM audit_inserted) = 1
-          THEN '1'
-          ELSE 'atomic_workflow_transition_failed'
-        END AS integer
+      SELECT 1 / (
+        (SELECT count(*)::integer FROM claimed) *
+        (SELECT count(*)::integer FROM request_updated) *
+        (SELECT count(*)::integer FROM action_inserted) *
+        (SELECT count(*)::integer FROM audit_inserted)
       ) AS committed
     `);
     const committed = Number(
@@ -279,6 +275,16 @@ export async function processAtomicWorkflowDecision(input: {
     }
   } catch (error) {
     console.error('[workflow-decision-atomic] Decision failed:', error);
+    const message = String(error);
+    if (message.includes('division by zero')) {
+      return {
+        ok: false,
+        error: NextResponse.json(
+          { error: 'This workflow changed while you were deciding it. Refresh before trying again.' },
+          { status: 409 },
+        ),
+      };
+    }
     const latest = await engine.getWorkflowStatus(instanceId).catch(() => null);
     if (latest?.instance.status !== 'active' || latest?.instance.currentStepOrder !== currentStep.stepOrder) {
       return {
