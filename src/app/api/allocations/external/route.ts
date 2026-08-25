@@ -177,7 +177,7 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const [vehicleConflict, externalDriverConflict] = await Promise.all([
+    const [[vehicleConflict], [externalDriverConflict]] = await Promise.all([
       db
         .select({ id: vehicleAllocations.id })
         .from(vehicleAllocations)
