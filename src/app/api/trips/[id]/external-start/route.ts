@@ -172,6 +172,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     }
 
     const now = new Date();
+    const nowIso = now.toISOString();
     if ((record.authorityValidFrom && now < record.authorityValidFrom) || (record.authorityValidUntil && now > record.authorityValidUntil)) {
       return NextResponse.json({ error: 'Trip Authority is outside its approved validity period' }, { status: 409 });
     }
@@ -243,7 +244,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       WITH allocation_claim AS (
         UPDATE vehicle_allocations va
         SET version = version + 1,
-            updated_at = ${now}
+            updated_at = ${nowIso}::timestamptz
         WHERE va.id = ${record.allocationId}::uuid
           AND va.state = 'confirmed'
           AND va.version = ${record.allocationVersion}
@@ -263,7 +264,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       ),
       trip_claim AS (
         UPDATE trips
-        SET status = 'in_progress', started_at = ${now}, updated_at = ${now}
+        SET status = 'in_progress', started_at = ${nowIso}::timestamptz, updated_at = ${nowIso}::timestamptz
         WHERE id = ${id}::uuid
           AND tenant_id = ${tenantId}::uuid
           AND status = 'pending'
@@ -312,8 +313,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
             WHERE ta.trip_id = trips.id
               AND ta.tenant_id = ${tenantId}::uuid
               AND ta.status = 'ready_for_departure'
-              AND (ta.valid_from IS NULL OR ta.valid_from <= ${now})
-              AND (ta.valid_until IS NULL OR ta.valid_until >= ${now})
+              AND (ta.valid_from IS NULL OR ta.valid_from <= ${nowIso}::timestamptz)
+              AND (ta.valid_until IS NULL OR ta.valid_until >= ${nowIso}::timestamptz)
           )
           AND EXISTS (
             SELECT 1 FROM vehicles v
@@ -378,7 +379,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
         SET status = 'in_progress',
             beginning_odometer = ${beginningOdometer},
             version = version + 1,
-            updated_at = ${now}
+            updated_at = ${nowIso}::timestamptz
         WHERE id = ${record.authorityId}::uuid
           AND tenant_id = ${tenantId}::uuid
           AND status = 'ready_for_departure'
@@ -387,7 +388,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       ),
       request_claim AS (
         UPDATE transport_requests
-        SET status = 'in_progress', updated_at = ${now}
+        SET status = 'in_progress', updated_at = ${nowIso}::timestamptz
         WHERE id = ${record.requestId}::uuid
           AND tenant_id = ${tenantId}::uuid
           AND assigned_driver_external_party_id = ${record.externalPartyId}::uuid
@@ -397,7 +398,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       ),
       vehicle_claim AS (
         UPDATE vehicles
-        SET status = 'allocated', updated_at = ${now}
+        SET status = 'allocated', updated_at = ${nowIso}::timestamptz
         WHERE id = ${record.vehicleId}::uuid
           AND tenant_id = ${tenantId}::uuid
           AND status = 'available'
