@@ -6,6 +6,7 @@ import {
 } from '@playwright/test';
 import { and, desc, eq, gt, inArray, lt } from 'drizzle-orm';
 import { getDb } from '@/db';
+import { generatedDocuments } from '@/db/schema/documents';
 import { employees } from '@/db/schema/people';
 import { transportRequests } from '@/db/schema/requests';
 import {
@@ -221,6 +222,27 @@ test('a clean returned trip closes atomically and restores the vehicle to availa
   const departureBody = await departure.json();
   expect(departureBody.status).toBe('completed');
   expect(departureBody.overallPass).toBe(true);
+
+  const [authorityDocument] = await db
+    .select({ id: generatedDocuments.id, status: generatedDocuments.status })
+    .from(generatedDocuments)
+    .where(
+      and(
+        eq(generatedDocuments.tenantId, TENANT_ID as never),
+        eq(generatedDocuments.entityType, 'vehicle_allocation'),
+        eq(generatedDocuments.entityId, allocationId),
+        eq(generatedDocuments.documentType, 'trip_authority'),
+      ),
+    )
+    .orderBy(desc(generatedDocuments.documentVersion))
+    .limit(1);
+  expect(authorityDocument?.id, 'current Trip Authority document').toBeTruthy();
+  expect(authorityDocument?.status).toBe('draft');
+
+  const formalIssue = await transport.post(`/api/documents/${authorityDocument!.id}/action`, {
+    data: { action: 'issue' },
+  });
+  expect(formalIssue.status(), await formalIssue.text()).toBe(200);
 
   const issue = await transport.post(`/api/trips/${tripId}/issue`, {
     data: {
