@@ -96,9 +96,12 @@ test('a clean returned trip closes atomically and restores the vehicle to availa
   const inspector = await login('inspector@kavangoeast.test');
   const db = getDb();
 
-  const offset = parseInt(crypto.randomUUID().slice(0, 6), 16) % 10_000;
-  const start = new Date(Date.now() + (500 + offset) * 60 * 60_000);
-  const end = new Date(start.getTime() + 4 * 60 * 60_000);
+  // This E2E executes immediately, so its authorised period must include now.
+  // Existing overlapping allocations for the chosen vehicle/driver are safely
+  // cancelled below inside this disposable CI database.
+  const now = Date.now();
+  const start = new Date(now - 5 * 60_000);
+  const end = new Date(now + 4 * 60 * 60_000);
 
   const requestResponse = await requester.post('/api/transport-requests', {
     headers: { 'idempotency-key': crypto.randomUUID() },
