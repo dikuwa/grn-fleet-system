@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
-import { Permissions } from '@/lib/permissions';
+import { requireRequestAuth } from '@/lib/auth-helpers';
 import { generateVerifiedTripAuthorityPdf } from '@/lib/pdf/verified-trip-authority';
 import { generateVerifiedInspectionReportPdf } from '@/lib/pdf/verified-inspection-report';
 import { generateVerifiedTransportRequestPdf } from '@/lib/pdf/verified-transport-request';
@@ -16,6 +15,12 @@ import { canSessionReadGeneratedDocument } from '@/lib/document-access';
  * Generate one canonical PDF for preview, print and download. Tenant isolation
  * is necessary but not sufficient: Personal/Requester users must also be
  * entitled to the underlying request/trip/inspection record.
+ *
+ * Do not put a tenant-wide FILE_VIEW permission gate in front of this route.
+ * The canonical record-scope check below is intentionally finer grained: it
+ * allows request owners/participants and assigned drivers to read only the
+ * documents tied to records they are entitled to, while Transport Admin/Audit
+ * retain their workspace-level register access.
  */
 export async function GET(
   request: NextRequest,
@@ -27,9 +32,6 @@ export async function GET(
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
-
-    const permCheck = await requirePermission(session, Permissions.FILE_VIEW);
-    if (permCheck instanceof NextResponse) return permCheck;
 
     const db = getDb();
     const [doc] = await db
