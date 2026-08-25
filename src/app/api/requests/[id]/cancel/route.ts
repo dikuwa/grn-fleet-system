@@ -94,7 +94,7 @@ export async function PATCH(
       );
     }
 
-    const now = new Date();
+    const nowIso = new Date().toISOString();
     const auditSequence = Date.now();
 
     // Re-check operational safety inside the same database statement that
@@ -104,7 +104,7 @@ export async function PATCH(
     await db.execute(sql`
       WITH request_claim AS (
         UPDATE transport_requests
-        SET status = 'cancelled', assigned_driver_employee_id = NULL, updated_at = ${now}
+        SET status = 'cancelled', assigned_driver_employee_id = NULL, updated_at = ${nowIso}::timestamptz
         WHERE id = ${id}::uuid
           AND tenant_id = ${session.tenantId}::uuid
           AND status = ${req.status}
@@ -119,7 +119,7 @@ export async function PATCH(
       ),
       allocation_cancel AS (
         UPDATE vehicle_allocations
-        SET state = 'cancelled', updated_at = ${now}
+        SET state = 'cancelled', updated_at = ${nowIso}::timestamptz
         WHERE request_id = ${id}::uuid
           AND state IN ('provisional', 'confirmed')
           AND EXISTS (SELECT 1 FROM request_claim)
@@ -127,7 +127,7 @@ export async function PATCH(
       ),
       trip_cancel AS (
         UPDATE trips
-        SET status = 'cancelled', updated_at = ${now}
+        SET status = 'cancelled', updated_at = ${nowIso}::timestamptz
         WHERE request_id = ${id}::uuid
           AND tenant_id = ${session.tenantId}::uuid
           AND status = 'pending'
@@ -136,7 +136,7 @@ export async function PATCH(
       ),
       authority_cancel AS (
         UPDATE trip_authorities
-        SET status = 'cancelled', cancelled_at = ${now}, cancellation_reason = ${reason}, updated_at = ${now}
+        SET status = 'cancelled', cancelled_at = ${nowIso}::timestamptz, cancellation_reason = ${reason}, updated_at = ${nowIso}::timestamptz
         WHERE request_id = ${id}::uuid
           AND tenant_id = ${session.tenantId}::uuid
           AND EXISTS (SELECT 1 FROM request_claim)
@@ -151,7 +151,7 @@ export async function PATCH(
       ),
       workflow_cancel AS (
         UPDATE workflow_instances wi
-        SET status = 'cancelled', updated_at = ${now}
+        SET status = 'cancelled', updated_at = ${nowIso}::timestamptz
         FROM request_claim rc
         WHERE rc.workflow_instance_id IS NOT NULL
           AND wi.id = rc.workflow_instance_id
@@ -173,18 +173,16 @@ export async function PATCH(
           ${id}::uuid,
           ${reason},
           'web',
-          jsonb_build_object('status', ${req.status}),
-          jsonb_build_object('status', 'cancelled'),
+          jsonb_build_object('status', ${req.status}::text),
+          jsonb_build_object('status', 'cancelled'::text),
           ${`Transport request cancelled from ${req.status}`}
         FROM request_claim
         RETURNING id
       )
-      SELECT CAST(CASE
-        WHEN (SELECT count(*) FROM request_claim) = 1
-         AND (SELECT count(*) FROM audit_insert) = 1
-        THEN '1'
-        ELSE 'atomic_request_cancel_failed_' || (SELECT count(*) FROM request_claim)::text
-      END AS integer) AS committed
+      SELECT 1 / (
+        (SELECT count(*)::integer FROM request_claim) *
+        (SELECT count(*)::integer FROM audit_insert)
+      ) AS committed
     `);
 
     if (req.workflowInstanceId) {
@@ -209,7 +207,7 @@ export async function PATCH(
     return NextResponse.json({ success: true, status: 'cancelled' });
   } catch (error) {
     console.error('Cancel request failed:', error);
-    if (String(error).includes('atomic_request_cancel_failed')) {
+    if (String(error).includes('division by zero') || String(error).includes('atomic_request_cancel_failed')) {
       return NextResponse.json(
         {
           error:
