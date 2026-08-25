@@ -196,7 +196,12 @@ export async function processAtomicWorkflowDecision(input: {
   });
 
   try {
-    const commit = await db.execute(sql`
+    // The final SELECT deliberately divides by the product of all claimed row
+    // counts. A stale/concurrent transition therefore raises division-by-zero
+    // inside the same SQL statement and PostgreSQL rolls the whole statement
+    // back. If execute() returns successfully, every required CTE committed
+    // exactly once; do not inspect driver-specific result wrappers afterwards.
+    await db.execute(sql`
       WITH claimed AS (
         UPDATE workflow_instances wi
         SET current_step_order = ${nextOrder}, status = ${workflowStatus}, updated_at = now()
@@ -261,18 +266,6 @@ export async function processAtomicWorkflowDecision(input: {
         (SELECT count(*)::integer FROM audit_inserted)
       ) AS committed
     `);
-    const committed = Number(
-      (commit.rows?.[0] as { committed?: number | string } | undefined)?.committed ?? 0,
-    );
-    if (committed !== 1) {
-      return {
-        ok: false,
-        error: NextResponse.json(
-          { error: 'This workflow changed while you were deciding it. Refresh before trying again.' },
-          { status: 409 },
-        ),
-      };
-    }
   } catch (error) {
     console.error('[workflow-decision-atomic] Decision failed:', error);
     const message = String(error);
