@@ -178,6 +178,7 @@ export async function PATCH(
       .limit(1);
 
     const now = new Date();
+    const nowIso = now.toISOString();
     try {
       if (existingRequestDriver) {
         await db.execute(sql`
@@ -185,7 +186,7 @@ export async function PATCH(
             UPDATE vehicle_allocations va
             SET driver_employee_id = ${driverEmployeeId}::uuid,
                 version = va.version + 1,
-                updated_at = ${now}
+                updated_at = ${nowIso}::timestamptz
             WHERE va.id = ${id}::uuid
               AND va.state IN ('provisional', 'confirmed')
               AND va.driver_employee_id IS NOT DISTINCT FROM ${allocation.driverEmployeeId}::uuid
@@ -199,7 +200,7 @@ export async function PATCH(
           ),
           request_updated AS (
             UPDATE transport_requests tr
-            SET assigned_driver_employee_id = ${driverEmployeeId}::uuid, updated_at = ${now}
+            SET assigned_driver_employee_id = ${driverEmployeeId}::uuid, updated_at = ${nowIso}::timestamptz
             FROM allocation_claim ac
             WHERE tr.id = ac.request_id
               AND tr.tenant_id = ${session.tenantId}::uuid
@@ -240,7 +241,7 @@ export async function PATCH(
             UPDATE vehicle_allocations va
             SET driver_employee_id = ${driverEmployeeId}::uuid,
                 version = va.version + 1,
-                updated_at = ${now}
+                updated_at = ${nowIso}::timestamptz
             WHERE va.id = ${id}::uuid
               AND va.state IN ('provisional', 'confirmed')
               AND va.driver_employee_id IS NOT DISTINCT FROM ${allocation.driverEmployeeId}::uuid
@@ -254,7 +255,7 @@ export async function PATCH(
           ),
           request_updated AS (
             UPDATE transport_requests tr
-            SET assigned_driver_employee_id = ${driverEmployeeId}::uuid, updated_at = ${now}
+            SET assigned_driver_employee_id = ${driverEmployeeId}::uuid, updated_at = ${nowIso}::timestamptz
             FROM allocation_claim ac
             WHERE tr.id = ac.request_id
               AND tr.tenant_id = ${session.tenantId}::uuid
@@ -461,13 +462,14 @@ export async function DELETE(
 
     const removedDriverId = allocation.driverEmployeeId;
     const now = new Date();
+    const nowIso = now.toISOString();
     try {
       await db.execute(sql`
         WITH allocation_claim AS (
           UPDATE vehicle_allocations va
           SET driver_employee_id = NULL,
               version = va.version + 1,
-              updated_at = ${now}
+              updated_at = ${nowIso}::timestamptz
           WHERE va.id = ${id}::uuid
             AND va.state IN ('provisional', 'confirmed')
             AND va.driver_employee_id = ${removedDriverId}::uuid
@@ -481,7 +483,7 @@ export async function DELETE(
         ),
         request_updated AS (
           UPDATE transport_requests tr
-          SET assigned_driver_employee_id = NULL, updated_at = ${now}
+          SET assigned_driver_employee_id = NULL, updated_at = ${nowIso}::timestamptz
           FROM allocation_claim ac
           WHERE tr.id = ac.request_id
             AND tr.tenant_id = ${session.tenantId}::uuid
