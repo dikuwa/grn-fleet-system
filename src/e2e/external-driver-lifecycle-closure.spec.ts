@@ -4,7 +4,7 @@ import {
   test,
   type APIRequestContext,
 } from '@playwright/test';
-import { and, desc, eq, gt, inArray, isNull, lt } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { generatedDocuments } from '@/db/schema/documents';
 import { externalDriverAssignments } from '@/db/schema/external-driver-assignments';
@@ -119,44 +119,27 @@ test('verified external driver can be accepted, issued, departed, returned, insp
   const externalPartyId = crypto.randomUUID();
   const externalLicenceId = crypto.randomUUID();
   const requestId = crypto.randomUUID();
+  const vehicleId = crypto.randomUUID();
   const startAt = new Date(Date.now() - 30 * 60_000);
   const endAt = new Date(Date.now() + 8 * 60 * 60_000);
+  const initialOdometer = 12_000;
 
-  const candidateVehicles = await db
-    .select({
-      id: vehicles.id,
-      currentOdometer: vehicles.currentOdometer,
-      status: vehicles.status,
-    })
-    .from(vehicles)
-    .where(
-      and(
-        eq(vehicles.tenantId, TENANT_ID as never),
-        eq(vehicles.status, 'available'),
-        eq(vehicles.professionalAuthorisationRequired, false),
-        isNull(vehicles.requiredLicenceClass),
-      ),
-    );
-  const candidateIds = candidateVehicles.map((row) => row.id);
-  const conflicts = candidateIds.length
-    ? await db
-        .select({ vehicleId: vehicleAllocations.vehicleId })
-        .from(vehicleAllocations)
-        .where(
-          and(
-            inArray(vehicleAllocations.vehicleId, candidateIds),
-            inArray(vehicleAllocations.state, ['provisional', 'confirmed', 'issued']),
-            lt(vehicleAllocations.startAt, endAt),
-            gt(vehicleAllocations.endAt, startAt),
-          ),
-        )
-    : [];
-  const conflictingVehicleIds = new Set(conflicts.map((row) => row.vehicleId));
-  const vehicle = candidateVehicles.find((row) => !conflictingVehicleIds.has(row.id));
-  if (!vehicle) {
-    test.skip(true, 'No conflict-free available non-professional vehicle with unrestricted licence class');
-    return;
-  }
+  // Use a dedicated vehicle so this production-closure test cannot inherit
+  // allocations left by an earlier failed test. The lifecycle under test is
+  // then responsible for taking the vehicle away from and back to available.
+  await db.insert(vehicles).values({
+    id: vehicleId,
+    tenantId: TENANT_ID as never,
+    licenceNumber: `E2E-EXT-${run.slice(0, 6).toUpperCase()}`,
+    make: 'Toyota',
+    model: 'Corolla',
+    status: 'available',
+    currentOdometer: initialOdometer,
+    requiredLicenceClass: null,
+    professionalAuthorisationRequired: false,
+    createdBy: 'production-closure-e2e',
+  });
+  const vehicle = { id: vehicleId, currentOdometer: initialOdometer, status: 'available' };
 
   await db.insert(externalParties).values({
     id: externalPartyId,
