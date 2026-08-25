@@ -140,23 +140,26 @@ export async function processDriverAcknowledgement(input: {
   const actionId = randomUUID();
   const auditId = randomUUID();
   const now = new Date();
+  const nowIso = now.toISOString();
   const completedStatus = workflowCompletedStatus();
   const acceptanceDataJson = JSON.stringify({
     ...(acceptanceData ?? {}),
-    acceptedAt: now.toISOString(),
+    acceptedAt: nowIso,
     acceptedByUserId: session.user.id,
     source: 'driver_console',
     acceptedVehicleId: context.vehicleId,
     acceptedAllocationVersion: context.allocationVersion + 1,
   });
 
-  let commit;
   try {
-    commit = await db.execute(sql`
+    // The final division guard makes a stale/concurrent transition fail inside
+    // this same SQL statement so PostgreSQL rolls every CTE back together. If
+    // execute() returns successfully, all required rows were committed once.
+    await db.execute(sql`
       WITH allocation_claim AS (
         UPDATE vehicle_allocations va
         SET version = version + 1,
-            updated_at = ${now}
+            updated_at = ${nowIso}::timestamptz
         WHERE va.id = ${context.allocationId}::uuid
           AND va.request_id = ${context.requestId}::uuid
           AND va.state = 'confirmed'
@@ -188,7 +191,7 @@ export async function processDriverAcknowledgement(input: {
       ),
       claimed AS (
         UPDATE workflow_instances wi
-        SET status = 'completed', current_step_order = ${currentStep.stepOrder}, updated_at = ${now}
+        SET status = 'completed', current_step_order = ${currentStep.stepOrder}, updated_at = ${nowIso}::timestamptz
         WHERE wi.id = ${instanceId}::uuid
           AND wi.status = 'active'
           AND wi.current_step_order = ${currentStep.stepOrder}
@@ -201,9 +204,9 @@ export async function processDriverAcknowledgement(input: {
       ),
       trip_updated AS (
         UPDATE trips t
-        SET driver_acknowledged_at = ${now},
+        SET driver_acknowledged_at = ${nowIso}::timestamptz,
             driver_acknowledged_by_employee_id = ${context.driverEmployeeId}::uuid,
-            updated_at = ${now}
+            updated_at = ${nowIso}::timestamptz
         FROM claimed c
         WHERE t.id = ${context.tripId}::uuid
           AND t.request_id = c.request_id
@@ -219,10 +222,10 @@ export async function processDriverAcknowledgement(input: {
       authority_updated AS (
         UPDATE trip_authorities ta
         SET status = 'driver_accepted',
-            accepted_at = ${now},
+            accepted_at = ${nowIso}::timestamptz,
             accepted_by_employee_id = ${context.driverEmployeeId}::uuid,
             acceptance_data = ${acceptanceDataJson}::jsonb,
-            updated_at = ${now}
+            updated_at = ${nowIso}::timestamptz
         FROM claimed c
         WHERE ta.id = ${context.authorityId}::uuid
           AND ta.request_id = c.request_id
@@ -235,7 +238,7 @@ export async function processDriverAcknowledgement(input: {
       ),
       request_updated AS (
         UPDATE transport_requests tr
-        SET status = ${completedStatus}, updated_at = ${now}
+        SET status = ${completedStatus}, updated_at = ${nowIso}::timestamptz
         FROM claimed c
         WHERE tr.id = c.request_id
           AND tr.tenant_id = ${session.tenantId}::uuid
@@ -252,7 +255,7 @@ export async function processDriverAcknowledgement(input: {
         SELECT
           ${actionId}::uuid, c.id, ${currentStep.stepOrder}, 'acknowledge', 'acknowledged',
           ${session.user.id}, ${context.driverEmployeeId}::uuid, ${comment?.trim() || null},
-          ${acceptanceDataJson}::jsonb, ${now}
+          ${acceptanceDataJson}::jsonb, ${nowIso}::timestamptz
         FROM claimed c
         INNER JOIN request_updated ru ON ru.id = c.request_id
         RETURNING id
@@ -268,21 +271,18 @@ export async function processDriverAcknowledgement(input: {
           ${session.user.id}, ${context.driverEmployeeId}::uuid, 'workflow.acknowledged',
           'workflow_action', ${instanceId}::uuid, 'web',
           'Assigned driver acknowledged the authorised trip', ${comment?.trim() || null},
-          ${acceptanceDataJson}::jsonb, ${now}
+          ${acceptanceDataJson}::jsonb, ${nowIso}::timestamptz
         FROM action_inserted
         RETURNING id
       )
-      SELECT CAST(
-        CASE
-          WHEN (SELECT count(*) FROM allocation_claim) = 1
-           AND (SELECT count(*) FROM claimed) = 1
-           AND (SELECT count(*) FROM trip_updated) = 1
-           AND (SELECT count(*) FROM authority_updated) = 1
-           AND (SELECT count(*) FROM request_updated) = 1
-           AND (SELECT count(*) FROM action_inserted) = 1
-           AND (SELECT count(*) FROM audit_inserted) = 1
-          THEN '1' ELSE 'atomic_driver_acknowledgement_failed'
-        END AS integer
+      SELECT 1 / (
+        (SELECT count(*)::integer FROM allocation_claim) *
+        (SELECT count(*)::integer FROM claimed) *
+        (SELECT count(*)::integer FROM trip_updated) *
+        (SELECT count(*)::integer FROM authority_updated) *
+        (SELECT count(*)::integer FROM request_updated) *
+        (SELECT count(*)::integer FROM action_inserted) *
+        (SELECT count(*)::integer FROM audit_inserted)
       ) AS committed
     `);
   } catch (error) {
@@ -306,17 +306,6 @@ export async function processDriverAcknowledgement(input: {
       ok: false,
       error: NextResponse.json(
         { error: 'The authorised trip is not in a consistent state for acknowledgement. Refresh and ask Transport Administration to review it.' },
-        { status: 409 },
-      ),
-    };
-  }
-
-  const committed = Number((commit.rows?.[0] as { committed?: number | string } | undefined)?.committed ?? 0);
-  if (committed !== 1) {
-    return {
-      ok: false,
-      error: NextResponse.json(
-        { error: 'The trip changed while acknowledgement was being recorded. Refresh before trying again.' },
         { status: 409 },
       ),
     };
