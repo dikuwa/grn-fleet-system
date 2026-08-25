@@ -76,7 +76,10 @@ async function liveChecklist(type: 'departure' | 'return') {
     checklist: items.map((item) => ({ label: item.label, result: 'pass', comment: null })),
     photoKeys: items
       .filter((item) => item.requiresPhoto)
-      .map((_item, index) => `e2e/clean-${type}-${Date.now()}-${index}.jpg`),
+      .map(
+        (_item, index) =>
+          `tenant/${TENANT_ID}/inspections/e2e/clean-${type}-${Date.now()}-${index}.jpg`,
+      ),
   };
 }
 
