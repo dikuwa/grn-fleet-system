@@ -19,8 +19,25 @@ const accounts = [
   { email: 'auditor@kavangoeast.test', documents: true },
 ] as const;
 
+async function selectTheme(page: import('@playwright/test').Page, name: 'Dark' | 'Light') {
+  const trigger = page.getByRole('button', { name: /select theme/i }).first();
+  const option = page.getByRole('menuitemradio', { name });
+
+  await trigger.click();
+  try {
+    await expect(option, `theme option ${name} should open`).toBeVisible({ timeout: 5_000 });
+  } catch {
+    // One guarded retry handles a transient Radix/menu animation miss without
+    // allowing a broken selector to consume the entire ten-minute role test.
+    await page.keyboard.press('Escape').catch(() => undefined);
+    await trigger.click();
+    await expect(option, `theme option ${name} should open after retry`).toBeVisible({ timeout: 5_000 });
+  }
+  await option.click();
+}
+
 test.describe.serial('Every seeded role — responsive, theme, notification and document matrix', () => {
-  test.setTimeout(600_000);
+  test.setTimeout(180_000);
 
   for (const account of accounts) {
     test(`${account.email} receives only its intended personal workspace capabilities`, async ({ browser }) => {
@@ -44,13 +61,11 @@ test.describe.serial('Every seeded role — responsive, theme, notification and 
 
       // Exercise the real theme selector for every role rather than merely
       // asserting that the trigger exists.
-      await page.getByRole('button', { name: /select theme/i }).first().click();
-      await page.getByRole('menuitemradio', { name: 'Dark' }).click();
+      await selectTheme(page, 'Dark');
       await expect(page.locator('html')).toHaveClass(/dark/);
       expect(await page.evaluate(() => localStorage.getItem('govfleet-theme'))).toBe('dark');
 
-      await page.getByRole('button', { name: /select theme/i }).first().click();
-      await page.getByRole('menuitemradio', { name: 'Light' }).click();
+      await selectTheme(page, 'Light');
       await expect(page.locator('html')).not.toHaveClass(/dark/);
       expect(await page.evaluate(() => localStorage.getItem('govfleet-theme'))).toBe('light');
 
