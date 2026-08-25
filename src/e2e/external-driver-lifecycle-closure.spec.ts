@@ -54,9 +54,15 @@ async function liveChecklist(type: 'departure' | 'return') {
   expect(items.length, `${type} checklist`).toBeGreaterThan(0);
   return {
     checklist: items.map((item) => ({ label: item.label, result: 'pass', comment: null })),
+    // Production inspection evidence is tenant-scoped. This lifecycle test is
+    // not an upload test, but its fixture keys must still obey the same storage
+    // namespace contract enforced by completeOfficialInspection().
     photoKeys: items
       .filter((item) => item.requiresPhoto)
-      .map((_item, index) => `e2e/external-${type}-${Date.now()}-${index}.jpg`),
+      .map(
+        (_item, index) =>
+          `tenant/${TENANT_ID}/inspections/e2e/external-${type}-${Date.now()}-${index}.jpg`,
+      ),
   };
 }
 
