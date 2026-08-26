@@ -320,7 +320,7 @@ export default function EditAndResubmitRequestPage() {
       if (!response.ok) throw new Error(json.error || 'Unable to resubmit request');
       toast({
         title: 'Request resubmitted',
-        description: `Revision ${json.revision} is awaiting supervisor review.`,
+        description: `Revision ${json.revision} has re-entered the configured approval route.`,
         variant: 'success',
       });
       router.push(`/dashboard/requests/${requestId}`);
