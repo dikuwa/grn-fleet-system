@@ -19,6 +19,9 @@ export async function POST(request: NextRequest) {
   const scope = body.scope === 'national' ? 'national' : 'regional';
   const db = getDb();
 
+  if (body.programmeId != null && typeof body.programmeId !== 'string') {
+    return NextResponse.json({ error: 'Programme must be a valid identifier' }, { status: 400 });
+  }
   const programmeId = typeof body.programmeId === 'string' ? body.programmeId.trim() : '';
   let hasProgramme = false;
   if (programmeId) {
