@@ -112,6 +112,22 @@ describe('canonical workspace route policy', () => {
     }
   });
 
+  it('keeps canonical platform administration routes in the route registry', () => {
+    for (const path of [
+      '/dashboard/platform/users',
+      '/dashboard/platform/enquiries',
+      '/dashboard/platform/packages',
+    ]) {
+      expect(routeRegistry.some((route) => route.path === path), path).toBe(true);
+    }
+  });
+
+  it('uses channel-neutral delivery history navigation wording', () => {
+    expect(
+      routeRegistry.find((route) => route.path === '/dashboard/notifications/history')?.label,
+    ).toBe('Delivery History');
+  });
+
   it('does not union capabilities for a multi-role user', () => {
     const roles = [R.TENANT_ADMIN, R.TRANSPORT_ADMIN, R.DRIVER];
     expect(canAccessDashboardPath('/dashboard/allocations', roles, W.TENANT_ADMIN)).toBe(false);

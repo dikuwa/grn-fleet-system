@@ -51,7 +51,7 @@ export async function POST(
     const workspaceCheck = await requireDashboardAction(
       session,
       '/dashboard/notifications/deliveries',
-      'view',
+      'update',
     );
     if (workspaceCheck instanceof NextResponse) return workspaceCheck;
 

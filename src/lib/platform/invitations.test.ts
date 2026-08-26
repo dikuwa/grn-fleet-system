@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { shouldStartTenantSetup } from './invitations';
+import { isActiveInvitationIdentityProfile, shouldStartTenantSetup } from './invitations';
 
 describe('shouldStartTenantSetup', () => {
   it.each(['DRAFT', 'PENDING_INVITATION', 'INVITATION_SENT', 'INVITATION_EXPIRED'])(
@@ -23,4 +23,21 @@ describe('shouldStartTenantSetup', () => {
       expect(shouldStartTenantSetup(invitationType, 'PENDING_INVITATION')).toBe(false);
     },
   );
+});
+
+describe('isActiveInvitationIdentityProfile', () => {
+  it('accepts only an enabled active identity', () => {
+    expect(isActiveInvitationIdentityProfile({ status: 'active', accountEnabled: true })).toBe(
+      true,
+    );
+  });
+
+  it.each([
+    [{ status: 'suspended', accountEnabled: true }],
+    [{ status: 'active', accountEnabled: false }],
+    [null],
+    [undefined],
+  ])('rejects a disabled or missing lifecycle profile: %s', (profile) => {
+    expect(isActiveInvitationIdentityProfile(profile)).toBe(false);
+  });
 });
