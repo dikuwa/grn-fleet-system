@@ -23,6 +23,8 @@ import { recordAuditEvent } from '@/lib/audit-event';
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
 import { sendPlainEmail } from '@/lib/email';
 import { env } from '@/env';
+import { parseRequestRoutingInput } from '@/lib/request-routing-input';
+import { resolveWorkflowRoute } from '@/lib/workflow-route-resolver';
 
 const TOKEN_PATTERN = /^[A-Za-z0-9_-]{40,100}$/;
 
@@ -142,6 +144,12 @@ export async function POST(
     specialRequirements?: string;
     requesterTravels?: boolean;
     clientSubmissionId?: string;
+    financialImpact?: string;
+    tripCategory?: string;
+    estimatedCost?: number | string;
+    costCentre?: string;
+    fundingSource?: string;
+    budgetReference?: string;
   };
   const firstName = String(body.firstName || '').trim();
   const lastName = String(body.lastName || '').trim();
@@ -182,6 +190,12 @@ export async function POST(
   ) {
     return NextResponse.json({ error: 'Return date/time must be after departure.' }, { status: 422 });
   }
+  const routingInput = parseRequestRoutingInput(body as Record<string, unknown>, {
+    requesterType: 'external',
+  });
+  if (!routingInput.ok) {
+    return NextResponse.json({ error: routingInput.error }, { status: 422 });
+  }
 
   const db = getDb();
   if (body.clientSubmissionId) {
@@ -202,9 +216,14 @@ export async function POST(
   const routes = await db
     .select({
       id: workflowDefinitions.id,
+      version: workflowDefinitions.version,
+      tripScope: workflowDefinitions.tripScope,
       regionId: workflowDefinitions.regionId,
       officeId: workflowDefinitions.officeId,
       departmentId: workflowDefinitions.departmentId,
+      requestOrigin: workflowDefinitions.requestOrigin,
+      financialImpact: workflowDefinitions.financialImpact,
+      tripCategory: workflowDefinitions.tripCategory,
     })
     .from(workflowDefinitions)
     .where(
@@ -214,15 +233,23 @@ export async function POST(
         eq(workflowDefinitions.isActive, true),
       ),
     );
-  const hasMatchingRoute = routes.some(
-    (route) =>
-      (!route.regionId || route.regionId === link.sponsorRegionId) &&
-      (!route.officeId || route.officeId === link.sponsorOfficeId) &&
-      (!route.departmentId || route.departmentId === link.sponsorDepartmentId),
-  );
-  if (!hasMatchingRoute) {
+  const routeResolution = resolveWorkflowRoute(routes, {
+    tripScope: link.tripScope,
+    regionId: link.sponsorRegionId,
+    officeId: link.sponsorOfficeId,
+    departmentId: link.sponsorDepartmentId,
+    requestOrigin: routingInput.fields.requestOrigin,
+    financialImpact: routingInput.fields.financialImpact,
+    tripCategory: routingInput.fields.tripCategory,
+  });
+  if (routeResolution.status !== 'matched') {
     return NextResponse.json(
-      { error: 'The sponsoring office does not currently have an active approval route. Please contact the organisation.' },
+      {
+        error:
+          routeResolution.status === 'ambiguous'
+            ? 'Multiple equally specific approval routes match this sponsored request.'
+            : 'The sponsoring office does not currently have an active route for these request conditions. Please contact the organisation.',
+      },
       { status: 409 },
     );
   }
@@ -293,6 +320,7 @@ export async function POST(
         scope: link.tripScope,
         status: 'submitted',
         requesterType: 'external',
+        ...routingInput.fields,
         requesterEmployeeId: link.sponsorEmployeeId,
         externalRequesterId: externalPartyId,
         requesterUserId: null,

@@ -1,11 +1,28 @@
 import { Permissions } from '@/lib/permissions';
 
 export type GovernedWorkflowAction =
-  'supervisor_approve' | 'transport_review' | 'release' | 'authorise' | 'acknowledge';
+  | 'supervisor_approve'
+  | 'organisational_approve'
+  | 'finance_review'
+  | 'transport_review'
+  | 'release'
+  | 'authorise'
+  | 'acknowledge';
 
-export type WorkflowPresetId = 'lean' | 'standard' | 'controlled';
+export type WorkflowPresetId =
+  | 'lean'
+  | 'standard'
+  | 'controlled'
+  | 'internal_organisational'
+  | 'internal_budget_controlled'
+  | 'sponsored_external_first'
+  | 'programme_transport';
 export type AssignmentStrategy =
-  'requester_supervisor' | 'department_permission_pool' | 'permission_pool' | 'named_user';
+  | 'responsible_sponsor'
+  | 'requester_supervisor'
+  | 'department_permission_pool'
+  | 'permission_pool'
+  | 'named_user';
 
 /**
  * These stages are operational lifecycle controls, not ordinary tenant approval
@@ -20,10 +37,13 @@ export const SYSTEM_LIFECYCLE_ACTIONS: GovernedWorkflowAction[] = [
 /** Approval/release gates a tenant may opt into without changing the system lifecycle. */
 export const TENANT_OPTIONAL_WORKFLOW_ACTIONS: GovernedWorkflowAction[] = [
   'supervisor_approve',
+  'organisational_approve',
+  'finance_review',
   'release',
 ];
 
 export const WORKFLOW_ASSIGNMENT_STRATEGIES = [
+  { id: 'responsible_sponsor', label: 'Responsible internal sponsor' },
   { id: 'requester_supervisor', label: "Requester's supervisor" },
   {
     id: 'department_permission_pool',
@@ -41,6 +61,8 @@ export const DEFAULT_ASSIGNMENT_FALLBACKS: AssignmentStrategy[] = [
 
 export const GOVERNED_ACTION_ORDER: GovernedWorkflowAction[] = [
   'supervisor_approve',
+  'finance_review',
+  'organisational_approve',
   'transport_review',
   'release',
   'authorise',
@@ -81,7 +103,60 @@ export const WORKFLOW_PRESETS = [
     label: 'Controlled',
     description:
       'Adds supervisor approval and an administrative release gate around the governed transport lifecycle.',
-    actions: GOVERNED_ACTION_ORDER,
+    actions: [
+      'supervisor_approve',
+      'transport_review',
+      'release',
+      'authorise',
+      'acknowledge',
+    ] as GovernedWorkflowAction[],
+  },
+  {
+    id: 'internal_organisational' as const,
+    label: 'Internal Organisational',
+    description:
+      'Supervisor and Director approval precede the governed transport lifecycle without a Finance gate.',
+    actions: [
+      'supervisor_approve',
+      'organisational_approve',
+      'transport_review',
+      'authorise',
+      'acknowledge',
+    ] as GovernedWorkflowAction[],
+  },
+  {
+    id: 'internal_budget_controlled' as const,
+    label: 'Internal Budget-Controlled',
+    description:
+      'Finance/Budget Review and organisational approval precede the governed transport lifecycle.',
+    actions: [
+      'supervisor_approve',
+      'finance_review',
+      'organisational_approve',
+      'transport_review',
+      'authorise',
+      'acknowledge',
+    ] as GovernedWorkflowAction[],
+  },
+  {
+    id: 'sponsored_external_first' as const,
+    label: 'Sponsored / External First',
+    description:
+      'The responsible Director or Sponsor acts first, followed by conditional budget review and transport governance.',
+    actions: [
+      'organisational_approve',
+      'finance_review',
+      'transport_review',
+      'authorise',
+      'acknowledge',
+    ] as GovernedWorkflowAction[],
+  },
+  {
+    id: 'programme_transport' as const,
+    label: 'Programme Transport',
+    description:
+      'A lean route for transport created from an already approved and published programme.',
+    actions: ['transport_review', 'authorise', 'acknowledge'] as GovernedWorkflowAction[],
   },
 ] as const;
 
@@ -100,6 +175,20 @@ export function governedStage(actionType: GovernedWorkflowAction, scope: string)
       label: 'Supervisor Approval',
       description: "Optional organisational gate resolved from the sponsor or requester's supervisor path.",
       requiredPermission: Permissions.REQUEST_APPROVE_SUPERVISOR,
+      stageKind: 'tenant_gate' as const,
+    },
+    organisational_approve: {
+      label: 'Director / Sponsor Approval',
+      description:
+        'Configurable organisational authority gate for a Director, Sponsor or equivalent responsible office.',
+      requiredPermission: Permissions.REQUEST_APPROVE_ORGANISATIONAL,
+      stageKind: 'tenant_gate' as const,
+    },
+    finance_review: {
+      label: 'Finance / Budget Review',
+      description:
+        'Governed budget decision recording funding availability, budget reference and reviewer evidence.',
+      requiredPermission: Permissions.REQUEST_REVIEW_FINANCE,
       stageKind: 'tenant_gate' as const,
     },
     transport_review: {
@@ -158,9 +247,33 @@ export function validateGovernedActions(
     if (!actions.includes(mandatory))
       return { ok: false, error: `${governedStage(mandatory, 'regional').label} is mandatory.` };
   }
-  const canonical = GOVERNED_ACTION_ORDER.filter((action) => actions.includes(action));
-  if (canonical.some((action, index) => actions[index] !== action)) {
-    return { ok: false, error: 'Workflow stages must remain in the governed lifecycle order.' };
+  const transportIndex = actions.indexOf('transport_review');
+  const releaseIndex = actions.indexOf('release');
+  const authoriseIndex = actions.indexOf('authorise');
+  const acknowledgeIndex = actions.indexOf('acknowledge');
+  const preOperational = ['supervisor_approve', 'organisational_approve', 'finance_review'];
+  if (
+    preOperational.some(
+      (action) => actions.includes(action) && actions.indexOf(action) > transportIndex,
+    )
+  ) {
+    return {
+      ok: false,
+      error: 'Organisational and Finance/Budget gates must precede Transport Review.',
+    };
+  }
+  if (
+    transportIndex < 0 ||
+    authoriseIndex <= transportIndex ||
+    (releaseIndex >= 0 && (releaseIndex <= transportIndex || releaseIndex >= authoriseIndex)) ||
+    acknowledgeIndex !== actions.length - 1 ||
+    acknowledgeIndex <= authoriseIndex
+  ) {
+    return {
+      ok: false,
+      error:
+        'Transport Review, optional Release, Final Authorisation and Driver Acknowledgement must remain in the governed operational order.',
+    };
   }
   return { ok: true, actions: actions as GovernedWorkflowAction[] };
 }

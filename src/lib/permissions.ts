@@ -9,6 +9,8 @@ export const Permissions = {
   REQUEST_CREATE: 'request:create',
   REQUEST_VIEW: 'request:view',
   REQUEST_APPROVE_SUPERVISOR: 'request:approve-supervisor',
+  REQUEST_APPROVE_ORGANISATIONAL: 'request:approve-organisational',
+  REQUEST_REVIEW_FINANCE: 'request:review-finance',
   REQUEST_REVIEW_TRANSPORT: 'request:review-transport',
   REQUEST_WITHDRAW: 'request:withdraw',
   REQUEST_CANCEL: 'request:cancel',
@@ -95,6 +97,10 @@ export const Permissions = {
   AUDIT_READ: 'audit:read',
   AUDIT_EXPORT: 'audit:export',
 
+  // Legal and policy register
+  LEGAL_POLICY_VIEW: 'legalPolicy:view',
+  LEGAL_POLICY_MANAGE: 'legalPolicy:manage',
+
   // Platform
   TENANT_MANAGE: 'tenant:manage',
   TENANT_VIEW: 'tenant:view',
@@ -158,6 +164,8 @@ export function isPermissionAvailableInWorkspace(
     [W.APPROVER]: [
       Permissions.REQUEST_VIEW,
       Permissions.REQUEST_APPROVE_SUPERVISOR,
+      Permissions.REQUEST_APPROVE_ORGANISATIONAL,
+      Permissions.REQUEST_REVIEW_FINANCE,
       Permissions.REQUEST_REVIEW_TRANSPORT,
       Permissions.VEHICLE_RELEASE_REGIONAL,
       Permissions.VEHICLE_RELEASE_NATIONAL,
@@ -288,6 +296,8 @@ export function isPermissionAvailableInWorkspace(
       Permissions.USER_INVITE,
       Permissions.AUDIT_READ,
       Permissions.AUDIT_EXPORT,
+      Permissions.LEGAL_POLICY_VIEW,
+      Permissions.LEGAL_POLICY_MANAGE,
       Permissions.REPORT_VIEW,
       Permissions.REPORT_EXPORT,
       Permissions.FILE_VIEW,
@@ -298,6 +308,7 @@ export function isPermissionAvailableInWorkspace(
       Permissions.REQUEST_VIEW,
       Permissions.AUDIT_READ,
       Permissions.AUDIT_EXPORT,
+      Permissions.LEGAL_POLICY_VIEW,
       Permissions.REPORT_VIEW,
       Permissions.REPORT_EXPORT,
       Permissions.TRIP_VIEW,
@@ -318,6 +329,8 @@ export function isPermissionAvailableInWorkspace(
       Permissions.RESET_MANAGE,
       Permissions.DEMO_MANAGE,
       Permissions.AUDIT_READ,
+      Permissions.LEGAL_POLICY_VIEW,
+      Permissions.LEGAL_POLICY_MANAGE,
       Permissions.AUDIT_EXPORT,
       Permissions.EMERGENCY_CONTACTS_MANAGE,
     ],
@@ -347,6 +360,7 @@ export const RoleDefinitions = {
       Permissions.DEMO_MANAGE,
       Permissions.AUDIT_READ,
       Permissions.AUDIT_EXPORT,
+      Permissions.LEGAL_POLICY_VIEW,
       Permissions.EMERGENCY_CONTACTS_MANAGE,
     ],
   },
@@ -399,6 +413,8 @@ export const RoleDefinitions = {
       Permissions.ALLOCATION_CREATE,
       Permissions.AUDIT_READ,
       Permissions.DRIVER_LOG_VIEW,
+      Permissions.LEGAL_POLICY_VIEW,
+      Permissions.LEGAL_POLICY_MANAGE,
       Permissions.FUEL_VIEW,
       Permissions.FUEL_MANAGE,
       Permissions.FUEL_VERIFY,
@@ -515,6 +531,16 @@ export const RoleDefinitions = {
     isSystem: true,
     permissions: [Permissions.REQUEST_VIEW, Permissions.REQUEST_APPROVE_SUPERVISOR],
   },
+  FINANCE_BUDGET_REVIEWER: {
+    name: 'Finance / Budget Reviewer',
+    isSystem: true,
+    permissions: [
+      Permissions.REQUEST_VIEW,
+      Permissions.REQUEST_REVIEW_FINANCE,
+      Permissions.REPORT_VIEW,
+      Permissions.FILE_VIEW,
+    ],
+  },
   CONTROL_ADMIN_OFFICER: {
     name: 'Control Administrative Officer',
     isSystem: true,
@@ -547,6 +573,7 @@ export const RoleDefinitions = {
       Permissions.VEHICLE_RELEASE_NATIONAL,
       Permissions.TRIP_VIEW,
       Permissions.REQUEST_VIEW,
+      Permissions.REQUEST_APPROVE_ORGANISATIONAL,
     ],
   },
   CHIEF_REGIONAL_OFFICER: {
@@ -579,6 +606,7 @@ export const RoleDefinitions = {
     permissions: [
       Permissions.AUDIT_READ,
       Permissions.AUDIT_EXPORT,
+      Permissions.LEGAL_POLICY_VIEW,
       Permissions.REPORT_VIEW,
       Permissions.REPORT_EXPORT,
       Permissions.TRIP_VIEW,
@@ -603,12 +631,18 @@ export function getAllPermissionCodes(): PermissionCode[] {
  * Permission groups for UI organisation
  */
 export const PermissionGroups: Record<string, { label: string; permissions: PermissionCode[] }> = {
+  legalPolicy: {
+    label: 'Legal & Policy Register',
+    permissions: [Permissions.LEGAL_POLICY_VIEW, Permissions.LEGAL_POLICY_MANAGE],
+  },
   requests: {
     label: 'Transport Requests',
     permissions: [
       Permissions.REQUEST_CREATE,
       Permissions.REQUEST_VIEW,
       Permissions.REQUEST_APPROVE_SUPERVISOR,
+      Permissions.REQUEST_APPROVE_ORGANISATIONAL,
+      Permissions.REQUEST_REVIEW_FINANCE,
       Permissions.REQUEST_REVIEW_TRANSPORT,
       Permissions.REQUEST_WITHDRAW,
       Permissions.REQUEST_CANCEL,

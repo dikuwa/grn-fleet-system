@@ -6,8 +6,45 @@ import {
 } from './workflow-builder';
 
 describe('governed tenant workflow builder', () => {
-  it('provides the three approved presets', () => {
-    expect(WORKFLOW_PRESETS.map((preset) => preset.id)).toEqual(['lean', 'standard', 'controlled']);
+  it('provides legacy-compatible and conditional routing presets', () => {
+    expect(WORKFLOW_PRESETS.map((preset) => preset.id)).toEqual([
+      'lean',
+      'standard',
+      'controlled',
+      'internal_organisational',
+      'internal_budget_controlled',
+      'sponsored_external_first',
+      'programme_transport',
+    ]);
+  });
+
+  it('allows origin-specific governance ordering while locking the operational tail', () => {
+    expect(
+      validateGovernedActions([
+        'finance_review',
+        'organisational_approve',
+        'transport_review',
+        'authorise',
+        'acknowledge',
+      ]).ok,
+    ).toBe(true);
+    expect(
+      validateGovernedActions([
+        'organisational_approve',
+        'finance_review',
+        'transport_review',
+        'authorise',
+        'acknowledge',
+      ]).ok,
+    ).toBe(true);
+    expect(
+      validateGovernedActions([
+        'transport_review',
+        'finance_review',
+        'authorise',
+        'acknowledge',
+      ]).ok,
+    ).toBe(false);
   });
 
   it('requires the governed minimum in lifecycle order', () => {

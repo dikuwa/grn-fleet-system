@@ -19,12 +19,20 @@ export function formatNumber(value: number): string {
  * Format currency. NAD remains the default so existing callers are unchanged.
  */
 export function formatCurrency(value: number, currency = 'NAD'): string {
-  return new Intl.NumberFormat('en-NA', {
+  if (currency === 'NAD') {
+    return `N$ ${new Intl.NumberFormat('en-NA', {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 2,
+    }).format(value)}`;
+  }
+  const formatted = new Intl.NumberFormat('en-NA', {
     style: 'currency',
     currency,
+    currencyDisplay: 'symbol',
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(value);
+  return formatted;
 }
 
 /**

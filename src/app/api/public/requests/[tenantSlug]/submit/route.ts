@@ -20,6 +20,8 @@ import { onRequestSubmitted } from '@/lib/document-generator';
 import { sendPlainEmail } from '@/lib/email';
 import { env } from '@/env';
 import { recordAuditEvent } from '@/lib/audit-event';
+import { parseRequestRoutingInput } from '@/lib/request-routing-input';
+import { resolveWorkflowRoute } from '@/lib/workflow-route-resolver';
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ tenantSlug: string }> }) {
   if (!publicRequestCsrfAllowed(request)) return NextResponse.json({ error: 'Request could not be submitted' }, { status: 403 });
@@ -40,6 +42,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     passengers?: Array<{ externalName: string }>;
     proposedCorrections?: Record<string, string>;
     clientSubmissionId?: string;
+    financialImpact?: string;
+    tripCategory?: string;
+    estimatedCost?: number | string;
+    costCentre?: string;
+    fundingSource?: string;
+    budgetReference?: string;
   };
   if (!body.purpose?.trim() || !body.origin?.trim() || !body.destination?.trim() || !body.departureAt || !body.returnAt) {
     return NextResponse.json({ error: 'Purpose, origin, destination, departure and return are required.' }, { status: 400 });
@@ -52,6 +60,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const purpose = body.purpose.trim();
   const origin = body.origin.trim();
   const destination = body.destination.trim();
+  const routingInput = parseRequestRoutingInput(body as Record<string, unknown>, {
+    requesterType: 'internal',
+  });
+  if (!routingInput.ok) {
+    return NextResponse.json({ error: routingInput.error }, { status: 422 });
+  }
   const db = getDb();
   const [[tenant], [employee]] = await Promise.all([
     db.select().from(tenants).where(and(eq(tenants.id, secureSession.tenantId), eq(tenants.slug, tenantSlug), sql`lower(${tenants.status}) = 'active'`)).limit(1),
@@ -96,21 +110,38 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   const scope = body.scope === 'national' ? 'national' : 'regional';
   const availableRoutes = await db.select({
     id: workflowDefinitions.id,
+    version: workflowDefinitions.version,
+    tripScope: workflowDefinitions.tripScope,
     regionId: workflowDefinitions.regionId,
     officeId: workflowDefinitions.officeId,
     departmentId: workflowDefinitions.departmentId,
+    requestOrigin: workflowDefinitions.requestOrigin,
+    financialImpact: workflowDefinitions.financialImpact,
+    tripCategory: workflowDefinitions.tripCategory,
   }).from(workflowDefinitions).where(and(
     eq(workflowDefinitions.tenantId, tenant.id),
     eq(workflowDefinitions.tripScope, scope),
     eq(workflowDefinitions.isActive, true),
   ));
-  const hasMatchingRoute = availableRoutes.some((route) =>
-    (!route.regionId || route.regionId === employee.regionId) &&
-    (!route.officeId || route.officeId === employee.officeId) &&
-    (!route.departmentId || route.departmentId === employee.departmentId),
-  );
-  if (!hasMatchingRoute) {
-    return NextResponse.json({ error: 'No approval route is configured for your region, office and department. Please contact your administrator.' }, { status: 409 });
+  const routeResolution = resolveWorkflowRoute(availableRoutes, {
+    tripScope: scope,
+    regionId: employee.regionId,
+    officeId: employee.officeId,
+    departmentId: employee.departmentId,
+    requestOrigin: routingInput.fields.requestOrigin,
+    financialImpact: routingInput.fields.financialImpact,
+    tripCategory: routingInput.fields.tripCategory,
+  });
+  if (routeResolution.status !== 'matched') {
+    return NextResponse.json(
+      {
+        error:
+          routeResolution.status === 'ambiguous'
+            ? 'Multiple equally specific approval routes match this request. Please contact your administrator.'
+            : 'No approval route is configured for these request conditions. Please contact your administrator.',
+      },
+      { status: 409 },
+    );
   }
 
   const now = new Date();
@@ -141,6 +172,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         clientSubmissionId: body.clientSubmissionId || null,
         scope,
         status: 'submitted',
+        ...routingInput.fields,
         requesterEmployeeId: employee.id,
         requesterUserId: null,
         enteredByUserId: null,

@@ -127,9 +127,9 @@ export default function CompliancePage() {
   const overallLabel = (status: string): string => {
     switch (status) {
       case 'compliant':
-        return 'Compliant';
+        return 'Documents Ready';
       case 'non_compliant':
-        return 'Non-Compliant';
+        return 'Document Blocker';
       case 'attention_needed':
         return 'Attention Needed';
       default:
@@ -163,12 +163,12 @@ export default function CompliancePage() {
         items={[
           { label: 'Dashboard', href: '/dashboard' },
           { label: 'Fleet', href: '/dashboard/fleet' },
-          { label: 'Compliance' },
+          { label: 'Vehicle Document Readiness' },
         ]}
       />
       <PageHeader
-        title="Vehicle Compliance"
-        description="Track vehicle licences, roadworthy tests, insurance, and expiry status"
+        title="Vehicle Document Readiness"
+        description="Track recorded vehicle licences, roadworthy tests, insurance and expiry status. This is operational evidence, not a legal opinion."
       >
         <Button variant="secondary" size="sm" onClick={fetchData} loading={loading}>
           <RefreshCw className="h-4 w-4" />
@@ -191,8 +191,8 @@ export default function CompliancePage() {
       ) : vehicles.length === 0 ? (
         <EmptyState
           icon={<ShieldCheck className="h-8 w-8" />}
-          title="No compliance data"
-          description="No vehicles found. Add vehicles to track their compliance status."
+          title="No document-readiness data"
+          description="No vehicles found. Add vehicles to track their operational document status."
         />
       ) : (
         <>
@@ -204,7 +204,7 @@ export default function CompliancePage() {
                   <p className="text-2xl font-[650] text-green-600 tabular-nums dark:text-green-400">
                     {summary.compliant}
                   </p>
-                  <p className="text-ink-500 text-xs">Compliant</p>
+                  <p className="text-ink-500 text-xs">Documents Ready</p>
                 </div>
               </CardContent>
             </Card>
@@ -224,7 +224,7 @@ export default function CompliancePage() {
                   <p className="text-2xl font-[650] text-red-600 tabular-nums dark:text-red-400">
                     {summary.nonCompliant}
                   </p>
-                  <p className="text-ink-500 text-xs">Non-Compliant</p>
+                  <p className="text-ink-500 text-xs">Document Blocker</p>
                 </div>
               </CardContent>
             </Card>
@@ -296,9 +296,9 @@ export default function CompliancePage() {
               wrapperClassName="w-full sm:w-[200px]"
             >
               <option value="all">All Status</option>
-              <option value="compliant">Compliant</option>
+              <option value="compliant">Documents Ready</option>
               <option value="attention_needed">Attention Needed</option>
-              <option value="non_compliant">Non-Compliant</option>
+              <option value="non_compliant">Document Blocker</option>
               <option value="incomplete">Incomplete</option>
             </StyledSelect>
             <ClientFilterReset

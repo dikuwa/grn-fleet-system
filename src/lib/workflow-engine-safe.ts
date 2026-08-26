@@ -87,6 +87,7 @@ export class WorkflowEngine extends BaseWorkflowEngine {
       .select({
         tenantId: transportRequests.tenantId,
         requesterUserId: transportRequests.requesterUserId,
+        requesterType: transportRequests.requesterType,
         requesterEmployeeId: transportRequests.requesterEmployeeId,
         travellerEmployeeId: transportRequests.travellerEmployeeId,
       })
@@ -95,8 +96,10 @@ export class WorkflowEngine extends BaseWorkflowEngine {
       .limit(1);
     if (!request) return status;
 
+    const sponsorMayApproveExternal =
+      request.requesterType === 'external' && currentStep.actionType === 'organisational_approve';
     const excludeEmployeeIds = [
-      request.requesterEmployeeId,
+      sponsorMayApproveExternal ? null : request.requesterEmployeeId,
       request.travellerEmployeeId,
     ].filter((id): id is string => Boolean(id));
     const excludeUserIds = [request.requesterUserId].filter((id): id is string => Boolean(id));

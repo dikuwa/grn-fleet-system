@@ -5,6 +5,7 @@ import {
   timestamp,
   boolean,
   integer,
+  numeric,
   jsonb,
   uniqueIndex,
   index,
@@ -37,6 +38,19 @@ export const transportRequests = pgTable(
     scope: text('scope').notNull(), // regional, national
     status: text('status').notNull().default('draft'),
     requesterType: text('requester_type').notNull().default('internal'), // internal, external
+    /**
+     * Immutable routing origin captured at submission. Programme is explicit
+     * rather than inferred at runtime so later programme edits cannot change
+     * the governed route selected for an existing request.
+     */
+    requestOrigin: text('request_origin').notNull().default('internal'), // internal, external, programme
+    financialImpact: text('financial_impact').notNull().default('none'), // none, within_budget, additional_funding
+    tripCategory: text('trip_category').notNull().default('general'),
+    estimatedCost: numeric('estimated_cost', { precision: 12, scale: 2 }),
+    currency: text('currency').notNull().default('NAD'),
+    costCentre: text('cost_centre'),
+    fundingSource: text('funding_source'),
+    budgetReference: text('budget_reference'),
     requesterEmployeeId: uuid('requester_employee_id')
       .notNull()
       .references(() => employees.id),

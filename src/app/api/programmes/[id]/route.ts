@@ -132,6 +132,7 @@ export async function GET(
       canReject,
       canPublish,
       canArchive,
+      canCreateTransportRequest,
     ] = await Promise.all([
       hasPermission(session, Permissions.PROGRAMME_EDIT_OWN),
       hasPermission(session, Permissions.PROGRAMME_EDIT_ANY),
@@ -141,6 +142,7 @@ export async function GET(
       hasPermission(session, Permissions.PROGRAMME_REJECT),
       hasPermission(session, Permissions.PROGRAMME_PUBLISH),
       hasPermission(session, Permissions.PROGRAMME_ARCHIVE),
+      hasPermission(session, Permissions.REQUEST_CREATE),
     ]);
 
     const canEdit =
@@ -149,6 +151,8 @@ export async function GET(
     const capabilities = {
       edit: canEdit,
       delete: programme.status === 'draft' && (isOwner ? canEditOwn : canEditAny),
+      createTransportRequest:
+        ['approved', 'published'].includes(programme.status) && canCreateTransportRequest,
       actions: {
         submit:
           ['draft', 'changes_requested'].includes(programme.status) &&

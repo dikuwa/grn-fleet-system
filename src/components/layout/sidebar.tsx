@@ -46,6 +46,7 @@ import {
   CreditCard,
   MonitorPlay,
   PhoneCall,
+  BookOpenCheck,
   type LucideIcon,
 } from 'lucide-react';
 
@@ -54,7 +55,7 @@ const iconRegistry: Record<string, LucideIcon> = {
   Wrench, Users, Building2, CarFront, FileSpreadsheet, FileBarChart, Bell, Settings, Globe,
   MapPin, Shield, BrainCircuit, Receipt, User, UserCog, CalendarClock, Clock, Mail, Send,
   Database, Link2, GitBranch, AlertTriangle, Package, MessageSquareText, CreditCard,
-  MonitorPlay, PhoneCall,
+  MonitorPlay, PhoneCall, BookOpenCheck,
 };
 
 function getNavGroups(activeWorkspace: WorkspaceId, roleNames: readonly string[] = []) {

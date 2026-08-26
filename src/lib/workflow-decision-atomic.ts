@@ -23,7 +23,12 @@ import {
 } from '@/lib/workflow-engine';
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
 
-const ATOMIC_ACTIONS = ['transport_review', 'release'] as const;
+const ATOMIC_ACTIONS = [
+  'organisational_approve',
+  'finance_review',
+  'transport_review',
+  'release',
+] as const;
 type AtomicAction = (typeof ATOMIC_ACTIONS)[number];
 
 function expectedPositiveResult(action: AtomicAction): WorkflowActionResult {
@@ -42,6 +47,7 @@ export async function processAtomicWorkflowDecision(input: {
   action: WorkflowActionType;
   result: WorkflowActionResult;
   comment?: string;
+  metadata?: Record<string, unknown>;
   session: AuthSession;
 }): Promise<EngineResult> {
   const { instanceId, result, comment, session } = input;
@@ -104,6 +110,7 @@ export async function processAtomicWorkflowDecision(input: {
       id: transportRequests.id,
       tenantId: transportRequests.tenantId,
       requesterUserId: transportRequests.requesterUserId,
+      requesterType: transportRequests.requesterType,
       requesterEmployeeId: transportRequests.requesterEmployeeId,
       travellerEmployeeId: transportRequests.travellerEmployeeId,
       reference: transportRequests.reference,
@@ -127,7 +134,8 @@ export async function processAtomicWorkflowDecision(input: {
     requestRecord.requesterUserId === session.user.id ||
     Boolean(
       actorEmployee &&
-      (requestRecord.requesterEmployeeId === actorEmployee.id ||
+      ((requestRecord.requesterType !== 'external' &&
+        requestRecord.requesterEmployeeId === actorEmployee.id) ||
         requestRecord.travellerEmployeeId === actorEmployee.id),
     );
   if (selfConflict) {
@@ -182,6 +190,7 @@ export async function processAtomicWorkflowDecision(input: {
     resolvedRoleId: resolution.resolvedRoleId,
     resolvedEmployeeId: resolution.resolvedEmployeeId,
     isActing,
+    decisionEvidence: input.metadata ?? {},
   });
   const auditBefore = JSON.stringify({
     workflowStatus: instance.status,

@@ -23,6 +23,7 @@ import {
   Loader2,
   MapPin,
   Pencil,
+  Plus,
   Send,
   Trash2,
   Users,
@@ -74,6 +75,7 @@ interface LinkedRequest {
 interface ProgrammeCapabilities {
   edit: boolean;
   delete: boolean;
+  createTransportRequest: boolean;
   actions: Record<string, boolean>;
 }
 
@@ -288,6 +290,13 @@ export default function ProgrammeDetailPage() {
               </Link>
             </Button>
           )}
+          {capabilities.createTransportRequest && (
+            <Button size="sm" asChild>
+              <Link href={`/dashboard/requests/new?programmeId=${programme.id}`}>
+                <Plus className="h-4 w-4" /> Create Trip
+              </Link>
+            </Button>
+          )}
           {capabilities.delete && (
             <Button
               variant="destructive"
@@ -424,10 +433,18 @@ export default function ProgrammeDetailPage() {
             </CardHeader>
             <CardContent>
               {linkedRequests.length === 0 ? (
-                <p className="text-ink-400 py-4 text-center text-xs">
-                  No transport requests are linked to this programme yet. Published programmes can
-                  be selected when creating a transport request.
-                </p>
+                <div className="space-y-3 py-4 text-center">
+                  <p className="text-ink-400 text-xs">
+                    No transport requests are linked to this programme yet.
+                  </p>
+                  {capabilities.createTransportRequest && (
+                    <Button size="sm" asChild>
+                      <Link href={`/dashboard/requests/new?programmeId=${programme.id}`}>
+                        <Plus className="h-4 w-4" /> Create Trip from Programme
+                      </Link>
+                    </Button>
+                  )}
+                </div>
               ) : (
                 <div className="space-y-2">
                   {linkedRequests.map((r) => (

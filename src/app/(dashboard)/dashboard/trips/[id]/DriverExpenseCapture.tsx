@@ -183,7 +183,7 @@ export function DriverExpenseCapture({ tripId }: { tripId: string }) {
               />
             </div>
             <div className="space-y-1.5">
-              <Label required>Amount (NAD)</Label>
+              <Label required>Amount (N$)</Label>
               <Input
                 type="number"
                 min="0.01"

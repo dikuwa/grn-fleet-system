@@ -285,6 +285,7 @@ export const PRESERVED_TABLES: Array<{ table: string; label: string }> = [
   { table: 'trip_incident_sequences', label: 'Trip incident sequences' },
   { table: 'notification_preferences', label: 'Notification preferences' },
   { table: 'audit_events', label: 'Audit events' },
+  { table: 'legal_policy_register', label: 'Legal & Policy Register' },
 ];
 
 /**

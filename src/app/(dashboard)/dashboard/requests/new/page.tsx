@@ -16,6 +16,8 @@ import {
   Users,
   User,
   CalendarDays,
+  GitBranch,
+  Loader2,
 } from 'lucide-react';
 import Link from 'next/link';
 import { formatDate } from '@/lib/utils';
@@ -105,6 +107,12 @@ interface RequestFormData {
   goodsAndEquipment: GoodsEquipmentItem[];
   driverPreference: string;
   programmeId: string;
+  financialImpact: 'none' | 'within_budget' | 'additional_funding';
+  tripCategory: string;
+  estimatedCost: string;
+  costCentre: string;
+  fundingSource: string;
+  budgetReference: string;
 }
 
 const STEPS = [
@@ -131,6 +139,12 @@ const EMPTY_FORM: RequestFormData = {
   goodsAndEquipment: [],
   driverPreference: 'transport_admin_assign',
   programmeId: '',
+  financialImpact: 'none',
+  tripCategory: 'general',
+  estimatedCost: '',
+  costCentre: '',
+  fundingSource: '',
+  budgetReference: '',
 };
 
 // ---------------------------------------------------------------------------
@@ -273,6 +287,85 @@ function BasicInfoStep({
             </label>
           ))}
         </div>
+      </div>
+
+      <div className="border-border space-y-3 rounded-[8px] border p-4">
+        <div>
+          <p className="text-ink-950 text-sm font-medium">Trip and budget classification</p>
+          <p className="text-ink-500 mt-0.5 text-xs">
+            These facts select the tenant’s governed approval route. Amounts are recorded in NAD and displayed as N$.
+          </p>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2">
+          <div>
+            <label className="text-ink-500 mb-1 block text-xs font-medium">Trip category</label>
+            <StyledSelect
+              value={data.tripCategory}
+              onChange={(event) => onChange({ tripCategory: event.target.value })}
+            >
+              <option value="general">General official travel</option>
+              <option value="programme_transport">Programme transport</option>
+              <option value="learner_transport">Learner transport</option>
+              <option value="event_transport">Event transport</option>
+              <option value="emergency">Emergency</option>
+              <option value="goods_delivery">Goods / equipment delivery</option>
+            </StyledSelect>
+          </div>
+          <div>
+            <label className="text-ink-500 mb-1 block text-xs font-medium">Financial impact</label>
+            <StyledSelect
+              value={data.financialImpact}
+              onChange={(event) =>
+                onChange({
+                  financialImpact: event.target.value as RequestFormData['financialImpact'],
+                })
+              }
+            >
+              <option value="none">No additional financial impact</option>
+              <option value="within_budget">Within an approved budget</option>
+              <option value="additional_funding">Additional / unbudgeted funding required</option>
+            </StyledSelect>
+          </div>
+        </div>
+        {data.financialImpact !== 'none' && (
+          <div className="grid gap-3 sm:grid-cols-2">
+            <div>
+              <label className="text-ink-500 mb-1 block text-xs font-medium">Estimated cost (N$)</label>
+              <input
+                type="number"
+                min="0"
+                step="0.01"
+                value={data.estimatedCost}
+                onChange={(event) => onChange({ estimatedCost: event.target.value })}
+                className="border-border bg-surface text-ink-950 h-10 w-full rounded-[8px] border px-3 text-sm"
+              />
+            </div>
+            <div>
+              <label className="text-ink-500 mb-1 block text-xs font-medium">Cost centre</label>
+              <input
+                value={data.costCentre}
+                onChange={(event) => onChange({ costCentre: event.target.value })}
+                className="border-border bg-surface text-ink-950 h-10 w-full rounded-[8px] border px-3 text-sm"
+              />
+            </div>
+            <div>
+              <label className="text-ink-500 mb-1 block text-xs font-medium">Funding source</label>
+              <input
+                value={data.fundingSource}
+                onChange={(event) => onChange({ fundingSource: event.target.value })}
+                className="border-border bg-surface text-ink-950 h-10 w-full rounded-[8px] border px-3 text-sm"
+              />
+            </div>
+            <div>
+              <label className="text-ink-500 mb-1 block text-xs font-medium">Budget reference</label>
+              <input
+                value={data.budgetReference}
+                onChange={(event) => onChange({ budgetReference: event.target.value })}
+                className="border-border bg-surface text-ink-950 h-10 w-full rounded-[8px] border px-3 text-sm"
+              />
+            </div>
+          </div>
+        )}
       </div>
 
       <div>
@@ -1091,6 +1184,118 @@ function RouteStep({ routes, onChange }: { routes: Route[]; onChange: (r: Route[
   );
 }
 
+type RoutePreviewData = {
+  definition: { name: string; version: number };
+  context: { requestOrigin: string; financialImpact: string; tripCategory: string };
+  steps: Array<{
+    stepOrder: number;
+    actionType: string;
+    label: string;
+    description: string | null;
+    assignmentStrategy: string;
+    operationalLifecycle: boolean;
+  }>;
+};
+
+function SubmissionRoutePreview({ data }: { data: RequestFormData }) {
+  const [preview, setPreview] = useState<RoutePreviewData | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setLoading(true);
+    setError('');
+    fetch('/api/transport-requests/route-preview', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      signal: controller.signal,
+      body: JSON.stringify({
+        scope: data.scope,
+        programmeId: data.programmeId || undefined,
+        requesterEmployeeId: data.requesterEmployeeId || undefined,
+        financialImpact: data.financialImpact,
+        tripCategory: data.tripCategory,
+        estimatedCost: data.estimatedCost || undefined,
+        costCentre: data.costCentre || undefined,
+        fundingSource: data.fundingSource || undefined,
+        budgetReference: data.budgetReference || undefined,
+      }),
+    })
+      .then(async (response) => {
+        const result = await response.json();
+        if (!response.ok) throw new Error(result.error || 'Unable to preview approval route.');
+        setPreview(result.data);
+      })
+      .catch((reason) => {
+        if (reason instanceof DOMException && reason.name === 'AbortError') return;
+        setPreview(null);
+        setError(reason instanceof Error ? reason.message : 'Unable to preview approval route.');
+      })
+      .finally(() => {
+        if (!controller.signal.aborted) setLoading(false);
+      });
+    return () => controller.abort();
+  }, [
+    data.scope,
+    data.programmeId,
+    data.requesterEmployeeId,
+    data.financialImpact,
+    data.tripCategory,
+    data.estimatedCost,
+    data.costCentre,
+    data.fundingSource,
+    data.budgetReference,
+  ]);
+
+  return (
+    <Card>
+      <CardContent className="space-y-3 pt-4">
+        <div className="flex items-start gap-3">
+          <GitBranch className="text-brand-700 mt-0.5 h-5 w-5 shrink-0" />
+          <div>
+            <h4 className="text-ink-950 text-sm font-semibold">Approval route before submission</h4>
+            <p className="text-ink-500 mt-0.5 text-xs">
+              This preview uses the same tenant resolver that will start the submitted workflow.
+            </p>
+          </div>
+        </div>
+        {loading ? (
+          <div className="text-ink-500 flex items-center gap-2 py-3 text-sm" role="status">
+            <Loader2 className="h-4 w-4 animate-spin" /> Resolving approval route…
+          </div>
+        ) : error ? (
+          <div className="border-status-error-text/25 bg-status-error-bg text-status-error-text rounded-[8px] border px-3 py-2 text-sm">
+            {error}
+          </div>
+        ) : preview ? (
+          <div className="space-y-3">
+            <div className="bg-muted/40 rounded-[8px] px-3 py-2 text-xs">
+              <span className="text-ink-950 font-semibold">{preview.definition.name}</span>
+              <span className="text-ink-500"> · version {preview.definition.version} · {preview.context.requestOrigin.replaceAll('_', ' ')}</span>
+            </div>
+            <ol className="space-y-2">
+              {preview.steps.map((routeStep) => (
+                <li key={`${routeStep.stepOrder}-${routeStep.actionType}`} className="border-border flex gap-3 rounded-[8px] border px-3 py-2.5">
+                  <span className="bg-brand-50 text-brand-700 flex h-6 w-6 shrink-0 items-center justify-center rounded-full text-xs font-semibold">
+                    {routeStep.stepOrder}
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-ink-950 text-sm font-medium">{routeStep.label}</p>
+                    <p className="text-ink-500 mt-0.5 text-xs">
+                      {routeStep.description || routeStep.assignmentStrategy.replaceAll('_', ' ')}
+                    </p>
+                  </div>
+                </li>
+              ))}
+            </ol>
+          </div>
+        ) : null}
+      </CardContent>
+    </Card>
+  );
+}
+
 function ReviewStep({ data, reference }: { data: RequestFormData; reference: string }) {
   const totalKm = data.routes.reduce((sum, r) => sum + r.estimatedKm, 0);
   const totalActivityKm = data.activities.reduce((sum, a) => sum + a.estimatedKilometres, 0);
@@ -1106,6 +1311,8 @@ function ReviewStep({ data, reference }: { data: RequestFormData; reference: str
           This reference will be assigned when the request is submitted.
         </p>
       </div>
+
+      <SubmissionRoutePreview data={data} />
 
       {/* Summary */}
       <div className="grid gap-4 sm:grid-cols-4">
@@ -1142,6 +1349,22 @@ function ReviewStep({ data, reference }: { data: RequestFormData; reference: str
             <span className="text-ink-500">Scope</span>
             <span className="text-ink-950 font-medium capitalize">{data.scope}</span>
           </div>
+          <div className="flex justify-between text-sm">
+            <span className="text-ink-500">Financial impact</span>
+            <span className="text-ink-950 font-medium">
+              {data.financialImpact === 'none'
+                ? 'None'
+                : data.financialImpact === 'within_budget'
+                  ? 'Within approved budget'
+                  : 'Additional funding required'}
+            </span>
+          </div>
+          {data.estimatedCost && (
+            <div className="flex justify-between text-sm">
+              <span className="text-ink-500">Estimated cost</span>
+              <span className="text-ink-950 font-medium">N$ {Number(data.estimatedCost).toFixed(2)}</span>
+            </div>
+          )}
           <div className="flex justify-between text-sm">
             <span className="text-ink-500">Purpose</span>
             <span className="text-ink-950 max-w-[60%] text-right font-medium">
@@ -1205,6 +1428,67 @@ export default function NewRequestPage() {
   const [reference] = useState(generateReference);
   const { toast } = useToast();
 
+  useEffect(() => {
+    const programmeId = new URLSearchParams(window.location.search).get('programmeId');
+    if (!programmeId) return;
+
+    const controller = new AbortController();
+    fetch(`/api/programmes/${programmeId}`, { signal: controller.signal })
+      .then(async (response) => {
+        const payload = await response.json();
+        if (!response.ok) throw new Error(payload.error || 'Programme could not be loaded.');
+        return payload.data?.programme as
+          | {
+              id: string;
+              title: string;
+              purpose: string | null;
+              description: string | null;
+              departmentName: string | null;
+              department: string | null;
+              venue: string | null;
+              startDate: string | null;
+              endDate: string | null;
+              estimatedKilometres: number | null;
+            }
+          | undefined;
+      })
+      .then((programme) => {
+        if (!programme) throw new Error('Programme could not be loaded.');
+        setFormData((current) => ({
+          ...current,
+          programmeId: programme.id,
+          tripCategory: 'programme_transport',
+          purpose: current.purpose || programme.purpose || programme.description || programme.title,
+          department: current.department || programme.departmentName || programme.department || '',
+          activities:
+            current.activities.length > 0 || !programme.startDate || !programme.endDate
+              ? current.activities
+              : [
+                  {
+                    id: nextId(),
+                    title: programme.title,
+                    description: programme.description || programme.purpose || '',
+                    venue: programme.venue || '',
+                    startDate: programme.startDate,
+                    endDate: programme.endDate,
+                    estimatedKilometres: programme.estimatedKilometres || 0,
+                  },
+                ],
+        }));
+      })
+      .catch((loadError) => {
+        if (loadError instanceof DOMException && loadError.name === 'AbortError') return;
+        toast({
+          title: 'Programme not loaded',
+          description:
+            loadError instanceof Error ? loadError.message : 'Programme could not be loaded.',
+          variant: 'error',
+        });
+      });
+
+    return () => controller.abort();
+  }, [toast]);
+
   const updateForm = useCallback((patch: Partial<RequestFormData>) => {
     setFormData((prev) => ({ ...prev, ...patch }));
   }, []);
@@ -1251,6 +1535,12 @@ export default function NewRequestPage() {
         body: JSON.stringify({
           purpose: formData.purpose,
           programmeId: formData.programmeId || undefined,
+          financialImpact: formData.financialImpact,
+          tripCategory: formData.tripCategory,
+          estimatedCost: formData.estimatedCost || undefined,
+          costCentre: formData.costCentre || undefined,
+          fundingSource: formData.fundingSource || undefined,
+          budgetReference: formData.budgetReference || undefined,
           requesterEmployeeNumber: formData.requesterEmployee?.employeeNumber,
           assistedReason: formData.assistedReason,
           confirmationMethod: formData.requesterEmployee

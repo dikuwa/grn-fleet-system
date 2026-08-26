@@ -55,7 +55,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     }
 
     const body = await request.json();
-    const { actionType, comment } = body;
+    const { actionType, comment, financeEvidence } = body;
     const validDecisions = ['approved', 'rejected', 'returned'];
     if (!validDecisions.includes(actionType)) {
       return NextResponse.json(
@@ -116,6 +116,33 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         },
         { status: 409 },
       );
+    }
+    let decisionMetadata: Record<string, unknown> | undefined;
+    if (stepActionType === 'finance_review' && actionType === 'approved') {
+      const outcome = String(financeEvidence?.outcome || '');
+      const budgetReference = String(financeEvidence?.budgetReference || '').trim();
+      const allowedOutcomes = ['budget_available', 'funding_approved_with_conditions', 'no_commitment_required'];
+      const approvedAmount =
+        financeEvidence?.approvedAmount == null || financeEvidence.approvedAmount === ''
+          ? null
+          : Number(financeEvidence.approvedAmount);
+      if (!allowedOutcomes.includes(outcome) || budgetReference.length < 3) {
+        return NextResponse.json(
+          { error: 'Choose a Finance/Budget outcome and provide its governing budget reference.' },
+          { status: 422 },
+        );
+      }
+      if (approvedAmount != null && (!Number.isFinite(approvedAmount) || approvedAmount < 0)) {
+        return NextResponse.json({ error: 'Approved amount must be a valid NAD amount.' }, { status: 422 });
+      }
+      decisionMetadata = {
+        financeEvidence: {
+          outcome,
+          budgetReference: budgetReference.slice(0, 120),
+          approvedAmount: approvedAmount == null ? null : approvedAmount.toFixed(2),
+          currency: 'NAD',
+        },
+      };
     }
 
     if (stepActionType === 'transport_review' && actionType === 'approved') {
@@ -231,12 +258,18 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         comment: typeof comment === 'string' ? comment : undefined,
         session,
       });
-    } else if (stepActionType === 'transport_review' || stepActionType === 'release') {
+    } else if (
+      stepActionType === 'organisational_approve' ||
+      stepActionType === 'finance_review' ||
+      stepActionType === 'transport_review' ||
+      stepActionType === 'release'
+    ) {
       result = await processAtomicWorkflowDecision({
         instanceId: id,
         action: stepActionType as WorkflowActionType,
         result: semanticResult,
         comment: typeof comment === 'string' ? comment : undefined,
+        metadata: decisionMetadata,
         session,
       });
     } else if (

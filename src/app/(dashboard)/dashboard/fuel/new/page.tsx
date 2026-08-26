@@ -659,7 +659,7 @@ export default function NewFuelEntryPage() {
             <div className="grid gap-4 sm:grid-cols-3">
               <div className="space-y-1.5"><Label required>Fuel Type</Label><StyledSelect value={formData.fuelType} onChange={(e) => updateForm({ fuelType: e.target.value })}><option value="diesel">Diesel</option><option value="petrol">Petrol</option><option value="unleaded">Unleaded</option></StyledSelect></div>
               <div className="space-y-1.5"><Label required>Litres</Label><Input type="number" step="0.01" placeholder="e.g. 45.5" value={formData.litres} onChange={(e) => updateForm({ litres: e.target.value })} required /></div>
-              <div className="space-y-1.5"><Label required>Amount (NAD)</Label><Input type="number" step="0.01" placeholder="e.g. 850.00" value={formData.amount} onChange={(e) => updateForm({ amount: e.target.value })} required /></div>
+              <div className="space-y-1.5"><Label required>Amount (N$)</Label><Input type="number" step="0.01" placeholder="e.g. 850.00" value={formData.amount} onChange={(e) => updateForm({ amount: e.target.value })} required /></div>
             </div>
 
             <div className="grid gap-4 sm:grid-cols-3">

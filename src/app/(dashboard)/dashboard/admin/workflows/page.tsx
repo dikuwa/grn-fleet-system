@@ -31,10 +31,20 @@ type Definition = {
   regionId: string | null;
   officeId: string | null;
   departmentId: string | null;
+  requestOrigin: string | null;
+  financialImpact: string | null;
+  tripCategory: string | null;
   steps: Step[];
 };
 type Preset = { id: string; label: string; description: string; actions: string[] };
 type AssignmentOption = { id: string; label: string };
+type WorkflowRecommendation = {
+  name: string;
+  presetId: string;
+  requestOrigin: string | null;
+  financialImpact: string | null;
+  rationale: string;
+};
 
 const SYSTEM_STAGES = new Set(['transport_review', 'acknowledge']);
 
@@ -43,6 +53,9 @@ function routingSnapshot(definition: Definition) {
     regionId: definition.regionId,
     officeId: definition.officeId,
     departmentId: definition.departmentId,
+    requestOrigin: definition.requestOrigin,
+    financialImpact: definition.financialImpact,
+    tripCategory: definition.tripCategory,
     steps: definition.steps.map((step) => ({
       id: step.id,
       assignedUserId: step.assignedUserId,
@@ -64,13 +77,14 @@ export default function WorkflowRoutingPage() {
   const [regions, setRegions] = useState<Option[]>([]);
   const [presets, setPresets] = useState<Preset[]>([]);
   const [assignmentStrategies, setAssignmentStrategies] = useState<AssignmentOption[]>([]);
+  const [recommendations, setRecommendations] = useState<WorkflowRecommendation[]>([]);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
   const [creating, setCreating] = useState(false);
   const [publishingStages, setPublishingStages] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [newRoute, setNewRoute] = useState({
-    name: '', tripScope: 'regional', preset: 'standard', regionId: '', officeId: '', departmentId: '', supervisor: true, release: false,
+    name: '', tripScope: 'regional', preset: 'standard', regionId: '', officeId: '', departmentId: '', requestOrigin: '', financialImpact: '', tripCategory: '', supervisor: true, organisational: false, finance: false, release: false,
   });
 
   const load = useCallback(async () => {
@@ -90,6 +104,7 @@ export default function WorkflowRoutingPage() {
       setRegions(result.data.regions || []);
       setPresets(result.data.presets || []);
       setAssignmentStrategies(result.data.assignmentStrategies || []);
+      setRecommendations(result.data.workflowRecommendations?.routes || []);
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Unable to load workflow routing';
       setError(message);
@@ -130,8 +145,11 @@ export default function WorkflowRoutingPage() {
   async function createRoute() {
     setCreating(true);
     try {
-      const actions = [
+      const selectedPreset = presets.find((preset) => preset.id === newRoute.preset);
+      const actions = selectedPreset?.actions ?? [
         ...(newRoute.supervisor ? ['supervisor_approve'] : []),
+        ...(newRoute.finance ? ['finance_review'] : []),
+        ...(newRoute.organisational ? ['organisational_approve'] : []),
         'transport_review',
         ...(newRoute.release ? ['release'] : []),
         'authorise',
@@ -150,11 +168,14 @@ export default function WorkflowRoutingPage() {
     } finally { setCreating(false); }
   }
 
-  async function toggleOptionalStage(definition: Definition, actionType: 'supervisor_approve' | 'release') {
+  async function toggleOptionalStage(definition: Definition, actionType: 'supervisor_approve' | 'organisational_approve' | 'finance_review' | 'release') {
     const current = definition.steps.map((step) => step.actionType);
-    const next = current.includes(actionType) ? current.filter((action) => action !== actionType) : [...current, actionType];
-    const order = ['supervisor_approve', 'transport_review', 'release', 'authorise', 'acknowledge'];
-    const actions = order.filter((action) => next.includes(action));
+    let actions = current.filter((action) => action !== actionType);
+    if (!current.includes(actionType)) {
+      const insertBefore = actionType === 'release' ? 'authorise' : actionType === 'supervisor_approve' ? current[0] : 'transport_review';
+      const index = Math.max(0, actions.indexOf(insertBefore));
+      actions = [...actions.slice(0, index), actionType, ...actions.slice(index)];
+    }
     setPublishingStages(definition.id);
     try {
       const response = await fetch('/api/admin/workflows', {
@@ -180,6 +201,9 @@ export default function WorkflowRoutingPage() {
           regionId: definition.regionId,
           officeId: definition.officeId,
           departmentId: definition.departmentId,
+          requestOrigin: definition.requestOrigin,
+          financialImpact: definition.financialImpact,
+          tripCategory: definition.tripCategory,
           steps: definition.steps.map((step) => ({
             id: step.id,
             stepOrder: step.stepOrder,
@@ -233,6 +257,38 @@ export default function WorkflowRoutingPage() {
         </div>
       </section>
 
+      {recommendations.length > 0 && (
+        <Card>
+          <CardHeader><CardTitle>Onboarding recommendations</CardTitle></CardHeader>
+          <CardContent className="space-y-3">
+            <p className="text-sm text-ink-600">Generated from the organisation type and recorded transport process. Review and publish each route deliberately.</p>
+            <div className="grid gap-3 lg:grid-cols-2">
+              {recommendations.map((recommendation) => (
+                <div key={`${recommendation.name}-${recommendation.financialImpact ?? 'any'}`} className="rounded-[8px] border border-border p-3">
+                  <p className="text-sm font-semibold text-ink-950">{recommendation.name}</p>
+                  <p className="mt-1 text-xs text-ink-500">{recommendation.rationale}</p>
+                  <Button type="button" variant="secondary" size="compact" className="mt-3" onClick={() => {
+                    const preset = presets.find((item) => item.id === recommendation.presetId);
+                    if (!preset) return;
+                    setNewRoute((current) => ({
+                      ...current,
+                      name: recommendation.name,
+                      preset: preset.id,
+                      requestOrigin: recommendation.requestOrigin || '',
+                      financialImpact: recommendation.financialImpact || '',
+                      supervisor: preset.actions.includes('supervisor_approve'),
+                      organisational: preset.actions.includes('organisational_approve'),
+                      finance: preset.actions.includes('finance_review'),
+                      release: preset.actions.includes('release'),
+                    }));
+                  }}>Use recommendation</Button>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       <Card>
         <CardHeader><CardTitle>Create an approval route</CardTitle></CardHeader>
         <CardContent className="space-y-4">
@@ -240,7 +296,24 @@ export default function WorkflowRoutingPage() {
             {presets.map((preset) => (
               <button
                 type="button" key={preset.id}
-                onClick={() => setNewRoute((current) => ({ ...current, preset: preset.id, supervisor: preset.actions.includes('supervisor_approve'), release: preset.actions.includes('release') }))}
+                onClick={() => setNewRoute((current) => ({
+                  ...current,
+                  preset: preset.id,
+                  requestOrigin:
+                    preset.id === 'sponsored_external_first'
+                      ? 'external'
+                      : preset.id === 'programme_transport'
+                        ? 'programme'
+                        : preset.id === 'internal_budget_controlled'
+                          ? 'internal'
+                          : preset.id === 'internal_organisational'
+                            ? 'internal'
+                          : current.requestOrigin,
+                  supervisor: preset.actions.includes('supervisor_approve'),
+                  organisational: preset.actions.includes('organisational_approve'),
+                  finance: preset.actions.includes('finance_review'),
+                  release: preset.actions.includes('release'),
+                }))}
                 className={`focus-ring rounded-[8px] border p-3 text-left ${newRoute.preset === preset.id ? 'border-brand-600 bg-brand-50' : 'border-border'}`}
               >
                 <p className="text-ink-950 text-sm font-semibold">{preset.label}</p>
@@ -262,7 +335,18 @@ export default function WorkflowRoutingPage() {
             <StyledSelect value={newRoute.departmentId} aria-label="Department scope" onChange={(event) => setNewRoute((current) => ({ ...current, departmentId: event.target.value }))}>
               <option value="">All departments</option>{departments.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
             </StyledSelect>
+            <StyledSelect value={newRoute.requestOrigin} aria-label="Request origin condition" onChange={(event) => setNewRoute((current) => ({ ...current, requestOrigin: event.target.value }))}>
+              <option value="">Any request origin</option><option value="internal">Internal</option><option value="external">External / sponsored</option><option value="programme">Programme</option>
+            </StyledSelect>
+            <StyledSelect value={newRoute.financialImpact} aria-label="Financial impact condition" onChange={(event) => setNewRoute((current) => ({ ...current, financialImpact: event.target.value }))}>
+              <option value="">Any financial impact</option><option value="none">No additional impact</option><option value="within_budget">Within approved budget</option><option value="additional_funding">Additional funding required</option>
+            </StyledSelect>
+            <StyledSelect value={newRoute.tripCategory} aria-label="Trip category condition" onChange={(event) => setNewRoute((current) => ({ ...current, tripCategory: event.target.value }))}>
+              <option value="">Any trip category</option><option value="general">General official travel</option><option value="programme_transport">Programme transport</option><option value="learner_transport">Learner transport</option><option value="event_transport">Event transport</option><option value="emergency">Emergency</option><option value="goods_delivery">Goods delivery</option>
+            </StyledSelect>
             <label className="border-border flex h-10 items-center gap-2 rounded-[8px] border px-3 text-sm"><input type="checkbox" checked={newRoute.supervisor} onChange={(event) => setNewRoute((current) => ({ ...current, preset: 'advanced', supervisor: event.target.checked }))} />Department supervisor</label>
+            <label className="border-border flex h-10 items-center gap-2 rounded-[8px] border px-3 text-sm"><input type="checkbox" checked={newRoute.finance} onChange={(event) => setNewRoute((current) => ({ ...current, preset: 'advanced', finance: event.target.checked }))} />Finance / Budget Review</label>
+            <label className="border-border flex h-10 items-center gap-2 rounded-[8px] border px-3 text-sm"><input type="checkbox" checked={newRoute.organisational} onChange={(event) => setNewRoute((current) => ({ ...current, preset: 'advanced', organisational: event.target.checked }))} />Director / Sponsor Approval</label>
             <label className="border-border flex h-10 items-center gap-2 rounded-[8px] border px-3 text-sm"><input type="checkbox" checked={newRoute.release} onChange={(event) => setNewRoute((current) => ({ ...current, preset: 'advanced', release: event.target.checked }))} />Administrative release</label>
             <Button onClick={() => void createRoute()} loading={creating} disabled={newRoute.name.trim().length < 3}><Plus className="h-4 w-4" /> Create &amp; publish</Button>
           </div>
@@ -287,7 +371,7 @@ export default function WorkflowRoutingPage() {
                     <div className="text-ink-500 flex flex-wrap items-center gap-2 text-xs">
                       {isDirty && <Badge variant="warning" size="sm">Draft changes</Badge>}
                       <span>{definition.tripScope.replace(/_/g, ' ')} · v{definition.version}</span>
-                      {!definition.regionId && !definition.officeId && !definition.departmentId && <Badge variant="info" size="sm">Fallback route</Badge>}
+                      {!definition.regionId && !definition.officeId && !definition.departmentId && !definition.requestOrigin && !definition.financialImpact && !definition.tripCategory && <Badge variant="info" size="sm">Fallback route</Badge>}
                     </div>
                   </div>
                 </CardHeader>
@@ -297,6 +381,8 @@ export default function WorkflowRoutingPage() {
                       <div><p className="text-ink-950 text-sm font-semibold">Tenant approval gates</p><p className="text-ink-500 mt-0.5 text-xs">Enable only the organisational controls this tenant actually requires.</p></div>
                       <div className="flex flex-wrap gap-2">
                         <Button type="button" variant={definition.steps.some((step) => step.actionType === 'supervisor_approve') ? 'primary' : 'secondary'} size="compact" loading={publishingStages === definition.id} onClick={() => void toggleOptionalStage(definition, 'supervisor_approve')}>Supervisor Approval</Button>
+                        <Button type="button" variant={definition.steps.some((step) => step.actionType === 'finance_review') ? 'primary' : 'secondary'} size="compact" loading={publishingStages === definition.id} onClick={() => void toggleOptionalStage(definition, 'finance_review')}>Finance / Budget Review</Button>
+                        <Button type="button" variant={definition.steps.some((step) => step.actionType === 'organisational_approve') ? 'primary' : 'secondary'} size="compact" loading={publishingStages === definition.id} onClick={() => void toggleOptionalStage(definition, 'organisational_approve')}>Director / Sponsor Approval</Button>
                         <Button type="button" variant={definition.steps.some((step) => step.actionType === 'release') ? 'primary' : 'secondary'} size="compact" loading={publishingStages === definition.id} onClick={() => void toggleOptionalStage(definition, 'release')}>Administrative Release</Button>
                       </div>
                     </div>
@@ -306,6 +392,9 @@ export default function WorkflowRoutingPage() {
                     <StyledSelect value={definition.regionId || ''} aria-label="Region scope" onChange={(event) => updateDefinition(definition.id, { regionId: event.target.value || null })}><option value="">All regions</option>{regions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</StyledSelect>
                     <StyledSelect value={definition.officeId || ''} aria-label="Office scope" onChange={(event) => updateDefinition(definition.id, { officeId: event.target.value || null })}><option value="">All offices</option>{offices.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</StyledSelect>
                     <StyledSelect value={definition.departmentId || ''} aria-label="Department scope" onChange={(event) => updateDefinition(definition.id, { departmentId: event.target.value || null })}><option value="">All departments</option>{departments.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}</StyledSelect>
+                    <StyledSelect value={definition.requestOrigin || ''} aria-label="Request origin condition" onChange={(event) => updateDefinition(definition.id, { requestOrigin: event.target.value || null })}><option value="">Any request origin</option><option value="internal">Internal</option><option value="external">External / sponsored</option><option value="programme">Programme</option></StyledSelect>
+                    <StyledSelect value={definition.financialImpact || ''} aria-label="Financial impact condition" onChange={(event) => updateDefinition(definition.id, { financialImpact: event.target.value || null })}><option value="">Any financial impact</option><option value="none">No additional impact</option><option value="within_budget">Within approved budget</option><option value="additional_funding">Additional funding required</option></StyledSelect>
+                    <StyledSelect value={definition.tripCategory || ''} aria-label="Trip category condition" onChange={(event) => updateDefinition(definition.id, { tripCategory: event.target.value || null })}><option value="">Any trip category</option><option value="general">General</option><option value="programme_transport">Programme transport</option><option value="learner_transport">Learner transport</option><option value="event_transport">Event transport</option><option value="emergency">Emergency</option><option value="goods_delivery">Goods delivery</option></StyledSelect>
                   </section>
 
                   <div className="border-border overflow-hidden rounded-[8px] border">

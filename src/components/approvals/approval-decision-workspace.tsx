@@ -8,6 +8,7 @@ import {
   CalendarDays,
   CheckCircle2,
   ChevronDown,
+  FileText,
   Info,
   MapPin,
   Paperclip,
@@ -37,6 +38,16 @@ export type ApprovalDecisionWorkspaceData = {
   currentStepLabel: string;
   currentStepDescription?: string | null;
   purpose?: string | null;
+  finance: {
+    requestOrigin: string;
+    financialImpact: string;
+    tripCategory: string;
+    estimatedCost?: string | null;
+    currency: string;
+    costCentre?: string | null;
+    fundingSource?: string | null;
+    budgetReference?: string | null;
+  };
   requester: {
     name: string;
     employeeNumber?: string | null;
@@ -476,6 +487,28 @@ export function ApprovalDecisionWorkspace({ data }: { data: ApprovalDecisionWork
                     {data.activities.length} programme activities are listed in the full request.
                   </p>
                 )}
+              </SummarySection>
+
+              <SummarySection
+                title="Finance & Routing"
+                icon={<FileText className="h-4 w-4" aria-hidden="true" />}
+              >
+                <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <Detail label="Request origin" value={humanize(data.finance.requestOrigin)} />
+                  <Detail label="Trip category" value={humanize(data.finance.tripCategory)} />
+                  <Detail label="Financial impact" value={humanize(data.finance.financialImpact)} />
+                  <Detail
+                    label="Estimated cost"
+                    value={
+                      data.finance.estimatedCost
+                        ? `N$ ${Number(data.finance.estimatedCost).toFixed(2)}`
+                        : 'No amount recorded'
+                    }
+                  />
+                  <Detail label="Cost centre" value={data.finance.costCentre} />
+                  <Detail label="Funding source" value={data.finance.fundingSource} />
+                  <Detail label="Budget reference" value={data.finance.budgetReference} />
+                </dl>
               </SummarySection>
 
               <SummarySection

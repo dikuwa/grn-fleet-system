@@ -125,6 +125,16 @@ export default async function ApprovalDetailPage({ params }: PageProps) {
     startAt: startAt?.toISOString(),
     endAt: endAt?.toISOString(),
     purpose: instance.requestPurpose,
+    finance: {
+      requestOrigin: instance.requestOrigin,
+      financialImpact: instance.financialImpact,
+      tripCategory: instance.tripCategory,
+      estimatedCost: instance.estimatedCost,
+      currency: instance.currency,
+      costCentre: instance.costCentre,
+      fundingSource: instance.fundingSource,
+      budgetReference: instance.budgetReference,
+    },
     vehicleType: requestedVehicle,
     driverAssigned,
     specialAuthorityRequired: instance.specialAuthorityRequired,
@@ -191,6 +201,16 @@ export default async function ApprovalDetailPage({ params }: PageProps) {
     currentStepLabel: currentStage,
     currentStepDescription: currentStep?.description,
     purpose: instance.requestPurpose,
+    finance: {
+      requestOrigin: instance.requestOrigin,
+      financialImpact: instance.financialImpact,
+      tripCategory: instance.tripCategory,
+      estimatedCost: instance.estimatedCost,
+      currency: instance.currency,
+      costCentre: instance.costCentre,
+      fundingSource: instance.fundingSource,
+      budgetReference: instance.budgetReference,
+    },
     requester: {
       name:
         [instance.requesterFirstName, instance.requesterLastName].filter(Boolean).join(' ') ||
