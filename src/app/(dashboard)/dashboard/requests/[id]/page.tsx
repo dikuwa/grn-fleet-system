@@ -20,7 +20,7 @@ import { Database } from 'lucide-react';
 import { STATUS_LABELS, STATUS_VARIANTS } from '@/lib/constants';
 import { formatDate, formatDateTime } from '@/lib/utils';
 import { getServerSession } from '@/lib/session';
-import { notFound } from 'next/navigation';
+import { notFound, redirect } from 'next/navigation';
 import {
   FileText,
   ChevronLeft,
@@ -54,6 +54,7 @@ async function fetchRequestDetail(id: string, tenantId: string) {
   const request = await db
     .select({
       id: transportRequests.id,
+      requesterType: transportRequests.requesterType,
       requesterUserId: transportRequests.requesterUserId,
       enteredByUserId: transportRequests.enteredByUserId,
       reference: transportRequests.reference,
@@ -220,6 +221,10 @@ export default async function RequestDetailPage({ params }: PageProps) {
   }
 
   const { request, activities, passengers, drivers, routes, attachments, linkedProgramme } = data;
+  if (request.requesterType === 'external') {
+    redirect(`/dashboard/requests/external/${request.id}`);
+  }
+
   const roleNames = await getSessionRoleNames(session);
   const access = resolveDashboardAccess('/dashboard/requests', roleNames);
   const isOwner =

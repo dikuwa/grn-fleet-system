@@ -110,6 +110,8 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     }
 
     const now = new Date();
+    const nowIso = now.toISOString();
+    const allocationEndDate = record.allocationEndAt.toISOString().slice(0, 10);
     const driverName = `${record.partyFirstName} ${record.partyLastName}`.trim();
 
     if (action === 'cancel') {
@@ -127,7 +129,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           SET state = 'cancelled',
               override_reason = ${reason},
               version = version + 1,
-              updated_at = ${now}
+              updated_at = ${nowIso}::timestamptz
           WHERE id = ${record.assignment.allocationId}::uuid
             AND state = ${record.allocationState}
             AND version = ${record.allocationVersion}
@@ -151,10 +153,10 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         assignment_claim AS (
           UPDATE external_driver_assignments
           SET state = 'cancelled',
-              cancelled_at = ${now},
+              cancelled_at = ${nowIso}::timestamptz,
               cancellation_reason = ${reason},
               cancelled_by_user_id = ${session.user.id},
-              updated_at = ${now}
+              updated_at = ${nowIso}::timestamptz
           WHERE id = ${id}::uuid
             AND tenant_id = ${tenantId}::uuid
             AND state = 'pending_acceptance'
@@ -174,7 +176,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           SET status = 'transport_review',
               assigned_driver_external_party_id = NULL,
               assigned_driver_employee_id = NULL,
-              updated_at = ${now}
+              updated_at = ${nowIso}::timestamptz
           WHERE id = ${record.assignment.requestId}::uuid
             AND tenant_id = ${tenantId}::uuid
             AND assigned_driver_external_party_id = ${record.assignment.externalPartyId}::uuid
@@ -183,7 +185,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         ),
         trip_cancel AS (
           UPDATE trips
-          SET status = 'cancelled', updated_at = ${now}
+          SET status = 'cancelled', updated_at = ${nowIso}::timestamptz
           WHERE id = ${record.assignment.tripId}::uuid
             AND tenant_id = ${tenantId}::uuid
             AND status = 'pending'
@@ -196,9 +198,9 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         authority_cancel AS (
           UPDATE trip_authorities
           SET status = 'cancelled',
-              cancelled_at = ${now},
+              cancelled_at = ${nowIso}::timestamptz,
               cancellation_reason = ${reason},
-              updated_at = ${now}
+              updated_at = ${nowIso}::timestamptz
           WHERE allocation_id = ${record.assignment.allocationId}::uuid
             AND tenant_id = ${tenantId}::uuid
             AND EXISTS (SELECT 1 FROM trip_cancel)
@@ -208,7 +210,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           UPDATE generated_documents
           SET status = 'cancelled',
               reason = ${reason},
-              updated_at = ${now}
+              updated_at = ${nowIso}::timestamptz
           WHERE tenant_id = ${tenantId}::uuid
             AND entity_type = 'vehicle_allocation'
             AND entity_id = ${record.assignment.allocationId}::uuid
@@ -217,18 +219,12 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
             AND EXISTS (SELECT 1 FROM trip_cancel)
           RETURNING id
         )
-        SELECT CAST(CASE
-          WHEN (SELECT count(*) FROM allocation_claim) = 1
-           AND (SELECT count(*) FROM assignment_claim) = 1
-           AND (SELECT count(*) FROM request_claim) = 1
-           AND (SELECT count(*) FROM trip_cancel) = 1
-          THEN '1'
-          ELSE 'atomic_external_driver_cancel_failed_'
-            || (SELECT count(*) FROM allocation_claim)::text
-            || (SELECT count(*) FROM assignment_claim)::text
-            || (SELECT count(*) FROM request_claim)::text
-            || (SELECT count(*) FROM trip_cancel)::text
-        END AS integer) AS committed
+        SELECT 1 / (
+          (SELECT count(*)::integer FROM allocation_claim) *
+          (SELECT count(*)::integer FROM assignment_claim) *
+          (SELECT count(*)::integer FROM request_claim) *
+          (SELECT count(*)::integer FROM trip_cancel)
+        ) AS committed
       `);
 
       await Promise.allSettled([
@@ -298,7 +294,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       WITH allocation_claim AS (
         UPDATE vehicle_allocations
         SET version = version + 1,
-            updated_at = ${now}
+            updated_at = ${nowIso}::timestamptz
         WHERE id = ${record.assignment.allocationId}::uuid
           AND state = ${record.allocationState}
           AND version = ${record.allocationVersion}
@@ -324,9 +320,9 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
         SET state = 'accepted',
             acceptance_method = ${acceptanceMethod},
             acceptance_note = ${note},
-            accepted_at = ${now},
+            accepted_at = ${nowIso}::timestamptz,
             accepted_recorded_by_user_id = ${session.user.id},
-            updated_at = ${now}
+            updated_at = ${nowIso}::timestamptz
         WHERE id = ${id}::uuid
           AND tenant_id = ${tenantId}::uuid
           AND state = 'pending_acceptance'
@@ -342,7 +338,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
               AND edl.id = external_driver_assignments.licence_id
               AND edl.tenant_id = ${tenantId}::uuid
               AND edl.verification_status = 'verified'
-              AND edl.expiry_date >= ${record.allocationEndAt}::date
+              AND edl.expiry_date >= ${allocationEndDate}::date
           )
         RETURNING request_id, trip_id, external_party_id
       ),
@@ -354,16 +350,11 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           AND EXISTS (SELECT 1 FROM assignment_claim)
         RETURNING id
       )
-      SELECT CAST(CASE
-        WHEN (SELECT count(*) FROM allocation_claim) = 1
-         AND (SELECT count(*) FROM assignment_claim) = 1
-         AND (SELECT count(*) FROM request_driver_claim) = 1
-        THEN '1'
-        ELSE 'atomic_external_driver_accept_failed_'
-          || (SELECT count(*) FROM allocation_claim)::text
-          || (SELECT count(*) FROM assignment_claim)::text
-          || (SELECT count(*) FROM request_driver_claim)::text
-      END AS integer) AS committed
+      SELECT 1 / (
+        (SELECT count(*)::integer FROM allocation_claim) *
+        (SELECT count(*)::integer FROM assignment_claim) *
+        (SELECT count(*)::integer FROM request_driver_claim)
+      ) AS committed
     `);
 
     await Promise.allSettled([
@@ -387,7 +378,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
           allocationVersion: record.allocationVersion + 1,
           acceptanceMethod,
           acceptanceNote: note,
-          acceptedAt: now.toISOString(),
+          acceptedAt: nowIso,
           recordedByUserId: session.user.id,
         },
       }),
@@ -405,7 +396,7 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
       state: 'accepted',
       authorityStatus: record.authorityStatus ?? 'not_yet_issued',
       readyForTransportReview: true,
-      acceptedAt: now.toISOString(),
+      acceptedAt: nowIso,
       acceptanceMethod,
       acceptedVehicleId: record.vehicleId,
       driver: { name: driverName, organisation: record.partyOrganisation },

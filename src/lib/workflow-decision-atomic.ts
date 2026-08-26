@@ -196,7 +196,12 @@ export async function processAtomicWorkflowDecision(input: {
   });
 
   try {
-    const commit = await db.execute(sql`
+    // The final SELECT deliberately divides by the product of all claimed row
+    // counts. A stale/concurrent transition therefore raises division-by-zero
+    // inside the same SQL statement and PostgreSQL rolls the whole statement
+    // back. If execute() returns successfully, every required CTE committed
+    // exactly once; do not inspect driver-specific result wrappers afterwards.
+    await db.execute(sql`
       WITH claimed AS (
         UPDATE workflow_instances wi
         SET current_step_order = ${nextOrder}, status = ${workflowStatus}, updated_at = now()
@@ -254,21 +259,17 @@ export async function processAtomicWorkflowDecision(input: {
         FROM action_inserted
         RETURNING id
       )
-      SELECT CAST(
-        CASE
-          WHEN (SELECT count(*) FROM claimed) = 1
-           AND (SELECT count(*) FROM request_updated) = 1
-           AND (SELECT count(*) FROM action_inserted) = 1
-           AND (SELECT count(*) FROM audit_inserted) = 1
-          THEN '1'
-          ELSE 'atomic_workflow_transition_failed'
-        END AS integer
+      SELECT 1 / (
+        (SELECT count(*)::integer FROM claimed) *
+        (SELECT count(*)::integer FROM request_updated) *
+        (SELECT count(*)::integer FROM action_inserted) *
+        (SELECT count(*)::integer FROM audit_inserted)
       ) AS committed
     `);
-    const committed = Number(
-      (commit.rows?.[0] as { committed?: number | string } | undefined)?.committed ?? 0,
-    );
-    if (committed !== 1) {
+  } catch (error) {
+    console.error('[workflow-decision-atomic] Decision failed:', error);
+    const message = String(error);
+    if (message.includes('division by zero')) {
       return {
         ok: false,
         error: NextResponse.json(
@@ -277,8 +278,6 @@ export async function processAtomicWorkflowDecision(input: {
         ),
       };
     }
-  } catch (error) {
-    console.error('[workflow-decision-atomic] Decision failed:', error);
     const latest = await engine.getWorkflowStatus(instanceId).catch(() => null);
     if (latest?.instance.status !== 'active' || latest?.instance.currentStepOrder !== currentStep.stepOrder) {
       return {

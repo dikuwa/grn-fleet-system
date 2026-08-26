@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { createTenantOperationalBackup, activeBackupSchedules, listBackups } from '@/lib/data-protection/backup-service';
+import {
+  createTenantOperationalBackup,
+  activeBackupSchedules,
+  listBackups,
+} from '@/lib/data-protection/backup-service';
 import { isStorageConfigured } from '@/lib/storage';
 import { recordAuditEvent } from '@/lib/audit-event';
 
@@ -14,14 +18,35 @@ export async function GET(request: NextRequest) {
     const permCheck = await requirePermission(auth.session, Permissions.RESET_MANAGE);
     if (permCheck instanceof NextResponse) return permCheck;
 
-    const [backups, schedules] = await Promise.all([listBackups(), activeBackupSchedules()]);
+    const searchParams = request.nextUrl.searchParams;
+    const view = searchParams.get('view') === 'history' ? 'history' : 'current';
+    const page = Number(searchParams.get('page') || 1);
+    const limit = Number(searchParams.get('limit') || 20);
+    const [backupPage, schedules] = await Promise.all([
+      listBackups({ view, page, limit }),
+      activeBackupSchedules(),
+    ]);
     return NextResponse.json({
       success: true,
-      data: { backups, schedules, storageConfigured: isStorageConfigured() },
+      data: {
+        backups: backupPage.items,
+        pagination: {
+          page: backupPage.page,
+          limit: backupPage.limit,
+          total: backupPage.total,
+          totalPages: backupPage.totalPages,
+        },
+        counts: backupPage.counts,
+        schedules,
+        storageConfigured: isStorageConfigured(),
+      },
     });
   } catch (error) {
     console.error('[Platform Backups] GET failed:', error);
-    return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : String(error) },
+      { status: 500 },
+    );
   }
 }
 
@@ -54,12 +79,19 @@ export async function POST(request: NextRequest) {
       entityType: 'backup',
       entityId: backup.id,
       summary: `Manual operational recovery point ${backup.id} created.`,
-      after: { recordCount: backup.recordCount, storageKey: backup.storageKey, retentionDays: backup.retentionDays },
+      after: {
+        recordCount: backup.recordCount,
+        storageKey: backup.storageKey,
+        retentionDays: backup.retentionDays,
+      },
     });
 
     return NextResponse.json({ success: true, data: backup }, { status: 201 });
   } catch (error) {
     console.error('[Platform Backups] POST failed:', error);
-    return NextResponse.json({ error: error instanceof Error ? error.message : String(error) }, { status: 500 });
+    return NextResponse.json(
+      { error: error instanceof Error ? error.message : String(error) },
+      { status: 500 },
+    );
   }
 }

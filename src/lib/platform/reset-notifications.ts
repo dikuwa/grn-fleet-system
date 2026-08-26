@@ -158,7 +158,8 @@ export async function notifyResetRequesterReady(input: {
   requesterUserId: string;
 }) {
   const db = getDb();
-  const [readyNotification] = await db
+  const dedupeKey = `tenant_reset_ready:${input.requestId}:${input.requesterUserId}`;
+  const [insertedNotification] = await db
     .insert(notifications)
     .values({
       tenantId: input.tenantId,
@@ -175,20 +176,25 @@ export async function notifyResetRequesterReady(input: {
       status: 'action_required',
       mandatory: true,
       priority: 'high',
-      dedupeKey: `tenant_reset_ready:${input.requestId}:${input.requesterUserId}`,
+      dedupeKey,
     })
-    .onConflictDoUpdate({
-      target: notifications.dedupeKey,
-      set: {
-        status: 'action_required',
-        isRead: false,
-        readAt: null,
-        resolvedAt: null,
-        dismissedAt: null,
-        archivedAt: null,
-      },
-    })
+    .onConflictDoNothing()
     .returning({ id: notifications.id });
+
+  const [readyNotification] = insertedNotification
+    ? [insertedNotification]
+    : await db
+        .update(notifications)
+        .set({
+          status: 'action_required',
+          isRead: false,
+          readAt: null,
+          resolvedAt: null,
+          dismissedAt: null,
+          archivedAt: null,
+        })
+        .where(eq(notifications.dedupeKey, dedupeKey))
+        .returning({ id: notifications.id });
   if (readyNotification) {
     await Promise.all([
       db

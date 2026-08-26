@@ -9,7 +9,6 @@ import {
   requestRoutes,
   requestRevisions,
   programmes,
-  workflowInstances,
 } from '@/db/schema';
 import { departments, driverProfiles, employees, offices } from '@/db/schema/people';
 import {
@@ -451,6 +450,7 @@ export async function POST(
   );
   const totalKm = Math.max(routeKm, activityKm);
   const correctedAt = new Date();
+  const correctedAtIso = correctedAt.toISOString();
   const nextVersion = existing.version + 1;
   const nextRevision = existing.revision + 1;
 
@@ -523,9 +523,6 @@ export async function POST(
   try {
     await runAtomicMutations((tx) => {
       const mutations: any[] = [
-        tx.update(workflowInstances)
-          .set({ status: 'cancelled', updatedAt: correctedAt })
-          .where(and(eq(workflowInstances.requestId, id), eq(workflowInstances.status, 'active'))),
         tx.execute(sql`
           WITH request_claim AS (
             UPDATE transport_requests
@@ -540,17 +537,22 @@ export async function POST(
               total_authorised_kilometres = ${totalKm || null},
               workflow_instance_id = NULL,
               version = ${nextVersion},
-              updated_at = ${correctedAt}
+              updated_at = ${correctedAtIso}::timestamptz
             WHERE id = ${id}::uuid
               AND tenant_id = ${session.tenantId}::uuid
               AND status = ${existing.status}
               AND version = ${existing.version}
             RETURNING id
+          ),
+          workflow_cancelled AS (
+            UPDATE workflow_instances wi
+            SET status = 'cancelled', updated_at = ${correctedAtIso}::timestamptz
+            FROM request_claim rc
+            WHERE wi.request_id = rc.id
+              AND wi.status = 'active'
+            RETURNING wi.id
           )
-          SELECT CASE
-            WHEN (SELECT count(*) FROM request_claim) = 1 THEN 1
-            ELSE CAST('stale_request_resubmit' AS integer)
-          END AS committed
+          SELECT 1 / (SELECT count(*)::integer FROM request_claim) AS committed
         `),
         tx.delete(requestActivities).where(eq(requestActivities.requestId, id)),
         tx.delete(requestPassengers).where(eq(requestPassengers.requestId, id)),
@@ -627,7 +629,8 @@ export async function POST(
       return mutations;
     });
   } catch (error) {
-    if (String(error).includes('stale_request_resubmit')) {
+    const message = String(error);
+    if (message.includes('division by zero') || message.includes('stale_request_resubmit')) {
       return NextResponse.json(
         { error: 'This request changed while you were editing it. Refresh and review the latest version before resubmitting.' },
         { status: 409 },

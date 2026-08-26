@@ -29,6 +29,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { EmptyState } from '@/components/ui/empty-state';
+import { FilterTabs } from '@/components/ui/filter-tabs';
 import { Input, Label, Textarea } from '@/components/ui/input';
 import { StyledSelect } from '@/components/ui/styled-select';
 import { useConfirm } from '@/components/ui/confirm-dialog';
@@ -134,8 +135,11 @@ export default function PlatformResetPage() {
   });
   const [loading, setLoading] = useState(true);
   const [processingId, setProcessingId] = useState<string | null>(null);
+  const [recoveryPointId, setRecoveryPointId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [status, setStatus] = useState('');
+  const [requestView, setRequestView] = useState<'current' | 'history'>('current');
+  const [viewCounts, setViewCounts] = useState({ current: 0, history: 0 });
   const [selected, setSelected] = useState<ResetRequest | null>(null);
   const [steps, setSteps] = useState<ResetStep[]>([]);
   const [detailOpen, setDetailOpen] = useState(false);
@@ -157,7 +161,7 @@ export default function PlatformResetPage() {
   const load = useCallback(async () => {
     setLoading(true);
     try {
-      const params = new URLSearchParams({ limit: '100' });
+      const params = new URLSearchParams({ limit: '100', view: requestView });
       if (search.trim()) params.set('q', search.trim());
       if (status) params.set('status', status);
       const [resetRes, tenantRes] = await Promise.all([
@@ -169,6 +173,7 @@ export default function PlatformResetPage() {
       if (!resetRes.ok) throw new Error(resetJson.error || 'Failed to load reset requests');
       if (!tenantRes.ok) throw new Error(tenantJson.error || 'Failed to load tenants');
       setRequests(resetJson.data?.requests ?? []);
+      setViewCounts(resetJson.data?.viewCounts ?? { current: 0, history: 0 });
       setStats((current) => resetJson.data?.stats ?? current);
       const tenantRows = (tenantJson.data?.tenants ?? []) as TenantOption[];
       const realTenants = tenantRows.filter((tenant) => tenant.type !== 'demo_sandbox');
@@ -183,7 +188,7 @@ export default function PlatformResetPage() {
     } finally {
       setLoading(false);
     }
-  }, [search, status, toast]);
+  }, [requestView, search, status, toast]);
 
   useEffect(() => {
     const timer = window.setTimeout(() => void load(), 250);
@@ -337,6 +342,7 @@ export default function PlatformResetPage() {
 
   const createRecoveryPoint = async (request: ResetRequest) => {
     setProcessingId(request.id);
+    setRecoveryPointId(request.id);
     try {
       const res = await fetch(`/api/platform/reset/${request.id}/backup`, { method: 'POST' });
       const json = await res.json();
@@ -358,6 +364,7 @@ export default function PlatformResetPage() {
         variant: 'error',
       });
     } finally {
+      setRecoveryPointId(null);
       setProcessingId(null);
     }
   };
@@ -498,6 +505,20 @@ export default function PlatformResetPage() {
       </section>
 
       <section className="border-border grid gap-3 border-y py-4 sm:grid-cols-[minmax(0,1fr)_200px_auto]">
+        <div className="sm:col-span-3">
+          <FilterTabs
+            items={[
+              { value: 'current', label: 'Current & recent', count: viewCounts.current },
+              { value: 'history', label: 'Historical', count: viewCounts.history },
+            ]}
+            value={requestView}
+            onValueChange={(nextView) => {
+              setRequestView(nextView);
+              setStatus('');
+            }}
+            label="Reset request view"
+          />
+        </div>
         <div className="relative">
           <Search className="text-ink-400 pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
           <Input
@@ -801,9 +822,9 @@ export default function PlatformResetPage() {
                     <div className="border-border overflow-hidden rounded-[8px] border">
                       {preview.steps
                         .filter((step) => step.planned > 0)
-                        .map((step) => (
+                        .map((step, index) => (
                           <div
-                            key={step.table}
+                            key={`${step.table}-${index}`}
                             className="border-border flex items-center justify-between gap-3 border-b px-3 py-2.5 last:border-b-0"
                           >
                             <span className="text-ink-700 text-sm">{step.label}</span>
@@ -930,6 +951,20 @@ export default function PlatformResetPage() {
                   <div className="bg-status-error-bg text-status-error-text rounded-[8px] p-3">
                     <p className="text-sm font-semibold">Previous failure</p>
                     <p className="mt-1 text-xs">{selected.failureReason}</p>
+                  </div>
+                )}
+                {recoveryPointId === selected.id && (
+                  <div
+                    className="border-status-info-text/20 bg-status-info-bg/20 text-status-info-text rounded-[8px] border p-3"
+                    role="status"
+                    aria-live="polite"
+                  >
+                    <p className="text-sm font-semibold">Creating and verifying recovery point…</p>
+                    <p className="mt-1 text-xs">
+                      Archiving the reviewed data to durable storage. This operation has a
+                      two-minute storage deadline; execution remains locked until verification
+                      succeeds.
+                    </p>
                   </div>
                 )}
               </div>

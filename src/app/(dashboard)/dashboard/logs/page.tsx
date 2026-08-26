@@ -11,8 +11,15 @@ import { Badge } from '@/components/ui/badge';
 import { saveDraft, listDrafts, deleteDraft, countUnsyncedDrafts } from '@/lib/offline-drafts';
 import { StyledDateInput, StyledSelect } from '@/components/ui/styled-select';
 import {
-  AlertTriangle, ClipboardList, Save, WifiOff, CheckCircle2, Clock, MapPin,
-  Gauge, X,
+  AlertTriangle,
+  ClipboardList,
+  Save,
+  WifiOff,
+  CheckCircle2,
+  Clock,
+  MapPin,
+  Gauge,
+  X,
 } from 'lucide-react';
 import Link from 'next/link';
 import { fetchUserProfile, userProfileQueryKey } from '@/lib/user-profile';
@@ -121,67 +128,70 @@ export default function DailyLogsPage() {
     setTimeout(() => setSubmitMessage(null), 3000);
   }, [formData, draftId, profile]);
 
-  const handleSubmit = useCallback(async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!formData.tripId) {
-      setSubmitMessage('Please select a trip');
-      setTimeout(() => setSubmitMessage(null), 3000);
-      return;
-    }
-
-    if (!isOnline) {
-      await saveDraftLocally();
-      return;
-    }
-
-    setIsSubmitting(true);
-    setSubmitMessage(null);
-
-    try {
-      // POST to trip log entries API. If the form came from a saved local draft,
-      // reuse that draft UUID as the server idempotency token. This makes a manual
-      // online submit and an automatic reconnect sync the same logical operation.
-      const res = await fetch('/api/trip-logs', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          tripId: formData.tripId,
-          logDate: formData.logDate,
-          odometerOut: formData.odometerOut ? Number(formData.odometerOut) : null,
-          odometerIn: formData.odometerIn ? Number(formData.odometerIn) : null,
-          departureTime: formData.departureTime || null,
-          arrivalTime: formData.arrivalTime || null,
-          origin: formData.origin || null,
-          destination: formData.destination || null,
-          distanceKm: formData.distanceKm ? Number(formData.distanceKm) : null,
-          remarks: formData.remarks || null,
-          clientSyncId: draftId || undefined,
-        }),
-      });
-
-      if (!res.ok) {
-        const err = await res.json().catch(() => ({ error: 'Failed to submit' }));
-        throw new Error(err.error || 'Failed to submit log entry');
+  const handleSubmit = useCallback(
+    async (e: React.FormEvent) => {
+      e.preventDefault();
+      if (!formData.tripId) {
+        setSubmitMessage('Please select a trip');
+        setTimeout(() => setSubmitMessage(null), 3000);
+        return;
       }
 
-      // Clear form on success
-      setFormData(emptyForm);
-      setDraftId(null);
-      setSubmitMessage('Log entry recorded successfully');
-      setTimeout(() => setSubmitMessage(null), 3000);
+      if (!isOnline) {
+        await saveDraftLocally();
+        return;
+      }
 
-      // If this was a synced draft, clean it up
-      if (draftId) {
-        await deleteDraft(draftId);
+      setIsSubmitting(true);
+      setSubmitMessage(null);
+
+      try {
+        // POST to trip log entries API. If the form came from a saved local draft,
+        // reuse that draft UUID as the server idempotency token. This makes a manual
+        // online submit and an automatic reconnect sync the same logical operation.
+        const res = await fetch('/api/trip-logs', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            tripId: formData.tripId,
+            logDate: formData.logDate,
+            odometerOut: formData.odometerOut ? Number(formData.odometerOut) : null,
+            odometerIn: formData.odometerIn ? Number(formData.odometerIn) : null,
+            departureTime: formData.departureTime || null,
+            arrivalTime: formData.arrivalTime || null,
+            origin: formData.origin || null,
+            destination: formData.destination || null,
+            distanceKm: formData.distanceKm ? Number(formData.distanceKm) : null,
+            remarks: formData.remarks || null,
+            clientSyncId: draftId || undefined,
+          }),
+        });
+
+        if (!res.ok) {
+          const err = await res.json().catch(() => ({ error: 'Failed to submit' }));
+          throw new Error(err.error || 'Failed to submit log entry');
+        }
+
+        // Clear form on success
+        setFormData(emptyForm);
         setDraftId(null);
+        setSubmitMessage('Log entry recorded successfully');
+        setTimeout(() => setSubmitMessage(null), 3000);
+
+        // If this was a synced draft, clean it up
+        if (draftId) {
+          await deleteDraft(draftId);
+          setDraftId(null);
+        }
+      } catch (err) {
+        setSubmitMessage(err instanceof Error ? err.message : 'Failed to submit');
+        setTimeout(() => setSubmitMessage(null), 5000);
+      } finally {
+        setIsSubmitting(false);
       }
-    } catch (err) {
-      setSubmitMessage(err instanceof Error ? err.message : 'Failed to submit');
-      setTimeout(() => setSubmitMessage(null), 5000);
-    } finally {
-      setIsSubmitting(false);
-    }
-  }, [formData, isOnline, saveDraftLocally, draftId]);
+    },
+    [formData, isOnline, saveDraftLocally, draftId],
+  );
 
   const updateField = useCallback(<K extends keyof LogFormData>(key: K, value: LogFormData[K]) => {
     setFormData((prev) => ({ ...prev, [key]: value }));
@@ -190,25 +200,24 @@ export default function DailyLogsPage() {
   // Auto-select the single in-progress trip on load
   useEffect(() => {
     if (!tripsData || formData.tripId) return;
-    const active = tripsData.filter((t: Trip) => t.status === 'in_progress' || t.status === 'issued');
+    const active = tripsData.filter(
+      (t: Trip) => t.status === 'in_progress' || t.status === 'issued',
+    );
     if (active.length !== 1) return;
     const autoTimer = setTimeout(() => updateField('tripId', active[0].id), 0);
     return () => clearTimeout(autoTimer);
   }, [tripsData, formData.tripId, updateField]);
 
   return (
-    <div className="space-y-6 max-w-2xl mx-auto">
-      <Breadcrumbs items={[
-        { label: 'Dashboard', href: '/dashboard' },
-        { label: 'Daily Logs' },
-      ]} />
+    <div className="mx-auto max-w-2xl space-y-6">
+      <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Daily Logs' }]} />
       <PageHeader
         title="Daily Driver Log"
         description="Record your daily trip activities and vehicle readings"
       >
         <div className="flex items-center gap-2">
           {!isOnline && (
-            <span className="flex items-center gap-1 rounded-full bg-status-error-bg px-3 py-1 text-xs font-medium text-status-error-text">
+            <span className="bg-status-error-bg text-status-error-text flex items-center gap-1 rounded-full px-3 py-1 text-xs font-medium">
               <WifiOff className="h-3 w-3" /> Offline
             </span>
           )}
@@ -218,19 +227,21 @@ export default function DailyLogsPage() {
             </Badge>
           )}
           <Button variant="secondary" size="compact" onClick={saveDraftLocally}>
-            <Save className="h-3.5 w-3.5" /> Save Draft
+            <Save className="h-3.5 w-3.5" aria-hidden="true" /> Save Draft
           </Button>
         </div>
       </PageHeader>
 
       {submitMessage && (
-        <div className={`rounded-[8px] p-3 text-sm ${
-          submitMessage.includes('successfully') || submitMessage.includes('saved')
-            ? 'bg-status-success-bg text-status-success-text'
-            : submitMessage.includes('Draft')
-              ? 'bg-status-pending-bg text-status-pending-text'
-              : 'bg-status-error-bg text-status-error-text'
-        }`}>
+        <div
+          className={`rounded-[8px] p-3 text-sm ${
+            submitMessage.includes('successfully') || submitMessage.includes('saved')
+              ? 'bg-status-success-bg text-status-success-text'
+              : submitMessage.includes('Draft')
+                ? 'bg-status-pending-bg text-status-pending-text'
+                : 'bg-status-error-bg text-status-error-text'
+          }`}
+        >
           {submitMessage}
         </div>
       )}
@@ -239,11 +250,12 @@ export default function DailyLogsPage() {
         <Card className="border-status-error-border bg-status-error-bg/30">
           <CardContent className="pt-4">
             <div className="flex items-center gap-3">
-              <WifiOff className="h-5 w-5 text-status-error-text" />
+              <WifiOff className="text-status-error-text h-5 w-5" />
               <div>
-                <p className="text-sm font-medium text-status-error-text">You are offline</p>
-                <p className="text-xs text-status-error-text/80">
-                  Your log entry will be saved as a draft and submitted automatically when connectivity returns.
+                <p className="text-status-error-text text-sm font-medium">You are offline</p>
+                <p className="text-status-error-text/80 text-xs">
+                  Your log entry will be saved as a draft and submitted automatically when
+                  connectivity returns.
                 </p>
               </div>
             </div>
@@ -254,23 +266,25 @@ export default function DailyLogsPage() {
       <div className="grid grid-cols-3 gap-3">
         <Card>
           <CardContent className="pt-4 text-center">
-            <Gauge className="h-5 w-5 mx-auto mb-1 text-brand-600" />
+            <Gauge className="text-brand-600 mx-auto mb-1 h-5 w-5" />
             <p className="text-lg font-semibold tabular-nums">{formData.odometerOut || '—'}</p>
-            <p className="text-[10px] text-ink-500">Odometer Out</p>
+            <p className="text-ink-500 text-[10px]">Odometer Out</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4 text-center">
-            <MapPin className="h-5 w-5 mx-auto mb-1 text-teal-600" />
-            <p className="text-sm font-medium truncate max-w-[80px] mx-auto">{formData.origin ? formData.origin.split(',')[0] : '—'}</p>
-            <p className="text-[10px] text-ink-500">Origin</p>
+            <MapPin className="mx-auto mb-1 h-5 w-5 text-teal-600" />
+            <p className="mx-auto max-w-[80px] truncate text-sm font-medium">
+              {formData.origin ? formData.origin.split(',')[0] : '—'}
+            </p>
+            <p className="text-ink-500 text-[10px]">Origin</p>
           </CardContent>
         </Card>
         <Card>
           <CardContent className="pt-4 text-center">
-            <Clock className="h-5 w-5 mx-auto mb-1 text-amber-600 dark:text-amber-400" />
+            <Clock className="mx-auto mb-1 h-5 w-5 text-amber-600 dark:text-amber-400" />
             <p className="text-lg font-semibold">{formData.distanceKm || '—'}</p>
-            <p className="text-[10px] text-ink-500">Distance (km)</p>
+            <p className="text-ink-500 text-[10px]">Distance (km)</p>
           </CardContent>
         </Card>
       </div>
@@ -293,7 +307,8 @@ export default function DailyLogsPage() {
                   .filter((t) => t.status !== 'closed')
                   .map((trip) => (
                     <option key={trip.id} value={trip.id}>
-                      {trip.make} {trip.model} ({trip.licenceNumber}) — {trip.requestReference || 'No ref'}
+                      {trip.make} {trip.model} ({trip.licenceNumber}) —{' '}
+                      {trip.requestReference || 'No ref'}
                     </option>
                   ))}
               </StyledSelect>
@@ -312,26 +327,26 @@ export default function DailyLogsPage() {
               <div className="space-y-1.5">
                 <Label>Odometer Out</Label>
                 <div className="relative">
-                  <Gauge className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" />
+                  <Gauge className="text-ink-400 absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
                   <Input
                     type="number"
                     placeholder="e.g. 45230"
                     value={formData.odometerOut}
                     onChange={(e) => updateField('odometerOut', e.target.value)}
-                    className="pl-9 h-11"
+                    className="h-11 pl-9"
                   />
                 </div>
               </div>
               <div className="space-y-1.5">
                 <Label>Odometer In</Label>
                 <div className="relative">
-                  <Gauge className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" />
+                  <Gauge className="text-ink-400 absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
                   <Input
                     type="number"
                     placeholder="e.g. 45480"
                     value={formData.odometerIn}
                     onChange={(e) => updateField('odometerIn', e.target.value)}
-                    className="pl-9 h-11"
+                    className="h-11 pl-9"
                   />
                 </div>
               </div>
@@ -360,24 +375,24 @@ export default function DailyLogsPage() {
               <div className="space-y-1.5">
                 <Label>Origin</Label>
                 <div className="relative">
-                  <MapPin className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" />
+                  <MapPin className="text-ink-400 absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
                   <Input
                     placeholder="e.g. Rundu"
                     value={formData.origin}
                     onChange={(e) => updateField('origin', e.target.value)}
-                    className="pl-9 h-11"
+                    className="h-11 pl-9"
                   />
                 </div>
               </div>
               <div className="space-y-1.5">
                 <Label>Destination</Label>
                 <div className="relative">
-                  <MapPin className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-ink-400" />
+                  <MapPin className="text-ink-400 absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" />
                   <Input
                     placeholder="e.g. Divundu"
                     value={formData.destination}
                     onChange={(e) => updateField('destination', e.target.value)}
-                    className="pl-9 h-11"
+                    className="h-11 pl-9"
                   />
                 </div>
               </div>
@@ -397,7 +412,7 @@ export default function DailyLogsPage() {
             <div className="space-y-1.5">
               <Label>Remarks / Notes</Label>
               <textarea
-                className="min-h-[80px] w-full rounded-[8px] border border-border bg-surface px-3 py-2 text-sm text-ink-950 placeholder:text-ink-400 focus:outline-none focus:ring-2 focus:ring-brand-600 resize-y"
+                className="border-border bg-surface text-ink-950 placeholder:text-ink-400 focus:ring-brand-600 min-h-[80px] w-full resize-y rounded-[8px] border px-3 py-2 text-sm focus:ring-2 focus:outline-none"
                 placeholder="Any issues, incidents, or observations..."
                 value={formData.remarks}
                 onChange={(e) => updateField('remarks', e.target.value)}
@@ -410,12 +425,16 @@ export default function DailyLogsPage() {
                 size="default"
                 type="submit"
                 loading={isSubmitting}
-                className="flex-1 h-11"
+                className="h-11 flex-1"
               >
                 {!isOnline ? (
-                  <><Save className="h-4 w-4" /> Save Draft Locally</>
+                  <>
+                    <Save className="h-4 w-4" aria-hidden="true" /> Save Draft Locally
+                  </>
                 ) : (
-                  <><CheckCircle2 className="h-4 w-4" /> Record Log Entry</>
+                  <>
+                    <CheckCircle2 className="h-4 w-4" /> Record Log Entry
+                  </>
                 )}
               </Button>
               <Button
@@ -454,17 +473,17 @@ export default function DailyLogsPage() {
               .map((trip) => (
                 <div
                   key={trip.id}
-                  className="flex items-center gap-3 rounded-[8px] border border-border p-3 hover:bg-muted/50 transition-colors cursor-pointer"
+                  className="border-border hover:bg-muted/50 flex cursor-pointer items-center gap-3 rounded-[8px] border p-3 transition-colors"
                   onClick={() => updateField('tripId', trip.id)}
                 >
-                  <div className="flex h-10 w-10 items-center justify-center rounded-[8px] bg-brand-50 text-brand-700 shrink-0">
+                  <div className="bg-brand-50 text-brand-700 flex h-10 w-10 shrink-0 items-center justify-center rounded-[8px]">
                     <Gauge className="h-5 w-5" />
                   </div>
                   <div className="min-w-0 flex-1">
-                    <p className="text-sm font-medium text-ink-950">
+                    <p className="text-ink-950 text-sm font-medium">
                       {trip.make} {trip.model}
                     </p>
-                    <p className="text-xs text-ink-500">
+                    <p className="text-ink-500 text-xs">
                       {trip.licenceNumber}
                       {trip.requestReference && ` · ${trip.requestReference}`}
                     </p>
@@ -493,12 +512,12 @@ export default function DailyLogsPage() {
       <Card className="bg-brand-50/30 border-brand-100">
         <CardContent className="pt-4">
           <div className="flex items-start gap-3">
-            <div className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-100 text-brand-700 shrink-0">
+            <div className="bg-brand-100 text-brand-700 flex h-8 w-8 shrink-0 items-center justify-center rounded-full">
               <ClipboardList className="h-4 w-4" />
             </div>
             <div>
-              <p className="text-sm font-medium text-brand-900 dark:text-brand-700">Driver Tips</p>
-              <ul className="mt-1 text-xs text-brand-700 space-y-1">
+              <p className="text-brand-900 dark:text-brand-700 text-sm font-medium">Driver Tips</p>
+              <ul className="text-brand-700 mt-1 space-y-1 text-xs">
                 <li>• Record odometer readings at the start and end of each trip leg</li>
                 <li>• Log entries are saved as drafts when you&apos;re offline</li>
                 <li>• Drafts sync automatically when connectivity returns</li>
@@ -538,7 +557,7 @@ function DraftListSection({
     return (
       <button
         onClick={onToggle}
-        className="w-full text-center text-sm text-ink-500 hover:text-ink-700 py-2 transition-colors"
+        className="text-ink-500 hover:text-ink-700 w-full py-2 text-center text-sm transition-colors"
       >
         View Saved Drafts
       </button>
@@ -552,19 +571,20 @@ function DraftListSection({
       </CardHeader>
       <CardContent>
         {drafts.length === 0 ? (
-          <p className="text-sm text-ink-500 text-center py-4">No saved drafts</p>
+          <p className="text-ink-500 py-4 text-center text-sm">No saved drafts</p>
         ) : (
           <div className="space-y-2">
             {drafts.map((draft) => (
               <div
                 key={draft.id}
-                className="flex items-center justify-between rounded-[8px] border border-border p-3 hover:bg-muted/50 transition-colors"
+                className="border-border hover:bg-muted/50 flex items-center justify-between rounded-[8px] border p-3 transition-colors"
               >
                 <div className="min-w-0 flex-1">
-                  <p className="text-sm text-ink-950 truncate">
-                    {String(draft.formData?.origin || '')} → {String(draft.formData?.destination || '')}
+                  <p className="text-ink-950 truncate text-sm">
+                    {String(draft.formData?.origin || '')} →{' '}
+                    {String(draft.formData?.destination || '')}
                   </p>
-                  <p className="text-xs text-ink-500">
+                  <p className="text-ink-500 text-xs">
                     {new Date(draft.updatedAt).toLocaleDateString()} at{' '}
                     {new Date(draft.updatedAt).toLocaleTimeString([], {
                       hour: '2-digit',
@@ -574,7 +594,7 @@ function DraftListSection({
                 </div>
                 <button
                   onClick={() => onLoadDraft(draft)}
-                  className="text-xs font-medium text-brand-700 hover:text-brand-800 px-2 py-1"
+                  className="text-brand-700 hover:text-brand-800 px-2 py-1 text-xs font-medium"
                 >
                   Load
                 </button>

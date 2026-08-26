@@ -138,6 +138,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
     }
 
     const now = new Date();
+    const nowIso = now.toISOString();
     const fuelLevel = body.fuelLevel.trim();
     const returnLocation = body.returnLocation.trim();
     const comments = body.comments?.trim() || null;
@@ -147,7 +148,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       WITH allocation_claim AS (
         UPDATE vehicle_allocations va
         SET version = version + 1,
-            updated_at = ${now}
+            updated_at = ${nowIso}::timestamptz
         WHERE va.id = ${record.allocationId}::uuid
           AND va.state = 'confirmed'
           AND va.version = ${record.allocationVersion}
@@ -166,7 +167,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       ),
       trip_claim AS (
         UPDATE trips
-        SET status = 'return_inspection', returned_at = ${now}, updated_at = ${now}
+        SET status = 'return_inspection', returned_at = ${nowIso}::timestamptz, updated_at = ${nowIso}::timestamptz
         WHERE id = ${id}::uuid
           AND tenant_id = ${tenantId}::uuid
           AND allocation_id = ${record.allocationId}::uuid
@@ -204,7 +205,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
               jsonb_build_object(
                 'incidentDeclared', ${body.incidentDeclared}::boolean,
                 'outstandingReceiptsDeclared', ${body.outstandingReceiptsDeclared}::boolean,
-                'recordedAt', ${now}::timestamptz,
+                'recordedAt', ${nowIso}::timestamptz,
                 'recordedByUserId', ${session.user.id}::text,
                 'source', 'transport_office_external',
                 'reconciledAt', NULL,
@@ -212,7 +213,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
               )
             ),
             version = version + 2,
-            updated_at = ${now}
+            updated_at = ${nowIso}::timestamptz
         WHERE id = ${record.authorityId}::uuid
           AND tenant_id = ${tenantId}::uuid
           AND allocation_id = ${record.allocationId}::uuid
@@ -238,7 +239,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       ),
       vehicle_claim AS (
         UPDATE vehicles
-        SET current_odometer = GREATEST(current_odometer, ${endingOdometer}), updated_at = ${now}
+        SET current_odometer = GREATEST(current_odometer, ${endingOdometer}), updated_at = ${nowIso}::timestamptz
         WHERE id = ${record.vehicleId}::uuid
           AND tenant_id = ${tenantId}::uuid
           AND current_odometer <= ${endingOdometer}

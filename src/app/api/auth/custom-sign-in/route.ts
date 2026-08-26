@@ -167,7 +167,7 @@ export async function POST(request: NextRequest) {
           actorUserId: userRecord.id,
           action: 'login',
           entityType: 'user',
-          entityId: userRecord.id,
+          after: { userId: userRecord.id },
           summary: `User signed in via ${normalizedUsername.includes('@') ? 'email' : 'username'}`,
         });
       } catch {

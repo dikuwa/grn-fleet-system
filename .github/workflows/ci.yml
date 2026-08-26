@@ -48,10 +48,23 @@ jobs:
         ports:
           - 5432:5432
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U govfleet -d govfleet_test"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      localstack:
+        image: localstack/localstack:3.8
+        env:
+          SERVICES: s3
+          AWS_DEFAULT_REGION: us-east-1
+          EAGER_SERVICE_LOADING: '1'
+        ports:
+          - 4566:4566
+        options: >-
+          --health-cmd "curl -fsS http://localhost:4566/_localstack/health || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
     env:
       DATABASE_URL: postgres://govfleet:govfleet-test@localhost:5432/govfleet_test
       BETTER_AUTH_URL: http://localhost:3000
@@ -59,6 +72,11 @@ jobs:
       NEXT_PUBLIC_APP_URL: http://localhost:3000
       SEED_ADMIN_EMAIL: admin@kavangoeast.gov.na
       SEED_ADMIN_PASSWORD: changeme
+      R2_ACCOUNT_ID: ci-localstack
+      R2_ACCESS_KEY_ID: test
+      R2_SECRET_ACCESS_KEY: test
+      R2_BUCKET_NAME: grn-fleet
+      R2_ENDPOINT: http://localhost:4566
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -69,6 +87,14 @@ jobs:
           node-version: ${{ env.NODE_VERSION }}
           cache: 'pnpm'
       - run: pnpm install --frozen-lockfile
+
+      - name: Create disposable S3 test bucket
+        run: >-
+          node --input-type=module -e "import { CreateBucketCommand, S3Client } from '@aws-sdk/client-s3';
+          const client = new S3Client({ region: 'us-east-1', endpoint: process.env.R2_ENDPOINT,
+          forcePathStyle: true, credentials: { accessKeyId: process.env.R2_ACCESS_KEY_ID,
+          secretAccessKey: process.env.R2_SECRET_ACCESS_KEY } });
+          await client.send(new CreateBucketCommand({ Bucket: process.env.R2_BUCKET_NAME }));"
 
       - name: Run migrations
         run: pnpm db:migrate
@@ -100,6 +126,11 @@ jobs:
           BETTER_AUTH_SECRET: ${{ env.BETTER_AUTH_SECRET }}
           NEXT_PUBLIC_APP_URL: ${{ env.NEXT_PUBLIC_APP_URL }}
           NEXT_PUBLIC_APP_NAME: ${{ env.NEXT_PUBLIC_APP_NAME }}
+          R2_ACCOUNT_ID: ${{ env.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ env.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ env.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ env.R2_BUCKET_NAME }}
+          R2_ENDPOINT: ${{ env.R2_ENDPOINT }}
 
       - name: Perf regression guard (page render budgets)
         run: node scripts/bench-pages.mjs --budget
@@ -118,6 +149,50 @@ jobs:
           NEXT_PUBLIC_APP_NAME: ${{ env.NEXT_PUBLIC_APP_NAME }}
           SEED_ADMIN_EMAIL: ${{ env.SEED_ADMIN_EMAIL }}
           SEED_ADMIN_PASSWORD: ${{ env.SEED_ADMIN_PASSWORD }}
+
+      - name: Install Chromium for production-closure browser checks
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run production-closure browser checks
+        run: >-
+          pnpm exec playwright test
+          src/e2e/request-return-cancellation-closure.spec.ts
+          src/e2e/cross-tenant-isolation.spec.ts
+          src/e2e/all-role-ui-smoke.spec.ts
+          src/e2e/document-native-print.spec.ts
+          src/e2e/revised-authority-closure.spec.ts
+          src/e2e/clean-trip-closure.spec.ts
+          src/e2e/external-driver-lifecycle-closure.spec.ts
+          src/e2e/driver-licence-upload-review.smoke.spec.ts
+          --project=chromium --workers=1
+        env:
+          CI: ''
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+          BETTER_AUTH_URL: ${{ env.BETTER_AUTH_URL }}
+          BETTER_AUTH_SECRET: ${{ env.BETTER_AUTH_SECRET }}
+          NEXT_PUBLIC_APP_URL: ${{ env.NEXT_PUBLIC_APP_URL }}
+          NEXT_PUBLIC_APP_NAME: ${{ env.NEXT_PUBLIC_APP_NAME }}
+          SEED_ADMIN_EMAIL: ${{ env.SEED_ADMIN_EMAIL }}
+          SEED_ADMIN_PASSWORD: ${{ env.SEED_ADMIN_PASSWORD }}
+          R2_ACCOUNT_ID: ${{ env.R2_ACCOUNT_ID }}
+          R2_ACCESS_KEY_ID: ${{ env.R2_ACCESS_KEY_ID }}
+          R2_SECRET_ACCESS_KEY: ${{ env.R2_SECRET_ACCESS_KEY }}
+          R2_BUCKET_NAME: ${{ env.R2_BUCKET_NAME }}
+          R2_ENDPOINT: ${{ env.R2_ENDPOINT }}
+
+      - name: Show dev server log on failure
+        if: failure()
+        run: tail -n 800 /tmp/dev-server.log || true
+
+      - name: Upload production-closure diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: production-closure-diagnostics
+          path: |
+            playwright-report/
+            /tmp/dev-server.log
+          if-no-files-found: ignore
 
       - name: Stop dev server
         if: always()

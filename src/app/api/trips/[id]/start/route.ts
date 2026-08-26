@@ -123,6 +123,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     }
 
     const now = new Date();
+    const nowIso = now.toISOString();
     if ((trip.validFrom && now < trip.validFrom) || (trip.validUntil && now > trip.validUntil)) {
       return NextResponse.json({ error: 'Trip Authority is outside its approved validity period' }, { status: 409 });
     }
@@ -297,7 +298,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const fuelLevel = body.fuelLevel.trim();
     const auditSequence = Date.now();
     const requiredThroughDate = (trip.validUntil ?? now).toISOString().slice(0, 10);
-    const today = now.toISOString().slice(0, 10);
+    const today = nowIso.slice(0, 10);
 
     // Allocation is the first lifecycle claim, matching replacement,
     // cancellation and physical issue. This prevents a replacement from
@@ -306,7 +307,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       WITH allocation_claim AS (
         UPDATE vehicle_allocations va
         SET version = version + 1,
-            updated_at = ${now}
+            updated_at = ${nowIso}::timestamptz
         WHERE va.id = ${tripRecord.allocationId}::uuid
           AND va.state = 'confirmed'
           AND va.version = ${trip.allocationVersion}
@@ -328,7 +329,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       ),
       trip_claim AS (
         UPDATE trips
-        SET status = 'in_progress', started_at = ${now}, updated_at = ${now}
+        SET status = 'in_progress', started_at = ${nowIso}::timestamptz, updated_at = ${nowIso}::timestamptz
         WHERE id = ${id}::uuid
           AND tenant_id = ${session.tenantId}::uuid
           AND status = 'pending'
@@ -370,8 +371,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
               AND ta.trip_id = trips.id
               AND ta.tenant_id = ${session.tenantId}::uuid
               AND ta.status = 'ready_for_departure'
-              AND (ta.valid_from IS NULL OR ta.valid_from <= ${now})
-              AND (ta.valid_until IS NULL OR ta.valid_until >= ${now})
+              AND (ta.valid_from IS NULL OR ta.valid_from <= ${nowIso}::timestamptz)
+              AND (ta.valid_until IS NULL OR ta.valid_until >= ${nowIso}::timestamptz)
           )
           AND EXISTS (
             SELECT 1
@@ -456,7 +457,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         SET status = 'in_progress',
             beginning_odometer = ${beginningOdometer},
             version = version + 1,
-            updated_at = ${now}
+            updated_at = ${nowIso}::timestamptz
         WHERE id = ${trip.authorityId}::uuid
           AND tenant_id = ${session.tenantId}::uuid
           AND status = 'ready_for_departure'
@@ -465,7 +466,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       ),
       request_claim AS (
         UPDATE transport_requests
-        SET status = 'in_progress', updated_at = ${now}
+        SET status = 'in_progress', updated_at = ${nowIso}::timestamptz
         WHERE id = ${tripRecord.requestId}::uuid
           AND tenant_id = ${session.tenantId}::uuid
           AND assigned_driver_employee_id = ${employee.id}::uuid
@@ -475,7 +476,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       ),
       vehicle_claim AS (
         UPDATE vehicles
-        SET status = 'allocated', updated_at = ${now}
+        SET status = 'allocated', updated_at = ${nowIso}::timestamptz
         WHERE id = ${tripRecord.vehicleId}::uuid
           AND tenant_id = ${session.tenantId}::uuid
           AND status = 'available'

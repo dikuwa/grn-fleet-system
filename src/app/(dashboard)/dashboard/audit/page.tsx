@@ -26,6 +26,7 @@ import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { EmptyState } from '@/components/ui/empty-state';
 import { ClientFilterReset } from '@/components/ui/client-filter-reset';
+import { FilterTabs } from '@/components/ui/filter-tabs';
 import { permissionLabel } from '@/lib/role-metadata';
 
 type EventType =
@@ -340,28 +341,12 @@ export default function AuditLogPage() {
       <Card>
         <CardContent className="pt-4">
           <div className="space-y-4">
-            <div
-              className="flex gap-2 overflow-x-auto pb-1"
-              role="tablist"
-              aria-label="Audit event types"
-            >
-              {eventTypes.map((item) => {
-                const selected = selectedType === item.value;
-                return (
-                  <button
-                    key={item.value}
-                    type="button"
-                    role="tab"
-                    aria-selected={selected}
-                    onClick={() => setSelectedType(item.value)}
-                    className={`focus-ring inline-flex min-h-9 shrink-0 items-center gap-1.5 rounded-[7px] px-3 text-xs font-medium transition-colors motion-reduce:transition-none ${selected ? 'bg-brand-700 text-white' : 'text-ink-600 hover:bg-muted hover:text-ink-900'}`}
-                  >
-                    {item.icon}
-                    {item.label}
-                  </button>
-                );
-              })}
-            </div>
+            <FilterTabs
+              items={eventTypes}
+              value={selectedType}
+              onValueChange={setSelectedType}
+              label="Audit event types"
+            />
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <div className="min-w-0 flex-1">
                 <Input

@@ -15,6 +15,11 @@ import { runAtomicMutations } from '@/lib/db-atomic';
 import { quoteTable } from '@/lib/data-reset/config';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { downloadFile, isStorageConfigured, uploadFile } from '@/lib/storage';
+import {
+  BACKUP_STORAGE_TIMEOUT_MS,
+  failStaleCreatingBackups,
+  withinBackupDeadline,
+} from './backup-service';
 import { matchesPlatformExecutionResetPhrase } from '@/lib/reset-workflow';
 
 export const PLATFORM_OPERATIONAL_PRESERVED = [
@@ -168,6 +173,7 @@ export async function createPlatformOperationalBackup(input: {
   expectedFingerprint: string;
 }) {
   if (!isStorageConfigured()) throw new Error('Durable backup storage is not configured');
+  await failStaleCreatingBackups();
   const plan = await previewPlatformOperationalReset();
   if (plan.fingerprint !== input.expectedFingerprint)
     throw new Error('Platform operational data changed. Refresh the impact preview.');
@@ -188,41 +194,48 @@ export async function createPlatformOperationalBackup(input: {
       metadata: { fingerprint: plan.fingerprint, counts: plan.counts },
     })
     .returning();
+  const deadlineAt = Date.now() + BACKUP_STORAGE_TIMEOUT_MS;
 
   try {
     const [enquiryRows, demoRows, notificationRows, deliveryRows, readRows, dismissalRows] =
-      await Promise.all([
-        plan.ids.enquiryIds.length
-          ? db.select().from(cmsEnquiries).where(inArray(cmsEnquiries.id, plan.ids.enquiryIds))
-          : [],
-        plan.ids.demoRequestIds.length
-          ? db.select().from(demoRequests).where(inArray(demoRequests.id, plan.ids.demoRequestIds))
-          : [],
-        plan.ids.notificationIds.length
-          ? db
-              .select()
-              .from(notifications)
-              .where(inArray(notifications.id, plan.ids.notificationIds))
-          : [],
-        plan.ids.notificationIds.length
-          ? db
-              .select()
-              .from(notificationDeliveries)
-              .where(inArray(notificationDeliveries.notificationId, plan.ids.notificationIds))
-          : [],
-        plan.ids.notificationIds.length
-          ? db
-              .select()
-              .from(notificationReads)
-              .where(inArray(notificationReads.notificationId, plan.ids.notificationIds))
-          : [],
-        plan.ids.notificationIds.length
-          ? db
-              .select()
-              .from(notificationDismissals)
-              .where(inArray(notificationDismissals.notificationId, plan.ids.notificationIds))
-          : [],
-      ]);
+      await withinBackupDeadline(
+        Promise.all([
+          plan.ids.enquiryIds.length
+            ? db.select().from(cmsEnquiries).where(inArray(cmsEnquiries.id, plan.ids.enquiryIds))
+            : [],
+          plan.ids.demoRequestIds.length
+            ? db
+                .select()
+                .from(demoRequests)
+                .where(inArray(demoRequests.id, plan.ids.demoRequestIds))
+            : [],
+          plan.ids.notificationIds.length
+            ? db
+                .select()
+                .from(notifications)
+                .where(inArray(notifications.id, plan.ids.notificationIds))
+            : [],
+          plan.ids.notificationIds.length
+            ? db
+                .select()
+                .from(notificationDeliveries)
+                .where(inArray(notificationDeliveries.notificationId, plan.ids.notificationIds))
+            : [],
+          plan.ids.notificationIds.length
+            ? db
+                .select()
+                .from(notificationReads)
+                .where(inArray(notificationReads.notificationId, plan.ids.notificationIds))
+            : [],
+          plan.ids.notificationIds.length
+            ? db
+                .select()
+                .from(notificationDismissals)
+                .where(inArray(notificationDismissals.notificationId, plan.ids.notificationIds))
+            : [],
+        ]),
+        deadlineAt,
+      );
     const payload: PlatformBackupPayload = {
       formatVersion: 1,
       type: 'govfleet-platform-operational-backup',
@@ -240,8 +253,15 @@ export async function createPlatformOperationalBackup(input: {
     };
     const buffer = Buffer.from(JSON.stringify(payload, jsonReplacer), 'utf8');
     const checksum = createHash('sha256').update(buffer).digest('hex');
-    const upload = await uploadFile(buffer, `backups/platform/${snapshot.id}.json`, {
+    const remainingStorageMs = Math.max(1, deadlineAt - Date.now());
+    const storageKey = `backups/platform/${snapshot.id}.json`;
+    await db
+      .update(platformBackups)
+      .set({ storageKey, updatedAt: new Date() })
+      .where(eq(platformBackups.id, snapshot.id));
+    const upload = await uploadFile(buffer, storageKey, {
       contentType: 'application/json',
+      timeoutMs: remainingStorageMs,
     });
     const [ready] = await db
       .update(platformBackups)
@@ -261,6 +281,7 @@ export async function createPlatformOperationalBackup(input: {
       .update(platformBackups)
       .set({
         status: 'failed',
+        isProtected: false,
         failureReason: error instanceof Error ? error.message : String(error),
         updatedAt: new Date(),
       })
@@ -270,6 +291,7 @@ export async function createPlatformOperationalBackup(input: {
 }
 
 export async function readPlatformOperationalBackup(backupId: string) {
+  const deadlineAt = Date.now() + BACKUP_STORAGE_TIMEOUT_MS;
   const db = getDb();
   const [backup] = await db
     .select()
@@ -283,7 +305,10 @@ export async function readPlatformOperationalBackup(backupId: string) {
     !backup.storageKey
   )
     throw new Error('Verified platform recovery point not found');
-  const file = await downloadFile(backup.storageKey);
+  const file = await withinBackupDeadline(
+    downloadFile(backup.storageKey, { timeoutMs: BACKUP_STORAGE_TIMEOUT_MS }),
+    deadlineAt,
+  );
   if (!file) throw new Error('Platform recovery archive could not be downloaded');
   if (!file.body) throw new Error('Platform recovery archive is empty');
   const enhancedBody = file.body as ReadableStream & {
@@ -291,8 +316,8 @@ export async function readPlatformOperationalBackup(backupId: string) {
   };
   const text =
     typeof enhancedBody.transformToString === 'function'
-      ? await enhancedBody.transformToString()
-      : await new Response(file.body).text();
+      ? await withinBackupDeadline(enhancedBody.transformToString(), deadlineAt)
+      : await withinBackupDeadline(new Response(file.body).text(), deadlineAt);
   const checksum = createHash('sha256').update(Buffer.from(text, 'utf8')).digest('hex');
   if (checksum !== backup.checksum) throw new Error('Platform recovery archive checksum failed');
   const payload = JSON.parse(text) as PlatformBackupPayload;

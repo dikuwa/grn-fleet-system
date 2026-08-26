@@ -20,6 +20,15 @@ describe('fleet PDF filenames', () => {
     }, 'c862d850')).toBe('GRN 4287');
   });
 
+  it('produces a human-readable accident report filename from snapshot data', () => {
+    const snapshot = { requestReference: 'TR-2026-0048' };
+    expect(buildFleetPdfFilename({
+      documentType: 'accident_report',
+      date: '2026-08-24T10:15:00.000Z',
+      reference: referenceFromDocumentSnapshot(snapshot, 'c862d850'),
+    })).toBe('ACCIDENT REPORT - 24-08-2026 - TR-2026-0048.pdf');
+  });
+
   it('formats dates deterministically in DD-MM-YYYY order', () => {
     expect(fleetDocumentDate('2026-01-02')).toBe('02-01-2026');
   });

@@ -34,7 +34,17 @@ const IDS: EntityIdSets = {
   workflowInstanceIds: ['wf-1'],
   generatedDocumentIds: ['doc-1'],
   notificationIds: ['notif-1'],
-  removedEntityIds: ['req-1', 'req-2', 'trip-1', 'alloc-1', 'auth-1', 'insp-1', 'fuel-1', 'wf-1', 'doc-1'],
+  removedEntityIds: [
+    'req-1',
+    'req-2',
+    'trip-1',
+    'alloc-1',
+    'auth-1',
+    'insp-1',
+    'fuel-1',
+    'wf-1',
+    'doc-1',
+  ],
 };
 
 // ---------------------------------------------------------------------------
@@ -73,10 +83,11 @@ function normalized(query: unknown): string {
   return sqlText(query).replace(/\s+/g, ' ');
 }
 
-function makeFakeDb(opts?: {
-  failDelete?: (text: string) => boolean;
-  withTransaction?: boolean;
-}): { db: ResetDb; calls: string[]; deletes: string[] } {
+function makeFakeDb(opts?: { failDelete?: (text: string) => boolean; withTransaction?: boolean }): {
+  db: ResetDb;
+  calls: string[];
+  deletes: string[];
+} {
   const calls: string[] = [];
   const deletes: string[] = [];
   const db: ResetDb = {
@@ -116,7 +127,10 @@ function makeFakeDb(opts?: {
       if (lower.includes('select id from "vehicle_inspections" where')) {
         return { rows: [{ id: 'insp-1' }] };
       }
-      if (lower.includes('select id from "fuel_transactions" where')) {
+      if (
+        lower.includes('select ft.id from "fuel_transactions"') ||
+        lower.includes('select id from "fuel_transactions"')
+      ) {
         return { rows: [{ id: 'fuel-1' }] };
       }
       if (lower.includes('select id from "generated_documents" where')) {
@@ -148,7 +162,10 @@ const ALLOWED_ENV = { ALLOW_DEV_DATA_RESET: 'true', NODE_ENV: 'development' };
 
 describe('data reset guards', () => {
   it('allows when ALLOW_DEV_DATA_RESET=true and no production signals', () => {
-    const result = checkResetAllowed({ ...ALLOWED_ENV, DATABASE_URL: 'postgres://localhost:5432/dev' });
+    const result = checkResetAllowed({
+      ...ALLOWED_ENV,
+      DATABASE_URL: 'postgres://localhost:5432/dev',
+    });
     expect(result.allowed).toBe(true);
     expect(result.errors).toHaveLength(0);
   });
@@ -259,6 +276,24 @@ describe('resolveStepCondition', () => {
     expect(sqlText(condition)).toContain('trip_id');
   });
 
+  it('removes standalone tenant inspections and fuel entries by collected id', () => {
+    const inspection = resolveStepCondition(
+      { table: 'vehicle_inspections', label: '', scope: 'trip' },
+      IDS,
+      TENANT_ID,
+    );
+    const fuel = resolveStepCondition(
+      { table: 'fuel_transactions', label: '', scope: 'trip' },
+      IDS,
+      TENANT_ID,
+    );
+
+    expect(normalized(inspection)).toContain('tenant_id =');
+    expect(normalized(inspection)).toContain('id = ANY');
+    expect(normalized(fuel)).toContain('id = ANY');
+    expect(normalized(fuel)).not.toContain('trip_id = ANY');
+  });
+
   it('scopes generated_documents by tenant + removed entity ids', () => {
     const condition = resolveStepCondition(
       { table: 'generated_documents', label: '', scope: 'request' },
@@ -289,7 +324,9 @@ describe('resolveStepCondition', () => {
       TENANT_ID,
     );
     const text = sqlText(condition);
-    expect(text).toMatch(/source_entity_type = 'trip' AND source_entity_id = ANY\(ARRAY\['trip-1'\]::uuid\[\]\)/i);
+    expect(text).toMatch(
+      /source_entity_type = 'trip' AND source_entity_id = ANY\(ARRAY\['trip-1'\]::uuid\[\]\)/i,
+    );
     expect(text).toMatch(/source_entity_type = 'inspection'/i);
     expect(text).toMatch(/source_entity_type = 'fuel_transaction'/i);
   });
@@ -325,7 +362,11 @@ describe('resolveStepCondition', () => {
       removedEntityIds: [],
     };
     expect(
-      resolveStepCondition({ table: 'vehicle_odometer_events', label: '', scope: 'inspection' }, empty, TENANT_ID),
+      resolveStepCondition(
+        { table: 'vehicle_odometer_events', label: '', scope: 'inspection' },
+        empty,
+        TENANT_ID,
+      ),
     ).toBeNull();
   });
 
@@ -457,7 +498,7 @@ describe('runDevelopmentDataReset', () => {
   it('rolls back and reports failure when a step fails inside a transaction', async () => {
     const { db, deletes } = makeFakeDb({
       withTransaction: true,
-      failDelete: (text) => text.toLowerCase().includes('delete from "share_links"'),
+      failDelete: (text) => text.toLowerCase().includes('delete from "share_access_events"'),
     });
     const outcome = await runDevelopmentDataReset({
       tenantId: TENANT_ID,
@@ -564,8 +605,24 @@ describe('demo modes', () => {
         if (text.includes('from "user" u where')) {
           return {
             rows: [
-              { id: 'user-seed-driver', email: 'driver@kavangoeast.test', name: 'Michael', username: 'driver', member_of_tenant: true, has_role: true, staff_linked: true },
-              { id: 'user-seed-orphan', email: 'orphan@kavangoeast.test', name: null, username: null, member_of_tenant: false, has_role: false, staff_linked: false },
+              {
+                id: 'user-seed-driver',
+                email: 'driver@kavangoeast.test',
+                name: 'Michael',
+                username: 'driver',
+                member_of_tenant: true,
+                has_role: true,
+                staff_linked: true,
+              },
+              {
+                id: 'user-seed-orphan',
+                email: 'orphan@kavangoeast.test',
+                name: null,
+                username: null,
+                member_of_tenant: false,
+                has_role: false,
+                staff_linked: false,
+              },
             ],
           };
         }
@@ -586,7 +643,14 @@ describe('demo modes', () => {
         if (text.includes('from vehicles v where')) {
           return {
             rows: [
-              { id: 'v-e2e', licence_number: 'E2E-SEDAN-001', make: 'Toyota', model: 'Corolla', status: 'available', has_operational_records: true },
+              {
+                id: 'v-e2e',
+                licence_number: 'E2E-SEDAN-001',
+                make: 'Toyota',
+                model: 'Corolla',
+                status: 'available',
+                has_operational_records: true,
+              },
             ],
           };
         }
@@ -610,8 +674,24 @@ describe('demo modes', () => {
         if (text.includes('from "user" u where')) {
           return {
             rows: [
-              { id: 'user-seed-orphan', email: 'orphan@kavangoeast.test', name: null, username: null, member_of_tenant: false, has_role: false, staff_linked: false },
-              { id: 'user-seed-driver', email: 'driver@kavangoeast.test', name: 'Michael', username: 'driver', member_of_tenant: true, has_role: true, staff_linked: true },
+              {
+                id: 'user-seed-orphan',
+                email: 'orphan@kavangoeast.test',
+                name: null,
+                username: null,
+                member_of_tenant: false,
+                has_role: false,
+                staff_linked: false,
+              },
+              {
+                id: 'user-seed-driver',
+                email: 'driver@kavangoeast.test',
+                name: 'Michael',
+                username: 'driver',
+                member_of_tenant: true,
+                has_role: true,
+                staff_linked: true,
+              },
             ],
           };
         }
@@ -619,7 +699,10 @@ describe('demo modes', () => {
         return { rows: [] };
       },
     };
-    const result = await deleteDemoAccounts(db, TENANT_ID, ['user-seed-orphan', 'user-seed-driver']);
+    const result = await deleteDemoAccounts(db, TENANT_ID, [
+      'user-seed-orphan',
+      'user-seed-driver',
+    ]);
     expect(result.deleted).toBe(1);
     expect(result.blocked).toHaveLength(1);
     expect(result.blocked[0].userId).toBe('user-seed-driver');
@@ -632,7 +715,14 @@ describe('demo modes', () => {
         if (text.includes('from vehicles v where')) {
           return {
             rows: [
-              { id: 'v-e2e', licence_number: 'E2E-SEDAN-001', make: 'Toyota', model: 'Corolla', status: 'available', has_operational_records: false },
+              {
+                id: 'v-e2e',
+                licence_number: 'E2E-SEDAN-001',
+                make: 'Toyota',
+                model: 'Corolla',
+                status: 'available',
+                has_operational_records: false,
+              },
             ],
           };
         }
@@ -653,7 +743,14 @@ describe('demo modes', () => {
         if (text.includes('from vehicles v where')) {
           return {
             rows: [
-              { id: 'v-e2e', licence_number: 'E2E-SEDAN-001', make: 'Toyota', model: 'Corolla', status: 'available', has_operational_records: false },
+              {
+                id: 'v-e2e',
+                licence_number: 'E2E-SEDAN-001',
+                make: 'Toyota',
+                model: 'Corolla',
+                status: 'available',
+                has_operational_records: false,
+              },
             ],
           };
         }
@@ -697,7 +794,14 @@ describe('demo modes', () => {
         if (text.includes('from vehicles v where')) {
           return {
             rows: [
-              { id: 'v-e2e', licence_number: 'E2E-SEDAN-001', make: 'Toyota', model: 'Corolla', status: 'available', has_operational_records: false },
+              {
+                id: 'v-e2e',
+                licence_number: 'E2E-SEDAN-001',
+                make: 'Toyota',
+                model: 'Corolla',
+                status: 'available',
+                has_operational_records: false,
+              },
             ],
           };
         }

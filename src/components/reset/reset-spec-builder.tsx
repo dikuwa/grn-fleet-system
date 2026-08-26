@@ -8,6 +8,7 @@ import { StyledDateInput } from '@/components/ui/styled-select';
 import {
   RESET_ALWAYS_PROTECTED,
   RESET_CATEGORY_CATALOG,
+  CLEAN_SLATE_CATEGORIES,
   resolveResetCategories,
   type ResetCategoryId,
   type ResetPreset,
@@ -39,8 +40,9 @@ const PRESETS = [
   },
   {
     id: 'clean_slate' as const,
-    label: 'Tenant clean slate',
-    description: 'Clear all tenant working data while retaining the protected tenant shell.',
+    label: 'Clean operational slate',
+    description:
+      'Remove test and operational activity before go-live while preserving master data and governance evidence.',
     icon: ShieldAlert,
     tone: 'border-status-error-text/25 bg-status-error-bg/20',
   },
@@ -58,7 +60,7 @@ export function ResetSpecBuilder({
     value.preset === 'operational'
       ? (['operations'] as ResetCategoryId[])
       : value.preset === 'clean_slate'
-        ? RESET_CATEGORY_CATALOG.map((category) => category.id)
+        ? CLEAN_SLATE_CATEGORIES
         : resolved.categories;
   const autoIncluded = value.preset === 'selective' ? resolved.autoIncludedCategories : [];
   const usesCutoff =
@@ -74,7 +76,7 @@ export function ResetSpecBuilder({
         preset === 'operational'
           ? ['operations']
           : preset === 'clean_slate'
-            ? RESET_CATEGORY_CATALOG.map((category) => category.id)
+            ? CLEAN_SLATE_CATEGORIES
             : value.preset === 'selective' && value.categories.length
               ? value.categories
               : ['operations'],

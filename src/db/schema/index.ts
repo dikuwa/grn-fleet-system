@@ -15,6 +15,7 @@ export * from './external-driver-assignments';
 export * from './external-authority-drivers';
 export * from './fleet';
 export * from './requests';
+export * from './request-intake-links';
 export * from './request-sequences';
 export * from './programmes';
 export * from './workflows';

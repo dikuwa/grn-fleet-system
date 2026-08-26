@@ -294,15 +294,17 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     }
 
     const now = new Date();
+    const nowIso = now.toISOString();
+    const acknowledgedAtIso = trip.driverAcknowledgedAt.toISOString();
     const issueId = randomUUID();
     const auditSequence = Date.now();
     const requiredThroughDate = requiredThrough.toISOString().slice(0, 10);
-    const today = now.toISOString().slice(0, 10);
+    const today = nowIso.slice(0, 10);
 
     await db.execute(sql`
       WITH allocation_claim AS (
         UPDATE vehicle_allocations
-        SET version = version + 1, updated_at = ${now}
+        SET version = version + 1, updated_at = ${nowIso}::timestamptz
         WHERE id = ${trip.allocationId}::uuid
           AND state = 'confirmed'
           AND version = ${trip.allocationVersion}
@@ -312,7 +314,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       ),
       trip_claim AS (
         UPDATE trips
-        SET issued_at = ${now}, updated_at = ${now}
+        SET issued_at = ${nowIso}::timestamptz, updated_at = ${nowIso}::timestamptz
         WHERE id = ${id}::uuid
           AND tenant_id = ${session.tenantId}::uuid
           AND status = 'pending'
@@ -446,20 +448,20 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           ${issueId}::uuid,
           ${id}::uuid,
           ${trip.allocationId}::uuid,
-          ${now},
+          ${nowIso}::timestamptz,
           ${issueOdometer},
           true,
           ${fuelCardIssued},
           ${session.user.id},
           ${trip.driverEmployeeId}::uuid,
-          ${trip.driverAcknowledgedAt},
+          ${acknowledgedAtIso}::timestamptz,
           ${notes}
         FROM trip_claim
         RETURNING id
       ),
       request_claim AS (
         UPDATE transport_requests
-        SET status = 'vehicle_issued', updated_at = ${now}
+        SET status = 'vehicle_issued', updated_at = ${nowIso}::timestamptz
         WHERE id = ${trip.requestId}::uuid
           AND tenant_id = ${session.tenantId}::uuid
           AND assigned_driver_employee_id = ${trip.driverEmployeeId}::uuid

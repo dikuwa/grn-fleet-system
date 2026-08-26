@@ -25,6 +25,7 @@ import {
 import { Breadcrumbs, PageHeader } from '@/components/layout/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
+import { PageTabs } from '@/components/ui/page-tabs';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import {
   Dialog,
@@ -84,13 +85,29 @@ const tabs: Array<{ id: TabId; label: string; icon: typeof Building2 }> = [
 
 function statusBadge(status: string) {
   const normalised = status.toUpperCase();
-  const variant = normalised === 'ACTIVE' ? 'success' : normalised === 'SUSPENDED' ? 'error' : 'default';
-  return <Badge variant={variant} size="sm">{normalised.charAt(0) + normalised.slice(1).toLowerCase()}</Badge>;
+  const variant =
+    normalised === 'ACTIVE' ? 'success' : normalised === 'SUSPENDED' ? 'error' : 'default';
+  return (
+    <Badge variant={variant} size="sm">
+      {normalised.charAt(0) + normalised.slice(1).toLowerCase()}
+    </Badge>
+  );
 }
 
 function lifecycleBadge(status: string) {
-  const variant = status === 'ACTIVE' ? 'success' : status === 'ONBOARDING_FAILED' ? 'error' : status === 'PENDING_PLATFORM_REVIEW' ? 'warning' : 'info';
-  return <Badge variant={variant} size="sm">{status.replace(/_/g, ' ').toLowerCase()}</Badge>;
+  const variant =
+    status === 'ACTIVE'
+      ? 'success'
+      : status === 'ONBOARDING_FAILED'
+        ? 'error'
+        : status === 'PENDING_PLATFORM_REVIEW'
+          ? 'warning'
+          : 'info';
+  return (
+    <Badge variant={variant} size="sm">
+      {status.replace(/_/g, ' ').toLowerCase()}
+    </Badge>
+  );
 }
 
 function colourPickerValue(value: string, fallback: string) {
@@ -101,8 +118,12 @@ export default function PlatformTenantDetailPage({ params }: { params: Promise<{
   const { id } = use(params);
   const router = useRouter();
   const { toast } = useToast();
-  const profileQuery = useQuery({ queryKey: userProfileQueryKey, queryFn: ({ signal }) => fetchUserProfile(signal) });
-  const canManage = profileQuery.data?.roles.some((role) => role.roleName === SystemRoles.PLATFORM_ADMIN) === true;
+  const profileQuery = useQuery({
+    queryKey: userProfileQueryKey,
+    queryFn: ({ signal }) => fetchUserProfile(signal),
+  });
+  const canManage =
+    profileQuery.data?.roles.some((role) => role.roleName === SystemRoles.PLATFORM_ADMIN) === true;
   const [activeTab, setActiveTab] = useState<TabId>('general');
   const [saving, setSaving] = useState(false);
   const [statusDialogOpen, setStatusDialogOpen] = useState(false);
@@ -180,10 +201,18 @@ export default function PlatformTenantDetailPage({ params }: { params: Promise<{
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to update tenant');
-      toast({ title: 'Tenant updated', description: 'Changes have been saved.', variant: 'success' });
+      toast({
+        title: 'Tenant updated',
+        description: 'Changes have been saved.',
+        variant: 'success',
+      });
       await tenantQuery.refetch();
     } catch (error) {
-      toast({ title: 'Update failed', description: error instanceof Error ? error.message : 'Failed to update tenant', variant: 'error' });
+      toast({
+        title: 'Update failed',
+        description: error instanceof Error ? error.message : 'Failed to update tenant',
+        variant: 'error',
+      });
     } finally {
       setSaving(false);
     }
@@ -196,16 +225,27 @@ export default function PlatformTenantDetailPage({ params }: { params: Promise<{
       const res = await fetch(`/api/platform/tenants/${id}`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ lifecycleStatus: target, lifecycleReason: lifecycleReason.trim() || undefined }),
+        body: JSON.stringify({
+          lifecycleStatus: target,
+          lifecycleReason: lifecycleReason.trim() || undefined,
+        }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Failed to update lifecycle');
-      toast({ title: 'Lifecycle updated', description: `Tenant moved to ${target.replace(/_/g, ' ').toLowerCase()}.`, variant: 'success' });
+      toast({
+        title: 'Lifecycle updated',
+        description: `Tenant moved to ${target.replace(/_/g, ' ').toLowerCase()}.`,
+        variant: 'success',
+      });
       setLifecycleReason('');
       setReviewDialogOpen(false);
       await tenantQuery.refetch();
     } catch (error) {
-      toast({ title: 'Lifecycle update failed', description: error instanceof Error ? error.message : 'Could not update lifecycle', variant: 'error' });
+      toast({
+        title: 'Lifecycle update failed',
+        description: error instanceof Error ? error.message : 'Could not update lifecycle',
+        variant: 'error',
+      });
     } finally {
       setIsApproving(false);
     }
@@ -218,20 +258,28 @@ export default function PlatformTenantDetailPage({ params }: { params: Promise<{
       const res = await fetch(`/api/platform/tenants/${id}/return-for-changes`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ reason: lifecycleReason.trim() || 'Returned for setup changes requested during Platform Review' }),
+        body: JSON.stringify({
+          reason:
+            lifecycleReason.trim() || 'Returned for setup changes requested during Platform Review',
+        }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Could not return tenant for changes');
       toast({
         title: 'Returned for changes',
-        description: 'The Tenant Administrator can update setup and submit the tenant for Platform Review again.',
+        description:
+          'The Tenant Administrator can update setup and submit the tenant for Platform Review again.',
         variant: 'success',
       });
       setLifecycleReason('');
       setReviewDialogOpen(false);
       await tenantQuery.refetch();
     } catch (error) {
-      toast({ title: 'Return failed', description: error instanceof Error ? error.message : 'Could not return tenant for changes', variant: 'error' });
+      toast({
+        title: 'Return failed',
+        description: error instanceof Error ? error.message : 'Could not return tenant for changes',
+        variant: 'error',
+      });
     } finally {
       setIsApproving(false);
     }
@@ -249,11 +297,18 @@ export default function PlatformTenantDetailPage({ params }: { params: Promise<{
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Status update failed');
-      toast({ title: nextStatus === 'ACTIVE' ? 'Tenant activated' : 'Tenant suspended', variant: 'success' });
+      toast({
+        title: nextStatus === 'ACTIVE' ? 'Tenant activated' : 'Tenant suspended',
+        variant: 'success',
+      });
       setStatusDialogOpen(false);
       await tenantQuery.refetch();
     } catch (error) {
-      toast({ title: 'Status update failed', description: error instanceof Error ? error.message : 'Could not update tenant status', variant: 'error' });
+      toast({
+        title: 'Status update failed',
+        description: error instanceof Error ? error.message : 'Could not update tenant status',
+        variant: 'error',
+      });
     } finally {
       setSaving(false);
     }
@@ -270,155 +325,382 @@ export default function PlatformTenantDetailPage({ params }: { params: Promise<{
       const res = await fetch(`/api/platform/tenants/${id}?${params}`, { method: 'DELETE' });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Tenant deletion failed');
-      toast({ title: 'Tenant permanently deleted', description: `${tenant.name} and its tenant-owned data were removed.`, variant: 'success' });
+      toast({
+        title: 'Tenant permanently deleted',
+        description: `${tenant.name} and its tenant-owned data were removed.`,
+        variant: 'success',
+      });
       router.replace('/dashboard/platform/tenants');
       router.refresh();
     } catch (error) {
-      toast({ title: 'Tenant was not deleted', description: error instanceof Error ? error.message : 'Protected records prevent deletion.', variant: 'error' });
+      toast({
+        title: 'Tenant was not deleted',
+        description: error instanceof Error ? error.message : 'Protected records prevent deletion.',
+        variant: 'error',
+      });
     } finally {
       setDeleting(false);
     }
   };
 
   if (tenantQuery.isLoading) {
-    return <div className="flex min-h-48 items-center justify-center text-sm text-ink-500" role="status">Loading tenant…</div>;
+    return (
+      <div className="text-ink-500 flex min-h-48 items-center justify-center text-sm" role="status">
+        Loading tenant…
+      </div>
+    );
   }
 
   if (tenantQuery.error || !tenant) {
     return (
       <div className="space-y-6">
-        <Breadcrumbs items={[{ label: 'Platform', href: '/dashboard/platform' }, { label: 'Tenants', href: '/dashboard/platform/tenants' }, { label: 'Tenant' }]} />
-        <EmptyState icon={<Database className="h-6 w-6" />} title="Tenant unavailable" description={tenantQuery.error instanceof Error ? tenantQuery.error.message : 'Tenant not found.'} />
-        <Button variant="secondary" size="sm" asChild><Link href="/dashboard/platform/tenants"><ChevronLeft className="h-4 w-4" /> Back to tenants</Link></Button>
+        <Breadcrumbs
+          items={[
+            { label: 'Platform', href: '/dashboard/platform' },
+            { label: 'Tenants', href: '/dashboard/platform/tenants' },
+            { label: 'Tenant' },
+          ]}
+        />
+        <EmptyState
+          icon={<Database className="h-6 w-6" />}
+          title="Tenant unavailable"
+          description={
+            tenantQuery.error instanceof Error ? tenantQuery.error.message : 'Tenant not found.'
+          }
+        />
+        <Button variant="secondary" size="sm" asChild>
+          <Link href="/dashboard/platform/tenants">
+            <ChevronLeft className="h-4 w-4" /> Back to tenants
+          </Link>
+        </Button>
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
-      <Breadcrumbs items={[{ label: 'Platform', href: '/dashboard/platform' }, { label: 'Tenants', href: '/dashboard/platform/tenants' }, { label: tenant.name }]} />
+      <Breadcrumbs
+        items={[
+          { label: 'Platform', href: '/dashboard/platform' },
+          { label: 'Tenants', href: '/dashboard/platform/tenants' },
+          { label: tenant.name },
+        ]}
+      />
       <PageHeader title={tenant.name} description={`${tenant.code} · ${tenant.slug}`}>
-        {canManage && <div className="flex flex-wrap gap-2">
-          {tenant.lifecycleStatus === 'PENDING_PLATFORM_REVIEW' && <Button size="sm" onClick={() => setReviewDialogOpen(true)}><CheckCircle2 className="h-4 w-4" /> Review setup</Button>}
-          {tenant.lifecycleStatus === 'READY_FOR_ACTIVATION' && <Button size="sm" onClick={() => void handleLifecycleChange('ACTIVE')} loading={isApproving}><ShieldCheck className="h-4 w-4" /> Activate</Button>}
-          <Button variant="secondary" size="sm" onClick={() => setStatusDialogOpen(true)}>
-            {tenant.status.toUpperCase() === 'SUSPENDED' ? <ShieldCheck className="h-4 w-4" /> : <ShieldAlert className="h-4 w-4" />}
-            {tenant.status.toUpperCase() === 'SUSPENDED' ? 'Activate' : 'Suspend'}
-          </Button>
-          <Button size="sm" onClick={() => void handleSave()} loading={saving}><Save className="h-4 w-4" /> Save changes</Button>
-        </div>}
+        {canManage && (
+          <div className="flex flex-wrap gap-2">
+            {tenant.lifecycleStatus === 'PENDING_PLATFORM_REVIEW' && (
+              <Button size="sm" onClick={() => setReviewDialogOpen(true)}>
+                <CheckCircle2 className="h-4 w-4" /> Review setup
+              </Button>
+            )}
+            {tenant.lifecycleStatus === 'READY_FOR_ACTIVATION' && (
+              <Button
+                size="sm"
+                onClick={() => void handleLifecycleChange('ACTIVE')}
+                loading={isApproving}
+              >
+                <ShieldCheck className="h-4 w-4" /> Activate
+              </Button>
+            )}
+            <Button variant="secondary" size="sm" onClick={() => setStatusDialogOpen(true)}>
+              {tenant.status.toUpperCase() === 'SUSPENDED' ? (
+                <ShieldCheck className="h-4 w-4" />
+              ) : (
+                <ShieldAlert className="h-4 w-4" />
+              )}
+              {tenant.status.toUpperCase() === 'SUSPENDED' ? 'Activate' : 'Suspend'}
+            </Button>
+            <Button size="sm" onClick={() => void handleSave()} loading={saving}>
+              <Save className="h-4 w-4" /> Save changes
+            </Button>
+          </div>
+        )}
       </PageHeader>
 
-      {!canManage && <div className="rounded-[8px] border border-brand-200 bg-brand-50/40 px-4 py-3 text-sm text-ink-700 dark:bg-brand-950/20">Read-only platform oversight. Tenant changes require the Platform Super Administrator role.</div>}
+      {!canManage && (
+        <div className="border-brand-200 bg-brand-50/40 text-ink-700 dark:bg-brand-950/20 rounded-[8px] border px-4 py-3 text-sm">
+          Read-only platform oversight. Tenant changes require the Platform Super Administrator
+          role.
+        </div>
+      )}
 
-      <section className="overflow-hidden rounded-[10px] border border-border bg-border" aria-label="Tenant summary">
+      <section
+        className="border-border bg-border overflow-hidden rounded-[10px] border"
+        aria-label="Tenant summary"
+      >
         <div className="grid sm:grid-cols-2 lg:grid-cols-4">
           <div className="bg-surface px-4 py-4">
-            <div className="flex items-center gap-2"><Users className="h-4 w-4 text-brand-700" /><span className="text-xs text-ink-500">Members</span></div>
-            <p className="mt-2 text-2xl font-semibold tabular-nums text-ink-950">{tenant.stats.memberCount}</p>
+            <div className="flex items-center gap-2">
+              <Users className="text-brand-700 h-4 w-4" />
+              <span className="text-ink-500 text-xs">Members</span>
+            </div>
+            <p className="text-ink-950 mt-2 text-2xl font-semibold tabular-nums">
+              {tenant.stats.memberCount}
+            </p>
           </div>
-          <div className="border-t border-border bg-surface px-4 py-4 sm:border-l sm:border-t-0">
-            <div className="flex items-center gap-2"><Globe2 className="h-4 w-4 text-brand-700" /><span className="text-xs text-ink-500">Organisation type</span></div>
-            <p className="mt-2 text-sm font-semibold capitalize text-ink-950">{tenant.type.replace(/_/g, ' ')}</p>
+          <div className="border-border bg-surface border-t px-4 py-4 sm:border-t-0 sm:border-l">
+            <div className="flex items-center gap-2">
+              <Globe2 className="text-brand-700 h-4 w-4" />
+              <span className="text-ink-500 text-xs">Organisation type</span>
+            </div>
+            <p className="text-ink-950 mt-2 text-sm font-semibold capitalize">
+              {tenant.type.replace(/_/g, ' ')}
+            </p>
           </div>
-          <div className="border-t border-border bg-surface px-4 py-4 lg:border-l lg:border-t-0">
-            <div className="flex items-center gap-2"><Clock className="h-4 w-4 text-brand-700" /><span className="text-xs text-ink-500">Created</span></div>
-            <p className="mt-2 text-sm font-semibold text-ink-950">{formatDate(tenant.createdAt)}</p>
+          <div className="border-border bg-surface border-t px-4 py-4 lg:border-t-0 lg:border-l">
+            <div className="flex items-center gap-2">
+              <Clock className="text-brand-700 h-4 w-4" />
+              <span className="text-ink-500 text-xs">Created</span>
+            </div>
+            <p className="text-ink-950 mt-2 text-sm font-semibold">
+              {formatDate(tenant.createdAt)}
+            </p>
           </div>
-          <div className="border-t border-border bg-surface px-4 py-4 sm:border-l lg:border-t-0">
-            <p className="text-xs text-ink-500">Account & onboarding</p>
-            <div className="mt-2 flex flex-wrap items-center gap-2">{statusBadge(tenant.status)}{lifecycleBadge(tenant.lifecycleStatus)}</div>
+          <div className="border-border bg-surface border-t px-4 py-4 sm:border-l lg:border-t-0">
+            <p className="text-ink-500 text-xs">Account & onboarding</p>
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              {statusBadge(tenant.status)}
+              {lifecycleBadge(tenant.lifecycleStatus)}
+            </div>
           </div>
         </div>
       </section>
 
-      <div className="scrollbar-thin flex gap-1 overflow-x-auto border-b border-border" role="tablist" aria-label="Tenant sections">
-        {tabs.map((tab) => {
+      <PageTabs
+        items={tabs.map((tab) => {
           const Icon = tab.icon;
-          const active = activeTab === tab.id;
-          return (
-            <button key={tab.id} type="button" role="tab" aria-selected={active} onClick={() => setActiveTab(tab.id)} className={`focus-ring inline-flex min-h-10 shrink-0 items-center gap-2 border-b-2 px-3 text-sm font-medium transition-colors ${active ? 'border-brand-700 text-brand-700' : 'border-transparent text-ink-500 hover:text-ink-800'}`}>
-              <Icon className="h-4 w-4" />{tab.label}
-            </button>
-          );
+          return {
+            value: tab.id,
+            label: tab.label,
+            icon: <Icon className="h-4 w-4" aria-hidden="true" />,
+          };
         })}
-      </div>
+        value={activeTab}
+        onValueChange={setActiveTab}
+        label="Tenant sections"
+      />
 
       {activeTab === 'general' && (
         <div className="space-y-5">
           <Card>
-            <CardHeader><CardTitle>General configuration</CardTitle></CardHeader>
+            <CardHeader>
+              <CardTitle>General configuration</CardTitle>
+            </CardHeader>
             <CardContent className="grid gap-4 sm:grid-cols-2">
-              <FieldWrapper label="Organisation name" required><Input value={editName} onChange={(event) => setEditName(event.target.value)} disabled={!canManage} /></FieldWrapper>
-              <FieldWrapper label="Tenant code"><Input value={tenant.code} disabled /></FieldWrapper>
+              <FieldWrapper label="Organisation name" required>
+                <Input
+                  value={editName}
+                  onChange={(event) => setEditName(event.target.value)}
+                  disabled={!canManage}
+                />
+              </FieldWrapper>
+              <FieldWrapper label="Tenant code">
+                <Input value={tenant.code} disabled />
+              </FieldWrapper>
               <FieldWrapper label="Account status">
-                <StyledSelect value={editStatus} onChange={(event) => setEditStatus(event.target.value)} disabled={!canManage}>
-                  <option value="ACTIVE">Active</option><option value="SUSPENDED">Suspended</option><option value="TRIAL">Trial</option><option value="ARCHIVED">Archived</option>
+                <StyledSelect
+                  value={editStatus}
+                  onChange={(event) => setEditStatus(event.target.value)}
+                  disabled={!canManage}
+                >
+                  <option value="ACTIVE">Active</option>
+                  <option value="SUSPENDED">Suspended</option>
+                  <option value="TRIAL">Trial</option>
+                  <option value="ARCHIVED">Archived</option>
                 </StyledSelect>
               </FieldWrapper>
-              <FieldWrapper label="Timezone"><StyledSelect value={editTimezone} onChange={(event) => setEditTimezone(event.target.value)} disabled={!canManage}><option value="Africa/Windhoek">Africa/Windhoek (UTC+2)</option></StyledSelect></FieldWrapper>
-              <FieldWrapper label="Type"><Input value={tenant.type.replace(/_/g, ' ')} disabled className="capitalize" /></FieldWrapper>
-              <FieldWrapper label="URL slug"><Input value={tenant.slug} disabled /></FieldWrapper>
+              <FieldWrapper label="Timezone">
+                <StyledSelect
+                  value={editTimezone}
+                  onChange={(event) => setEditTimezone(event.target.value)}
+                  disabled={!canManage}
+                >
+                  <option value="Africa/Windhoek">Africa/Windhoek (UTC+2)</option>
+                </StyledSelect>
+              </FieldWrapper>
+              <FieldWrapper label="Type">
+                <Input value={tenant.type.replace(/_/g, ' ')} disabled className="capitalize" />
+              </FieldWrapper>
+              <FieldWrapper label="URL slug">
+                <Input value={tenant.slug} disabled />
+              </FieldWrapper>
             </CardContent>
           </Card>
 
           <Card>
-            <CardHeader><CardTitle>Tenant lifecycle</CardTitle></CardHeader>
+            <CardHeader>
+              <CardTitle>Tenant lifecycle</CardTitle>
+            </CardHeader>
             <CardContent>
-              <div className="flex flex-wrap items-center gap-2">{lifecycleBadge(tenant.lifecycleStatus)}{tenant.lifecycleReason && <span className="text-xs text-ink-500">{tenant.lifecycleReason}</span>}</div>
-              <p className="mt-3 max-w-3xl text-sm leading-relaxed text-ink-500">Lifecycle status tracks onboarding, activation, restriction and archival. Account suspension can be used without deleting historical operational records.</p>
+              <div className="flex flex-wrap items-center gap-2">
+                {lifecycleBadge(tenant.lifecycleStatus)}
+                {tenant.lifecycleReason && (
+                  <span className="text-ink-500 text-xs">{tenant.lifecycleReason}</span>
+                )}
+              </div>
+              <p className="text-ink-500 mt-3 max-w-3xl text-sm leading-relaxed">
+                Lifecycle status tracks onboarding, activation, restriction and archival. Account
+                suspension can be used without deleting historical operational records.
+              </p>
             </CardContent>
           </Card>
 
-          {canManage && <Card className={tenant.deletion.canDelete ? 'border-status-warning-text/30' : ''}>
-            <CardHeader><CardTitle>Retention & removal</CardTitle></CardHeader>
-            <CardContent className="space-y-4">
-              {tenant.deletion.canDelete ? (
-                <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-                  <div>
-                    <p className="text-sm font-semibold text-ink-950">This tenant has no protected operational records.</p>
-                    <p className="mt-1 text-xs leading-relaxed text-ink-500">It can be permanently removed. Configuration records belonging only to this tenant will be removed with it.</p>
+          {canManage && (
+            <Card className={tenant.deletion.canDelete ? 'border-status-warning-text/30' : ''}>
+              <CardHeader>
+                <CardTitle>Retention & removal</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                {tenant.deletion.canDelete ? (
+                  <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <p className="text-ink-950 text-sm font-semibold">
+                        This tenant has no protected operational records.
+                      </p>
+                      <p className="text-ink-500 mt-1 text-xs leading-relaxed">
+                        It can be permanently removed. Configuration records belonging only to this
+                        tenant will be removed with it.
+                      </p>
+                    </div>
+                    <Button
+                      variant="destructive"
+                      size="sm"
+                      onClick={() => setDeleteDialogOpen(true)}
+                    >
+                      <Trash2 className="h-4 w-4" /> Delete empty tenant
+                    </Button>
                   </div>
-                  <Button variant="destructive" size="sm" onClick={() => setDeleteDialogOpen(true)}><Trash2 className="h-4 w-4" /> Delete empty tenant</Button>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  <div className="flex items-start gap-3"><Archive className="mt-0.5 h-5 w-5 text-ink-400" /><div><p className="text-sm font-semibold text-ink-950">This tenant contains records.</p><p className="mt-1 text-xs text-ink-500">Suspend or archive it first. A Platform Administrator can then permanently remove the tenant and all tenant-owned records with an elevated confirmation.</p></div></div>
-                  <div className="flex flex-wrap gap-2">{deletionBlockers.map(([label, value]) => <Badge key={label} variant="default" size="sm">{label.replace(/([A-Z])/g, ' $1')}: {value}</Badge>)}</div>
-                  <div className="flex flex-wrap gap-2">
-                    {tenant.lifecycleStatus !== 'ARCHIVED' && <Button variant="secondary" size="sm" onClick={() => void handleLifecycleChange('ARCHIVED')} loading={isApproving}><Archive className="h-4 w-4" /> Archive tenant</Button>}
-                    {(tenant.status.toUpperCase() === 'SUSPENDED' || tenant.status.toUpperCase() === 'ARCHIVED' || tenant.lifecycleStatus === 'ARCHIVED') && <Button variant="ghost" size="sm" className="text-status-error-text" onClick={() => setDeleteDialogOpen(true)}><Trash2 className="h-4 w-4" /> Delete tenant and records</Button>}
+                ) : (
+                  <div className="space-y-3">
+                    <div className="flex items-start gap-3">
+                      <Archive className="text-ink-400 mt-0.5 h-5 w-5" />
+                      <div>
+                        <p className="text-ink-950 text-sm font-semibold">
+                          This tenant contains records.
+                        </p>
+                        <p className="text-ink-500 mt-1 text-xs">
+                          Suspend or archive it first. A Platform Administrator can then permanently
+                          remove the tenant and all tenant-owned records with an elevated
+                          confirmation.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {deletionBlockers.map(([label, value]) => (
+                        <Badge key={label} variant="default" size="sm">
+                          {label.replace(/([A-Z])/g, ' $1')}: {value}
+                        </Badge>
+                      ))}
+                    </div>
+                    <div className="flex flex-wrap gap-2">
+                      {tenant.lifecycleStatus !== 'ARCHIVED' && (
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => void handleLifecycleChange('ARCHIVED')}
+                          loading={isApproving}
+                        >
+                          <Archive className="h-4 w-4" /> Archive tenant
+                        </Button>
+                      )}
+                      {(tenant.status.toUpperCase() === 'SUSPENDED' ||
+                        tenant.status.toUpperCase() === 'ARCHIVED' ||
+                        tenant.lifecycleStatus === 'ARCHIVED') && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="text-status-error-text"
+                          onClick={() => setDeleteDialogOpen(true)}
+                        >
+                          <Trash2 className="h-4 w-4" /> Delete tenant and records
+                        </Button>
+                      )}
+                    </div>
                   </div>
-                </div>
-              )}
-            </CardContent>
-          </Card>}
+                )}
+              </CardContent>
+            </Card>
+          )}
         </div>
       )}
 
       {activeTab === 'branding' && (
         <Card>
-          <CardHeader><CardTitle>Tenant branding & contact</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle>Tenant branding & contact</CardTitle>
+          </CardHeader>
           <CardContent className="space-y-4">
             <div className="grid gap-4 sm:grid-cols-2">
-              <FieldWrapper label="Contact email"><Input type="email" value={editContactEmail} onChange={(event) => setEditContactEmail(event.target.value)} /></FieldWrapper>
-              <FieldWrapper label="Contact phone"><Input value={editContactPhone} onChange={(event) => setEditContactPhone(event.target.value)} /></FieldWrapper>
+              <FieldWrapper label="Contact email">
+                <Input
+                  type="email"
+                  value={editContactEmail}
+                  onChange={(event) => setEditContactEmail(event.target.value)}
+                />
+              </FieldWrapper>
+              <FieldWrapper label="Contact phone">
+                <Input
+                  value={editContactPhone}
+                  onChange={(event) => setEditContactPhone(event.target.value)}
+                />
+              </FieldWrapper>
               <FieldWrapper label="Primary colour">
                 <div className="flex items-center gap-2">
-                  <input type="color" aria-label="Choose primary colour" value={colourPickerValue(editPrimaryColor, '#1F4E8C')} onChange={(event) => setEditPrimaryColor(event.target.value.toUpperCase())} className="h-10 w-12 cursor-pointer rounded-[7px] border border-border bg-surface p-1" />
-                  <Input value={editPrimaryColor} onChange={(event) => setEditPrimaryColor(event.target.value)} placeholder="#1F4E8C" className="font-mono" />
+                  <input
+                    type="color"
+                    aria-label="Choose primary colour"
+                    value={colourPickerValue(editPrimaryColor, '#1F4E8C')}
+                    onChange={(event) => setEditPrimaryColor(event.target.value.toUpperCase())}
+                    className="border-border bg-surface h-10 w-12 cursor-pointer rounded-[7px] border p-1"
+                  />
+                  <Input
+                    value={editPrimaryColor}
+                    onChange={(event) => setEditPrimaryColor(event.target.value)}
+                    placeholder="#1F4E8C"
+                    className="font-mono"
+                  />
                 </div>
               </FieldWrapper>
               <FieldWrapper label="Accent colour">
                 <div className="flex items-center gap-2">
-                  <input type="color" aria-label="Choose accent colour" value={colourPickerValue(editAccentColor, '#0F766E')} onChange={(event) => setEditAccentColor(event.target.value.toUpperCase())} className="h-10 w-12 cursor-pointer rounded-[7px] border border-border bg-surface p-1" />
-                  <Input value={editAccentColor} onChange={(event) => setEditAccentColor(event.target.value)} placeholder="#0F766E" className="font-mono" />
+                  <input
+                    type="color"
+                    aria-label="Choose accent colour"
+                    value={colourPickerValue(editAccentColor, '#0F766E')}
+                    onChange={(event) => setEditAccentColor(event.target.value.toUpperCase())}
+                    className="border-border bg-surface h-10 w-12 cursor-pointer rounded-[7px] border p-1"
+                  />
+                  <Input
+                    value={editAccentColor}
+                    onChange={(event) => setEditAccentColor(event.target.value)}
+                    placeholder="#0F766E"
+                    className="font-mono"
+                  />
                 </div>
               </FieldWrapper>
-              <FieldWrapper label="Sender name"><Input value={editSenderName} onChange={(event) => setEditSenderName(event.target.value)} /></FieldWrapper>
-              <FieldWrapper label="Physical address"><Input value={editAddress} onChange={(event) => setEditAddress(event.target.value)} /></FieldWrapper>
+              <FieldWrapper label="Sender name">
+                <Input
+                  value={editSenderName}
+                  onChange={(event) => setEditSenderName(event.target.value)}
+                />
+              </FieldWrapper>
+              <FieldWrapper label="Physical address">
+                <Input
+                  value={editAddress}
+                  onChange={(event) => setEditAddress(event.target.value)}
+                />
+              </FieldWrapper>
             </div>
-            <div className="space-y-1.5"><Label htmlFor="tenant-document-footer">Document footer</Label><Textarea id="tenant-document-footer" rows={3} value={editDocumentFooter} onChange={(event) => setEditDocumentFooter(event.target.value)} /></div>
+            <div className="space-y-1.5">
+              <Label htmlFor="tenant-document-footer">Document footer</Label>
+              <Textarea
+                id="tenant-document-footer"
+                rows={3}
+                value={editDocumentFooter}
+                onChange={(event) => setEditDocumentFooter(event.target.value)}
+              />
+            </div>
           </CardContent>
         </Card>
       )}
@@ -427,34 +709,126 @@ export default function PlatformTenantDetailPage({ params }: { params: Promise<{
 
       <Dialog open={statusDialogOpen} onOpenChange={setStatusDialogOpen}>
         <DialogContent className="sm:max-w-md">
-          <DialogHeader><DialogTitle>{tenant.status.toUpperCase() === 'SUSPENDED' ? 'Activate tenant?' : 'Suspend tenant?'}</DialogTitle><DialogDescription>{tenant.status.toUpperCase() === 'SUSPENDED' ? 'Users can regain access according to their existing roles and subscription.' : 'Suspension preserves all tenant data while blocking normal operation.'}</DialogDescription></DialogHeader>
-          <DialogFooter><Button variant="secondary" onClick={() => setStatusDialogOpen(false)}>Cancel</Button><Button variant={tenant.status.toUpperCase() === 'SUSPENDED' ? 'primary' : 'destructive'} onClick={() => void toggleSuspension()} loading={saving}>{tenant.status.toUpperCase() === 'SUSPENDED' ? 'Activate tenant' : 'Suspend tenant'}</Button></DialogFooter>
+          <DialogHeader>
+            <DialogTitle>
+              {tenant.status.toUpperCase() === 'SUSPENDED' ? 'Activate tenant?' : 'Suspend tenant?'}
+            </DialogTitle>
+            <DialogDescription>
+              {tenant.status.toUpperCase() === 'SUSPENDED'
+                ? 'Users can regain access according to their existing roles and subscription.'
+                : 'Suspension preserves all tenant data while blocking normal operation.'}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setStatusDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant={tenant.status.toUpperCase() === 'SUSPENDED' ? 'primary' : 'destructive'}
+              onClick={() => void toggleSuspension()}
+              loading={saving}
+            >
+              {tenant.status.toUpperCase() === 'SUSPENDED' ? 'Activate tenant' : 'Suspend tenant'}
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
 
       <Dialog open={reviewDialogOpen} onOpenChange={setReviewDialogOpen}>
         <DialogContent className="sm:max-w-lg">
-          <DialogHeader><DialogTitle>Review tenant setup</DialogTitle><DialogDescription>Check activation readiness first. Approve when the required checks are satisfied, or return the tenant for normal setup changes without marking onboarding as failed.</DialogDescription></DialogHeader>
-          <div className="rounded-[8px] border border-border bg-muted/20 px-3 py-2.5 text-xs leading-5 text-ink-600">
-            Activation readiness is the authoritative checklist. A returned tenant regains Tenant Admin setup access and can submit for review again.
+          <DialogHeader>
+            <DialogTitle>Review tenant setup</DialogTitle>
+            <DialogDescription>
+              Check activation readiness first. Approve when the required checks are satisfied, or
+              return the tenant for normal setup changes without marking onboarding as failed.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="border-border bg-muted/20 text-ink-600 rounded-[8px] border px-3 py-2.5 text-xs leading-5">
+            Activation readiness is the authoritative checklist. A returned tenant regains Tenant
+            Admin setup access and can submit for review again.
           </div>
-          <div className="space-y-1.5"><Label htmlFor="lifecycle-review-note">Review note</Label><Textarea id="lifecycle-review-note" rows={4} value={lifecycleReason} onChange={(event) => setLifecycleReason(event.target.value)} placeholder="Optional note for the tenant or audit trail" /></div>
+          <div className="space-y-1.5">
+            <Label htmlFor="lifecycle-review-note">Review note</Label>
+            <Textarea
+              id="lifecycle-review-note"
+              rows={4}
+              value={lifecycleReason}
+              onChange={(event) => setLifecycleReason(event.target.value)}
+              placeholder="Optional note for the tenant or audit trail"
+            />
+          </div>
           <DialogFooter className="flex flex-wrap gap-2">
-            <Button variant="ghost" asChild><Link href={`/dashboard/platform/tenants/${id}/readiness`}>View readiness</Link></Button>
-            <Button variant="secondary" onClick={() => void returnForChanges()} loading={isApproving}><RotateCcw className="h-4 w-4" /> Return for changes</Button>
-            <Button onClick={() => void handleLifecycleChange('READY_FOR_ACTIVATION')} loading={isApproving}>Ready for activation</Button>
+            <Button variant="ghost" asChild>
+              <Link href={`/dashboard/platform/tenants/${id}/readiness`}>View readiness</Link>
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => void returnForChanges()}
+              loading={isApproving}
+            >
+              <RotateCcw className="h-4 w-4" /> Return for changes
+            </Button>
+            <Button
+              onClick={() => void handleLifecycleChange('READY_FOR_ACTIVATION')}
+              loading={isApproving}
+            >
+              Ready for activation
+            </Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
 
-      <Dialog open={deleteDialogOpen} onOpenChange={(open) => { setDeleteDialogOpen(open); if (!open) setDeleteConfirmation(''); }}>
+      <Dialog
+        open={deleteDialogOpen}
+        onOpenChange={(open) => {
+          setDeleteDialogOpen(open);
+          if (!open) setDeleteConfirmation('');
+        }}
+      >
         <DialogContent className="sm:max-w-md">
-          <DialogHeader><DialogTitle>Permanently delete {tenant.name}?</DialogTitle><DialogDescription>{tenant.deletion.canDelete ? 'The dependency check found no members, staff, vehicles, requests, trips or programmes.' : `This permanently removes the tenant and its ${tenant.deletion.substantiveRecordCount} assessed tenant-owned records.`} This cannot be undone.</DialogDescription></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>Permanently delete {tenant.name}?</DialogTitle>
+            <DialogDescription>
+              {tenant.deletion.canDelete
+                ? 'The dependency check found no members, staff, vehicles, requests, trips or programmes.'
+                : `This permanently removes the tenant and its ${tenant.deletion.substantiveRecordCount} assessed tenant-owned records.`}{' '}
+              This cannot be undone.
+            </DialogDescription>
+          </DialogHeader>
           <div className="space-y-3">
-            <div className="flex items-start gap-2 rounded-[8px] border border-status-warning-text/30 bg-status-warning-bg/30 p-3 text-xs text-ink-700"><AlertTriangle className="mt-0.5 h-4 w-4 shrink-0 text-status-warning-text" />Tenant-only configuration and setup records will also be removed.</div>
-            <div className="space-y-1.5"><Label htmlFor="delete-tenant-confirm">Type {tenant.deletion.canDelete ? tenant.code : `DELETE ${tenant.code}`} to confirm</Label><Input id="delete-tenant-confirm" value={deleteConfirmation} onChange={(event) => setDeleteConfirmation(event.target.value.toUpperCase())} autoComplete="off" /></div>
+            <div className="border-status-warning-text/30 bg-status-warning-bg/30 text-ink-700 flex items-start gap-2 rounded-[8px] border p-3 text-xs">
+              <AlertTriangle className="text-status-warning-text mt-0.5 h-4 w-4 shrink-0" />
+              Tenant-only configuration and setup records will also be removed.
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="delete-tenant-confirm">
+                Type {tenant.deletion.canDelete ? tenant.code : `DELETE ${tenant.code}`} to confirm
+              </Label>
+              <Input
+                id="delete-tenant-confirm"
+                value={deleteConfirmation}
+                onChange={(event) => setDeleteConfirmation(event.target.value.toUpperCase())}
+                autoComplete="off"
+              />
+            </div>
           </div>
-          <DialogFooter><Button variant="secondary" onClick={() => setDeleteDialogOpen(false)}>Cancel</Button><Button variant="ghost" className="text-status-error-text" disabled={deleteConfirmation !== (tenant.deletion.canDelete ? tenant.code : `DELETE ${tenant.code}`)} loading={deleting} onClick={() => void permanentlyDelete()}><Trash2 className="h-4 w-4" /> Delete permanently</Button></DialogFooter>
+          <DialogFooter>
+            <Button variant="secondary" onClick={() => setDeleteDialogOpen(false)}>
+              Cancel
+            </Button>
+            <Button
+              variant="ghost"
+              className="text-status-error-text"
+              disabled={
+                deleteConfirmation !==
+                (tenant.deletion.canDelete ? tenant.code : `DELETE ${tenant.code}`)
+              }
+              loading={deleting}
+              onClick={() => void permanentlyDelete()}
+            >
+              <Trash2 className="h-4 w-4" /> Delete permanently
+            </Button>
+          </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>

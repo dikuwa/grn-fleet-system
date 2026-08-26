@@ -221,9 +221,9 @@ export async function POST(
           'programme',
           ${id}::uuid,
           'web',
-          jsonb_build_object('status', ${programme.status}),
-          jsonb_build_object('status', ${nextStatus}),
-          ${note || null},
+          jsonb_build_object('status', ${programme.status}::text),
+          jsonb_build_object('status', ${nextStatus}::text),
+          ${note || null}::text,
           ${summary}
         FROM programme_claim
         RETURNING id

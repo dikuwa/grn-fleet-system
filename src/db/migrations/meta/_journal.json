@@ -92,6 +92,8 @@
     { "idx": 87, "version": "7", "when": 1787392800000, "tag": "0087_external_authority_drivers", "breakpoints": true },
     { "idx": 88, "version": "7", "when": 1787423700000, "tag": "0088_reset_request_creation_concurrency", "breakpoints": true },
     { "idx": 89, "version": "7", "when": 1787495700000, "tag": "0089_workflow_active_instance_uniqueness", "breakpoints": true },
-    { "idx": 90, "version": "7", "when": 1787503080000, "tag": "0090_workflow_active_route_uniqueness", "breakpoints": true }
+    { "idx": 90, "version": "7", "when": 1787503080000, "tag": "0090_workflow_active_route_uniqueness", "breakpoints": true },
+    { "idx": 91, "version": "7", "when": 1787503980000, "tag": "0091_governed_reset_financial_boundary", "breakpoints": true },
+    { "idx": 92, "version": "7", "when": 1787535000000, "tag": "0092_external_request_intake_links", "breakpoints": true }
   ]
 }

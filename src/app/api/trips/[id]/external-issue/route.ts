@@ -255,13 +255,14 @@ export async function POST(request: NextRequest, context: RouteContext) {
     }
 
     const issueId = randomUUID();
-    const now = new Date();
+    const nowIso = new Date().toISOString();
+    const assignmentAcceptedAtIso = new Date(record.assignmentAcceptedAt).toISOString();
     const auditSequence = Date.now();
 
     await db.execute(sql`
       WITH allocation_claim AS (
         UPDATE vehicle_allocations
-        SET version = version + 1, updated_at = ${now}
+        SET version = version + 1, updated_at = ${nowIso}::timestamptz
         WHERE id = ${record.allocationId}::uuid
           AND state = 'confirmed'
           AND version = ${record.allocationVersion}
@@ -271,7 +272,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       ),
       trip_claim AS (
         UPDATE trips
-        SET issued_at = ${now}, updated_at = ${now}
+        SET issued_at = ${nowIso}::timestamptz, updated_at = ${nowIso}::timestamptz
         WHERE id = ${id}::uuid
           AND tenant_id = ${tenantId}::uuid
           AND status = 'pending'
@@ -396,20 +397,20 @@ export async function POST(request: NextRequest, context: RouteContext) {
           ${issueId}::uuid,
           ${id}::uuid,
           ${record.allocationId}::uuid,
-          ${now},
+          ${nowIso}::timestamptz,
           ${issueOdometer},
           true,
           ${fuelCardIssued},
           ${session.user.id},
           NULL,
-          ${record.assignmentAcceptedAt},
+          ${assignmentAcceptedAtIso}::timestamptz,
           ${notes}
         FROM trip_claim
         RETURNING id
       ),
       assignment_claim AS (
         UPDATE external_driver_assignments
-        SET issue_id = ${issueId}::uuid, updated_at = ${now}
+        SET issue_id = ${issueId}::uuid, updated_at = ${nowIso}::timestamptz
         WHERE id = ${record.assignmentId}::uuid
           AND tenant_id = ${tenantId}::uuid
           AND external_party_id = ${record.externalPartyId}::uuid
@@ -420,7 +421,7 @@ export async function POST(request: NextRequest, context: RouteContext) {
       ),
       request_claim AS (
         UPDATE transport_requests
-        SET status = 'vehicle_issued', updated_at = ${now}
+        SET status = 'vehicle_issued', updated_at = ${nowIso}::timestamptz
         WHERE id = ${record.requestId}::uuid
           AND tenant_id = ${tenantId}::uuid
           AND assigned_driver_external_party_id = ${record.externalPartyId}::uuid

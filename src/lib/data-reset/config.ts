@@ -112,6 +112,7 @@ export interface DeleteStep {
  */
 export const OPERATIONAL_DELETE_STEPS: DeleteStep[] = [
   // Share links + access events (children of generated documents)
+  { table: 'share_access_events', label: 'Document access events', scope: 'document' },
   { table: 'share_links', label: 'Share links', scope: 'document' },
   // Generated documents (request/trip/inspection/fuel reports)
   {

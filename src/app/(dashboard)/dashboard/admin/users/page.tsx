@@ -6,6 +6,7 @@ import { useQuery } from '@tanstack/react-query';
 import { PageHeader, Breadcrumbs } from '@/components/layout/page-header';
 import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
+import { PageTabs } from '@/components/ui/page-tabs';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Input, Label } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
@@ -145,8 +146,14 @@ function PendingInviteRow({ invite, onAction }: { invite: PendingInvite; onActio
               <span className="text-ink-950 min-w-0 truncate text-sm font-medium">
                 {invite.name || 'Unnamed user'}
               </span>
-              <Badge variant="pending" size="sm">Pending</Badge>
-              {invite.daysSinceInvite > 7 && <Badge variant="error" size="sm">Expired</Badge>}
+              <Badge variant="pending" size="sm">
+                Pending
+              </Badge>
+              {invite.daysSinceInvite > 7 && (
+                <Badge variant="error" size="sm">
+                  Expired
+                </Badge>
+              )}
             </div>
             <div className="text-ink-500 mt-1 flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1 text-xs">
               <Mail className="h-3 w-3 shrink-0" aria-hidden="true" />
@@ -208,7 +215,11 @@ export default function AdminUsersPage() {
   const [roleSearch, setRoleSearch] = useState('');
   const [deliveryMode, setDeliveryMode] = useState<'email' | 'manual'>('email');
   const [roles, setRoles] = useState<RoleOption[]>([]);
-  const [inviteResult, setInviteResult] = useState<{ success: boolean; emailSent: boolean; message: string } | null>(null);
+  const [inviteResult, setInviteResult] = useState<{
+    success: boolean;
+    emailSent: boolean;
+    message: string;
+  } | null>(null);
   const [isInviting, setIsInviting] = useState(false);
 
   const [showCredentials, setShowCredentials] = useState(false);
@@ -253,10 +264,17 @@ export default function AdminUsersPage() {
       try {
         await navigator.clipboard.writeText(value);
         setCopied(target);
-        window.setTimeout(() => setCopied((current) => (current === target ? null : current)), 1800);
+        window.setTimeout(
+          () => setCopied((current) => (current === target ? null : current)),
+          1800,
+        );
         toast({ title: 'Copied', description, variant: 'success' });
       } catch {
-        toast({ title: 'Copy failed', description: 'Clipboard access is unavailable.', variant: 'error' });
+        toast({
+          title: 'Copy failed',
+          description: 'Clipboard access is unavailable.',
+          variant: 'error',
+        });
       }
     },
     [toast],
@@ -413,42 +431,43 @@ export default function AdminUsersPage() {
 
   return (
     <div className="space-y-5 sm:space-y-6">
-      <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Administration' }, { label: 'User Management' }]} />
-      <PageHeader title="User Management" description={`${total} user${total === 1 ? '' : 's'} in your organisation`}>
-        <Button variant="primary" size="sm" onClick={() => void openInviteDialog()} className="w-full sm:w-auto">
+      <Breadcrumbs
+        items={[
+          { label: 'Dashboard', href: '/dashboard' },
+          { label: 'Administration' },
+          { label: 'User Management' },
+        ]}
+      />
+      <PageHeader
+        title="User Management"
+        description={`${total} user${total === 1 ? '' : 's'} in your organisation`}
+      >
+        <Button
+          variant="primary"
+          size="sm"
+          onClick={() => void openInviteDialog()}
+          className="w-full sm:w-auto"
+        >
           <Send className="h-4 w-4" /> Invite User
         </Button>
       </PageHeader>
 
-      <div className="border-border overflow-x-auto border-b" role="tablist" aria-label="User management views">
-        <div className="flex min-w-max gap-1">
-          {tabs.map((tab) => {
-            const selected = activeTab === tab.key;
-            return (
-              <button
-                key={tab.key}
-                type="button"
-                role="tab"
-                aria-selected={selected}
-                onClick={() => {
-                  setActiveTab(tab.key);
-                  setPage(1);
-                  if (tab.key === 'pending') void loadPendingInvites();
-                }}
-                className={`focus-ring -mb-px min-h-11 border-b-2 px-3 text-sm font-medium transition-colors motion-reduce:transition-none sm:px-4 ${
-                  selected ? 'border-brand-700 text-brand-700' : 'border-transparent text-ink-500 hover:text-ink-800'
-                }`}
-              >
-                {tab.label}
-              </button>
-            );
-          })}
-        </div>
-      </div>
+      <PageTabs
+        items={tabs.map((tab) => ({ value: tab.key, label: tab.label }))}
+        value={activeTab}
+        onValueChange={(value) => {
+          setActiveTab(value);
+          setPage(1);
+          if (value === 'pending') void loadPendingInvites();
+        }}
+        label="User management views"
+      />
 
       <Dialog open={showInvite} onOpenChange={setShowInvite}>
         <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-xl">
-          <DialogHeader><DialogTitle>Invite New User</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>Invite New User</DialogTitle>
+          </DialogHeader>
           <div className="space-y-5">
             <div className="space-y-1.5">
               <Label required>Staff Member</Label>
@@ -474,43 +493,71 @@ export default function AdminUsersPage() {
                   }
                 }}
               />
-              <p className="text-ink-500 text-xs">Login accounts remain linked to Staff Management; deleting access does not delete the employee record.</p>
+              <p className="text-ink-500 text-xs">
+                Login accounts remain linked to Staff Management; deleting access does not delete
+                the employee record.
+              </p>
             </div>
 
             <div className="grid gap-4 sm:grid-cols-2">
               <div className="space-y-1.5 sm:col-span-2">
                 <Label required>Email Address</Label>
-                <Input type="email" placeholder="user@organisation.gov.na" value={inviteEmail} onChange={(event) => setInviteEmail(event.target.value)} />
+                <Input
+                  type="email"
+                  placeholder="user@organisation.gov.na"
+                  value={inviteEmail}
+                  onChange={(event) => setInviteEmail(event.target.value)}
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>Full Name</Label>
-                <Input placeholder="e.g. John Doe" value={inviteName} onChange={(event) => setInviteName(event.target.value)} />
+                <Input
+                  placeholder="e.g. John Doe"
+                  value={inviteName}
+                  onChange={(event) => setInviteName(event.target.value)}
+                />
               </div>
               <div className="space-y-1.5">
                 <Label>Username</Label>
-                <Input placeholder="Auto-generated if empty" value={inviteUsername} onChange={(event) => setInviteUsername(event.target.value)} />
+                <Input
+                  placeholder="Auto-generated if empty"
+                  value={inviteUsername}
+                  onChange={(event) => setInviteUsername(event.target.value)}
+                />
               </div>
             </div>
 
             <div className="space-y-2">
               <Label>Roles</Label>
-              <Input value={roleSearch} onChange={(event) => setRoleSearch(event.target.value)} placeholder="Search roles…" aria-label="Search roles" />
+              <Input
+                value={roleSearch}
+                onChange={(event) => setRoleSearch(event.target.value)}
+                placeholder="Search roles…"
+                aria-label="Search roles"
+              />
               <div className="border-border bg-muted/20 max-h-52 overflow-y-auto rounded-[8px] border p-2">
                 {roles.length === 0 ? (
                   <p className="text-ink-400 px-2 py-3 text-xs">No roles available.</p>
                 ) : (
                   roles
-                    .filter((role) => role.name.toLocaleLowerCase().includes(roleSearch.trim().toLocaleLowerCase()))
+                    .filter((role) =>
+                      role.name.toLocaleLowerCase().includes(roleSearch.trim().toLocaleLowerCase()),
+                    )
                     .map((role) => {
                       const checked = inviteRoleIds.includes(role.id);
                       return (
-                        <label key={role.id} className="hover:bg-muted/50 flex min-h-10 cursor-pointer items-center gap-3 rounded-[6px] px-2 py-2 text-sm">
+                        <label
+                          key={role.id}
+                          className="hover:bg-muted/50 flex min-h-10 cursor-pointer items-center gap-3 rounded-[6px] px-2 py-2 text-sm"
+                        >
                           <Checkbox
                             checked={checked}
                             onCheckedChange={(next) => {
                               setInviteRoleIds((current) =>
                                 next === true
-                                  ? current.includes(role.id) ? current : [...current, role.id]
+                                  ? current.includes(role.id)
+                                    ? current
+                                    : [...current, role.id]
                                   : current.filter((id) => id !== role.id),
                               );
                             }}
@@ -522,16 +569,29 @@ export default function AdminUsersPage() {
                     })
                 )}
               </div>
-              <p className="text-ink-500 text-xs">A user may hold multiple roles. Roles can be changed later without deleting the staff record.</p>
+              <p className="text-ink-500 text-xs">
+                A user may hold multiple roles. Roles can be changed later without deleting the
+                staff record.
+              </p>
             </div>
 
             <div className="space-y-2">
               <Label required>Credential delivery</Label>
-              <div className="grid gap-2 sm:grid-cols-2" role="radiogroup" aria-label="Credential delivery method">
-                {([
-                  ['email', 'Send invitation email', 'Email the login details automatically.'],
-                  ['manual', 'Generate credentials to share', 'Display temporary credentials for secure manual sharing.'],
-                ] as const).map(([value, title, description]) => {
+              <div
+                className="grid gap-2 sm:grid-cols-2"
+                role="radiogroup"
+                aria-label="Credential delivery method"
+              >
+                {(
+                  [
+                    ['email', 'Send invitation email', 'Email the login details automatically.'],
+                    [
+                      'manual',
+                      'Generate credentials to share',
+                      'Display temporary credentials for secure manual sharing.',
+                    ],
+                  ] as const
+                ).map(([value, title, description]) => {
                   const selected = deliveryMode === value;
                   return (
                     <button
@@ -541,16 +601,22 @@ export default function AdminUsersPage() {
                       aria-checked={selected}
                       onClick={() => setDeliveryMode(value)}
                       className={`focus-ring min-h-20 rounded-[8px] border p-3 text-left transition-colors motion-reduce:transition-none ${
-                        selected ? 'border-brand-500 bg-brand-50/60 dark:bg-brand-950/20' : 'border-border hover:bg-muted/40'
+                        selected
+                          ? 'border-brand-500 bg-brand-50/60 dark:bg-brand-950/20'
+                          : 'border-border hover:bg-muted/40'
                       }`}
                     >
                       <span className="flex items-start gap-3">
-                        <span className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${selected ? 'border-brand-700' : 'border-ink-300'}`}>
+                        <span
+                          className={`mt-0.5 flex h-4 w-4 shrink-0 items-center justify-center rounded-full border ${selected ? 'border-brand-700' : 'border-ink-300'}`}
+                        >
                           {selected && <span className="bg-brand-700 h-2 w-2 rounded-full" />}
                         </span>
                         <span>
                           <span className="text-ink-950 block text-sm font-medium">{title}</span>
-                          <span className="text-ink-500 mt-1 block text-xs leading-5">{description}</span>
+                          <span className="text-ink-500 mt-1 block text-xs leading-5">
+                            {description}
+                          </span>
                         </span>
                       </span>
                     </button>
@@ -560,14 +626,28 @@ export default function AdminUsersPage() {
             </div>
 
             {inviteResult && (
-              <div className={`flex items-start gap-2 rounded-[8px] border p-3 text-sm ${inviteResult.success ? 'border-status-success-text/20 bg-status-success-bg text-status-success-text' : 'border-status-error-border bg-status-error-bg text-status-error-text'}`} role="status">
-                {inviteResult.success ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" /> : <XCircle className="mt-0.5 h-4 w-4 shrink-0" />}
+              <div
+                className={`flex items-start gap-2 rounded-[8px] border p-3 text-sm ${inviteResult.success ? 'border-status-success-text/20 bg-status-success-bg text-status-success-text' : 'border-status-error-border bg-status-error-bg text-status-error-text'}`}
+                role="status"
+              >
+                {inviteResult.success ? (
+                  <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+                ) : (
+                  <XCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                )}
                 <span className="min-w-0">{inviteResult.message}</span>
               </div>
             )}
 
-            <div className="mobile-action-bar flex flex-col-reverse gap-2 border-t border-border pt-4 sm:flex-row sm:justify-end">
-              <Button variant="secondary" size="sm" onClick={() => setShowInvite(false)} className="w-full sm:w-auto">Cancel</Button>
+            <div className="mobile-action-bar border-border flex flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:justify-end">
+              <Button
+                variant="secondary"
+                size="sm"
+                onClick={() => setShowInvite(false)}
+                className="w-full sm:w-auto"
+              >
+                Cancel
+              </Button>
               <Button
                 variant="primary"
                 size="sm"
@@ -576,7 +656,8 @@ export default function AdminUsersPage() {
                 disabled={!inviteEmployeeId || !inviteEmail.trim() || isInviting}
                 className="w-full sm:w-auto"
               >
-                <Send className="h-4 w-4" /> {deliveryMode === 'email' ? 'Create & Send Invite' : 'Create Account'}
+                <Send className="h-4 w-4" />{' '}
+                {deliveryMode === 'email' ? 'Create & Send Invite' : 'Create Account'}
               </Button>
             </div>
           </div>
@@ -588,7 +669,10 @@ export default function AdminUsersPage() {
           <CardContent className="pt-4">
             <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
               <div className="relative min-w-0 flex-1 sm:max-w-md">
-                <Search className="text-ink-400 pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2" aria-hidden="true" />
+                <Search
+                  className="text-ink-400 pointer-events-none absolute top-1/2 left-3 h-4 w-4 -translate-y-1/2"
+                  aria-hidden="true"
+                />
                 <Input
                   type="search"
                   placeholder="Search name, username or email…"
@@ -600,42 +684,74 @@ export default function AdminUsersPage() {
                   className="pl-9"
                 />
               </div>
-              <ClientFilterReset isFiltered={Boolean(searchQuery)} onClear={() => { setSearchQuery(''); setPage(1); }} />
+              <ClientFilterReset
+                isFiltered={Boolean(searchQuery)}
+                onClear={() => {
+                  setSearchQuery('');
+                  setPage(1);
+                }}
+              />
             </div>
           </CardContent>
         </Card>
       )}
 
       {error && (
-        <div className="border-status-error-border bg-status-error-bg text-status-error-text flex flex-wrap items-center gap-2 rounded-[8px] border px-4 py-3" role="alert">
-          <p className="min-w-0 flex-1 text-sm">{error instanceof Error ? error.message : 'Failed to load users'}</p>
-          <Button variant="secondary" size="sm" onClick={() => void refetch()}>Retry</Button>
+        <div
+          className="border-status-error-border bg-status-error-bg text-status-error-text flex flex-wrap items-center gap-2 rounded-[8px] border px-4 py-3"
+          role="alert"
+        >
+          <p className="min-w-0 flex-1 text-sm">
+            {error instanceof Error ? error.message : 'Failed to load users'}
+          </p>
+          <Button variant="secondary" size="sm" onClick={() => void refetch()}>
+            Retry
+          </Button>
         </div>
       )}
 
       {(isLoading || (activeTab === 'pending' && loadingInvites)) && (
-        <div className="text-ink-500 flex items-center justify-center gap-2 py-14 text-sm" role="status">
-          <Loader2 className="h-5 w-5 animate-spin motion-reduce:animate-none" aria-hidden="true" /> Loading user records…
+        <div
+          className="text-ink-500 flex items-center justify-center gap-2 py-14 text-sm"
+          role="status"
+        >
+          <Loader2 className="h-5 w-5 animate-spin motion-reduce:animate-none" aria-hidden="true" />{' '}
+          Loading user records…
         </div>
       )}
 
-      {activeTab === 'pending' && !loadingInvites && (
-        pendingInvites.length === 0 ? (
-          <EmptyState icon={<Send className="h-6 w-6" />} title="No pending invitations" description="There are no outstanding user invitations for this tenant." />
+      {activeTab === 'pending' &&
+        !loadingInvites &&
+        (pendingInvites.length === 0 ? (
+          <EmptyState
+            icon={<Send className="h-6 w-6" />}
+            title="No pending invitations"
+            description="There are no outstanding user invitations for this tenant."
+          />
         ) : (
           <div className="border-border bg-surface overflow-hidden rounded-[10px] border">
             {pendingInvites.map((invite) => (
-              <PendingInviteRow key={invite.id} invite={invite} onAction={() => { void refetch(); void loadPendingInvites(); }} />
+              <PendingInviteRow
+                key={invite.id}
+                invite={invite}
+                onAction={() => {
+                  void refetch();
+                  void loadPendingInvites();
+                }}
+              />
             ))}
           </div>
-        )
-      )}
+        ))}
 
       {!isLoading && !error && users.length === 0 && activeTab !== 'pending' && (
         <EmptyState
           icon={<Users className="h-6 w-6" />}
           title="No users found"
-          description={searchQuery ? 'No matching records found. Clear filters to view all users.' : 'Invite an active staff member to create their login account.'}
+          description={
+            searchQuery
+              ? 'No matching records found. Clear filters to view all users.'
+              : 'Invite an active staff member to create their login account.'
+          }
         />
       )}
 
@@ -648,8 +764,11 @@ export default function AdminUsersPage() {
                 : userRecord.tenantStatus === 'pending'
                   ? { label: 'Pending', variant: 'pending' as const }
                   : getAccountStatusDisplay(userRecord.tenantStatus);
-            const employeeDisplay = userRecord.employee ? getEmployeeStatusDisplay(userRecord.employee.employmentStatus) : null;
-            const showEmployeeStatus = employeeDisplay !== null && employeeDisplay.canonical !== 'active';
+            const employeeDisplay = userRecord.employee
+              ? getEmployeeStatusDisplay(userRecord.employee.employmentStatus)
+              : null;
+            const showEmployeeStatus =
+              employeeDisplay !== null && employeeDisplay.canonical !== 'active';
 
             return (
               <div
@@ -663,8 +782,12 @@ export default function AdminUsersPage() {
                   </div>
                   <div className="min-w-0">
                     <div className="flex min-w-0 flex-wrap items-center gap-2">
-                      <span className="text-ink-950 min-w-0 truncate text-sm font-medium">{userRecord.name || 'Unnamed user'}</span>
-                      <Badge variant={accountDisplay.variant} size="sm">{accountDisplay.label}</Badge>
+                      <span className="text-ink-950 min-w-0 truncate text-sm font-medium">
+                        {userRecord.name || 'Unnamed user'}
+                      </span>
+                      <Badge variant={accountDisplay.variant} size="sm">
+                        {accountDisplay.label}
+                      </Badge>
                     </div>
                     <div className="text-ink-500 mt-1 flex min-w-0 items-start gap-2 text-xs">
                       <Mail className="mt-0.5 h-3 w-3 shrink-0" aria-hidden="true" />
@@ -672,16 +795,30 @@ export default function AdminUsersPage() {
                     </div>
                     {userRecord.employee && (
                       <div className="text-ink-500 mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
-                        <span>{userRecord.employee.firstName} {userRecord.employee.lastName}</span>
+                        <span>
+                          {userRecord.employee.firstName} {userRecord.employee.lastName}
+                        </span>
                         <span className="text-ink-300">·</span>
                         <span>{userRecord.employee.employeeNumber}</span>
-                        {showEmployeeStatus && employeeDisplay && <Badge variant={employeeDisplay.variant} size="sm">{employeeDisplay.label}</Badge>}
+                        {showEmployeeStatus && employeeDisplay && (
+                          <Badge variant={employeeDisplay.variant} size="sm">
+                            {employeeDisplay.label}
+                          </Badge>
+                        )}
                       </div>
                     )}
                     {userRecord.roles.length > 0 && (
                       <div className="mt-2 flex flex-wrap gap-1.5 sm:hidden">
-                        {userRecord.roles.slice(0, 3).map((role) => <Badge key={role.id} variant="info" size="sm">{role.isActing ? `${role.roleName} (acting)` : role.roleName}</Badge>)}
-                        {userRecord.roles.length > 3 && <span className="text-ink-400 text-xs">+{userRecord.roles.length - 3}</span>}
+                        {userRecord.roles.slice(0, 3).map((role) => (
+                          <Badge key={role.id} variant="info" size="sm">
+                            {role.isActing ? `${role.roleName} (acting)` : role.roleName}
+                          </Badge>
+                        ))}
+                        {userRecord.roles.length > 3 && (
+                          <span className="text-ink-400 text-xs">
+                            +{userRecord.roles.length - 3}
+                          </span>
+                        )}
                       </div>
                     )}
                   </div>
@@ -690,8 +827,14 @@ export default function AdminUsersPage() {
                 <div className="flex items-center justify-between gap-2 sm:shrink-0 sm:justify-end">
                   {userRecord.roles.length > 0 && (
                     <div className="hidden max-w-sm flex-wrap justify-end gap-1 sm:flex">
-                      {userRecord.roles.slice(0, 2).map((role) => <Badge key={role.id} variant="info" size="sm">{role.isActing ? `${role.roleName} (acting)` : role.roleName}</Badge>)}
-                      {userRecord.roles.length > 2 && <span className="text-ink-400 text-xs">+{userRecord.roles.length - 2}</span>}
+                      {userRecord.roles.slice(0, 2).map((role) => (
+                        <Badge key={role.id} variant="info" size="sm">
+                          {role.isActing ? `${role.roleName} (acting)` : role.roleName}
+                        </Badge>
+                      ))}
+                      {userRecord.roles.length > 2 && (
+                        <span className="text-ink-400 text-xs">+{userRecord.roles.length - 2}</span>
+                      )}
                     </div>
                   )}
                   <div className="ml-auto flex items-center gap-1">
@@ -700,7 +843,10 @@ export default function AdminUsersPage() {
                         type="button"
                         variant="ghost"
                         size="icon-sm"
-                        onClick={(event) => { event.stopPropagation(); setRestoreUser(userRecord); }}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setRestoreUser(userRecord);
+                        }}
                         aria-label={`Restore ${userRecord.name || userRecord.email} access`}
                         title="Restore user access"
                       >
@@ -717,8 +863,14 @@ export default function AdminUsersPage() {
                         }}
                         disabled={userRecord.roles.length > 0}
                         aria-label={`Remove ${userRecord.name || userRecord.email} from User Management`}
-                        title={userRecord.roles.length > 0 ? 'Remove role assignments first' : 'Remove user access; keep staff record'}
-                        className={userRecord.roles.length === 0 ? 'text-status-error-text' : undefined}
+                        title={
+                          userRecord.roles.length > 0
+                            ? 'Remove role assignments first'
+                            : 'Remove user access; keep staff record'
+                        }
+                        className={
+                          userRecord.roles.length === 0 ? 'text-status-error-text' : undefined
+                        }
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>
@@ -734,17 +886,37 @@ export default function AdminUsersPage() {
 
       {totalPages > 1 && activeTab !== 'pending' && (
         <div className="border-border flex flex-col gap-3 border-t pt-4 sm:flex-row sm:items-center sm:justify-between">
-          <p className="text-ink-500 text-xs tabular-nums">Page {page} of {totalPages} · {total} total</p>
+          <p className="text-ink-500 text-xs tabular-nums">
+            Page {page} of {totalPages} · {total} total
+          </p>
           <div className="flex gap-2">
-            <Button variant="secondary" size="sm" disabled={page <= 1} onClick={() => setPage((current) => Math.max(1, current - 1))} className="flex-1 sm:flex-none">Previous</Button>
-            <Button variant="secondary" size="sm" disabled={page >= totalPages} onClick={() => setPage((current) => current + 1)} className="flex-1 sm:flex-none">Next</Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={page <= 1}
+              onClick={() => setPage((current) => Math.max(1, current - 1))}
+              className="flex-1 sm:flex-none"
+            >
+              Previous
+            </Button>
+            <Button
+              variant="secondary"
+              size="sm"
+              disabled={page >= totalPages}
+              onClick={() => setPage((current) => current + 1)}
+              className="flex-1 sm:flex-none"
+            >
+              Next
+            </Button>
           </div>
         </div>
       )}
 
       <ConfirmDialog
         open={Boolean(restoreUser)}
-        onOpenChange={(open) => { if (!open) setRestoreUser(null); }}
+        onOpenChange={(open) => {
+          if (!open) setRestoreUser(null);
+        }}
         title="Restore user access?"
         description={`Restore login access for ${restoreUser?.name || restoreUser?.email || 'this user'}? The existing staff record remains unchanged; role assignments may need to be added again.`}
         confirmLabel="Restore access"
@@ -753,7 +925,9 @@ export default function AdminUsersPage() {
 
       <ConfirmDialog
         open={Boolean(removeUser)}
-        onOpenChange={(open) => { if (!open) setRemoveUser(null); }}
+        onOpenChange={(open) => {
+          if (!open) setRemoveUser(null);
+        }}
         title="Remove user access?"
         description={`Remove ${removeUser?.name || removeUser?.email || 'this user'} from User Management? Login access and pending invitations are removed, but the Staff Directory employee record is preserved.`}
         confirmLabel="Remove access"
@@ -763,31 +937,80 @@ export default function AdminUsersPage() {
 
       <Dialog open={showCredentials} onOpenChange={setShowCredentials}>
         <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-lg">
-          <DialogHeader><DialogTitle>User Account Created</DialogTitle></DialogHeader>
+          <DialogHeader>
+            <DialogTitle>User Account Created</DialogTitle>
+          </DialogHeader>
           {credentialData && (
             <div className="space-y-4">
               <div className="border-status-success-text/20 bg-status-success-bg text-status-success-text flex items-start gap-2 rounded-[8px] border p-3 text-sm">
                 <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
-                <span>Account created successfully. Share these temporary credentials securely.</span>
+                <span>
+                  Account created successfully. Share these temporary credentials securely.
+                </span>
               </div>
 
               <div className="border-border bg-muted/30 rounded-[8px] border p-4">
                 <dl className="grid gap-3 text-sm sm:grid-cols-2">
-                  <div className="sm:col-span-2"><dt className="text-ink-500 text-xs">Name</dt><dd className="text-ink-950 mt-0.5 font-medium">{credentialData.fullName}</dd></div>
-                  <div><dt className="text-ink-500 text-xs">Username</dt><dd className="text-ink-950 mt-0.5 break-all font-mono text-xs font-semibold">{credentialData.username}</dd></div>
-                  <div><dt className="text-ink-500 text-xs">Temporary password</dt><dd className="text-ink-950 mt-0.5 break-all font-mono text-xs font-semibold">{credentialData.tempPassword}</dd></div>
-                  <div className="sm:col-span-2"><dt className="text-ink-500 text-xs">Role(s)</dt><dd className="text-ink-800 mt-0.5">{credentialData.roleName}</dd></div>
-                  <div className="sm:col-span-2"><dt className="text-ink-500 text-xs">Login URL</dt><dd className="text-brand-700 mt-0.5 break-all text-xs">{credentialData.loginUrl}</dd></div>
+                  <div className="sm:col-span-2">
+                    <dt className="text-ink-500 text-xs">Name</dt>
+                    <dd className="text-ink-950 mt-0.5 font-medium">{credentialData.fullName}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-ink-500 text-xs">Username</dt>
+                    <dd className="text-ink-950 mt-0.5 font-mono text-xs font-semibold break-all">
+                      {credentialData.username}
+                    </dd>
+                  </div>
+                  <div>
+                    <dt className="text-ink-500 text-xs">Temporary password</dt>
+                    <dd className="text-ink-950 mt-0.5 font-mono text-xs font-semibold break-all">
+                      {credentialData.tempPassword}
+                    </dd>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <dt className="text-ink-500 text-xs">Role(s)</dt>
+                    <dd className="text-ink-800 mt-0.5">{credentialData.roleName}</dd>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <dt className="text-ink-500 text-xs">Login URL</dt>
+                    <dd className="text-brand-700 mt-0.5 text-xs break-all">
+                      {credentialData.loginUrl}
+                    </dd>
+                  </div>
                 </dl>
               </div>
 
               <div className="grid gap-2 sm:grid-cols-3">
-                <Button variant="secondary" size="sm" onClick={() => void copyText('username', credentialData.username, 'Username copied.')}>
-                  {copied === 'username' ? <CheckCircle2 className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() =>
+                    void copyText('username', credentialData.username, 'Username copied.')
+                  }
+                >
+                  {copied === 'username' ? (
+                    <CheckCircle2 className="h-4 w-4" />
+                  ) : (
+                    <Copy className="h-4 w-4" />
+                  )}
                   {copied === 'username' ? 'Copied' : 'Copy username'}
                 </Button>
-                <Button variant="secondary" size="sm" onClick={() => void copyText('password', credentialData.tempPassword, 'Temporary password copied.')}>
-                  {copied === 'password' ? <CheckCircle2 className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                <Button
+                  variant="secondary"
+                  size="sm"
+                  onClick={() =>
+                    void copyText(
+                      'password',
+                      credentialData.tempPassword,
+                      'Temporary password copied.',
+                    )
+                  }
+                >
+                  {copied === 'password' ? (
+                    <CheckCircle2 className="h-4 w-4" />
+                  ) : (
+                    <Copy className="h-4 w-4" />
+                  )}
                   {copied === 'password' ? 'Copied' : 'Copy password'}
                 </Button>
                 <Button
@@ -798,20 +1021,32 @@ export default function AdminUsersPage() {
                     void copyText('full', text, 'Full credentials copied.');
                   }}
                 >
-                  {copied === 'full' ? <CheckCircle2 className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                  {copied === 'full' ? (
+                    <CheckCircle2 className="h-4 w-4" />
+                  ) : (
+                    <Copy className="h-4 w-4" />
+                  )}
                   {copied === 'full' ? 'Copied' : 'Copy all'}
                 </Button>
               </div>
 
               <div className="border-border space-y-2 border-t pt-4">
-                <p className="text-ink-500 text-xs font-medium uppercase tracking-wider">Share credentials</p>
+                <p className="text-ink-500 text-xs font-medium tracking-wider uppercase">
+                  Share credentials
+                </p>
                 <div className="grid gap-2 sm:grid-cols-3">
                   <Button
                     variant="secondary"
                     size="sm"
                     onClick={() => {
-                      const message = encodeURIComponent(`Welcome to GRN Fleet Management\n\nName: ${credentialData.fullName}\nUsername: ${credentialData.username}\nTemporary Password: ${credentialData.tempPassword}\nLogin: ${credentialData.loginUrl}\n\nPlease change your password after first login.`);
-                      window.open(`https://wa.me/?text=${message}`, '_blank', 'noopener,noreferrer');
+                      const message = encodeURIComponent(
+                        `Welcome to GRN Fleet Management\n\nName: ${credentialData.fullName}\nUsername: ${credentialData.username}\nTemporary Password: ${credentialData.tempPassword}\nLogin: ${credentialData.loginUrl}\n\nPlease change your password after first login.`,
+                      );
+                      window.open(
+                        `https://wa.me/?text=${message}`,
+                        '_blank',
+                        'noopener,noreferrer',
+                      );
                     }}
                   >
                     <Smartphone className="h-4 w-4" /> WhatsApp
@@ -822,8 +1057,13 @@ export default function AdminUsersPage() {
                     disabled={!credentialData.email}
                     onClick={() => {
                       const subject = encodeURIComponent('Your GRN Fleet Management Account');
-                      const body = encodeURIComponent(`Welcome to GRN Fleet Management\n\nName: ${credentialData.fullName}\nUsername: ${credentialData.username}\nTemporary Password: ${credentialData.tempPassword}\nRole: ${credentialData.roleName}\nLogin URL: ${credentialData.loginUrl}\n\nPlease change your password after your first login.`);
-                      window.open(`mailto:${credentialData.email}?subject=${subject}&body=${body}`, '_blank');
+                      const body = encodeURIComponent(
+                        `Welcome to GRN Fleet Management\n\nName: ${credentialData.fullName}\nUsername: ${credentialData.username}\nTemporary Password: ${credentialData.tempPassword}\nRole: ${credentialData.roleName}\nLogin URL: ${credentialData.loginUrl}\n\nPlease change your password after your first login.`,
+                      );
+                      window.open(
+                        `mailto:${credentialData.email}?subject=${subject}&body=${body}`,
+                        '_blank',
+                      );
                     }}
                   >
                     <Mail className="h-4 w-4" /> Email
@@ -835,7 +1075,11 @@ export default function AdminUsersPage() {
                       const shareText = `GRN Fleet Management login for ${credentialData.fullName}. Login at ${credentialData.loginUrl}`;
                       if (navigator.share) {
                         try {
-                          await navigator.share({ title: 'GRN Fleet Management Account', text: shareText, url: credentialData.loginUrl });
+                          await navigator.share({
+                            title: 'GRN Fleet Management Account',
+                            text: shareText,
+                            url: credentialData.loginUrl,
+                          });
                         } catch {
                           // Native share can be cancelled without an error message.
                         }
@@ -844,14 +1088,23 @@ export default function AdminUsersPage() {
                       }
                     }}
                   >
-                    {copied === 'link' ? <CheckCircle2 className="h-4 w-4" /> : <ExternalLink className="h-4 w-4" />}
+                    {copied === 'link' ? (
+                      <CheckCircle2 className="h-4 w-4" />
+                    ) : (
+                      <ExternalLink className="h-4 w-4" />
+                    )}
                     {copied === 'link' ? 'Copied' : 'Share'}
                   </Button>
                 </div>
               </div>
 
               <div className="mobile-action-bar border-border flex justify-end border-t pt-3">
-                <Button variant="primary" size="sm" onClick={() => setShowCredentials(false)} className="w-full sm:w-auto">
+                <Button
+                  variant="primary"
+                  size="sm"
+                  onClick={() => setShowCredentials(false)}
+                  className="w-full sm:w-auto"
+                >
                   <CheckCircle2 className="h-4 w-4" /> Done
                 </Button>
               </div>

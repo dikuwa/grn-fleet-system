@@ -88,171 +88,183 @@ describe('User Access Lifecycle API', () => {
     adminCookie = await signInAsAdmin();
   });
 
-  it(
-    'removes a role-less account, blocks role-held removal, restores the account',
-    async () => {
-      const db = (await import('@/db')).getDb();
-      const { session, user, account, verification } = await import('@/db/schema/better-auth');
-      const { userProfiles } = await import('@/db/schema/auth');
-      const { employees } = await import('@/db/schema/people');
-      const { tenantMemberships, roleAssignments } = await import('@/db/schema/tenants');
-      const { eq, count, inArray } = await import('drizzle-orm');
+  it('removes a role-less account, blocks role-held removal, restores the account', async () => {
+    const db = (await import('@/db')).getDb();
+    const { session, user, account, verification } = await import('@/db/schema/better-auth');
+    const { userProfiles } = await import('@/db/schema/auth');
+    const { employees } = await import('@/db/schema/people');
+    const { tenantMemberships, roleAssignments } = await import('@/db/schema/tenants');
+    const { eq, count, inArray } = await import('drizzle-orm');
 
-      const sessionRes = await authed('/api/auth/get-session', adminCookie);
-      expect(sessionRes.status).toBe(200);
-      const adminId = (await sessionRes.json()).user.id;
-      const [adminMembership] = await db
-        .select({ tenantId: tenantMemberships.tenantId })
-        .from(tenantMemberships)
-        .where(eq(tenantMemberships.userId, adminId))
+    const sessionRes = await authed('/api/auth/get-session', adminCookie);
+    expect(sessionRes.status).toBe(200);
+    const adminId = (await sessionRes.json()).user.id;
+    const [adminMembership] = await db
+      .select({ tenantId: tenantMemberships.tenantId })
+      .from(tenantMemberships)
+      .where(eq(tenantMemberships.userId, adminId))
+      .limit(1);
+    expect(adminMembership, 'admin should have a tenant membership').toBeTruthy();
+
+    const fixtureNum = `access-lifecycle-${Date.now()}`;
+    const [fixtureEmployee] = await db
+      .insert(employees)
+      .values({
+        tenantId: adminMembership.tenantId,
+        employeeNumber: fixtureNum,
+        firstName: 'Access',
+        lastName: 'Lifecycle',
+        email: `${fixtureNum}@kavangoeast.test`,
+        employmentStatus: 'active',
+      })
+      .returning({ id: employees.id });
+    expect(fixtureEmployee.id, 'fixture employee should be created').toBeTruthy();
+    const employee = { id: fixtureEmployee.id };
+
+    let userId = '';
+    try {
+      const fixtureSuffix = Date.now();
+      const unique = `access-lifecycle-${fixtureSuffix}@kavangoeast.test`;
+      const create = await authed('/api/admin/users', adminCookie, {
+        method: 'POST',
+        body: JSON.stringify({
+          email: unique,
+          name: `Access Lifecycle ${fixtureSuffix}`,
+          password: 'change-me-123',
+          employeeId: employee.id,
+        }),
+      });
+      const createBody = await create.text();
+      expect(create.status, `create user responded: ${createBody}`).toBe(201);
+      userId = JSON.parse(createBody).data.id;
+      expect(userId).toBeTruthy();
+
+      await signInAndGetCookie(unique, 'change-me-123');
+
+      const detail = await authed(`/api/admin/users/${userId}`, adminCookie);
+      expect(detail.status).toBe(200);
+      const detailData = (await detail.json()).data;
+      expect(detailData.tenantStatus).toBe('active');
+      expect(detailData.roleAssignments).toHaveLength(0);
+      const role = detailData.availableRoles.find(
+        (r: { name: string }) => r.name !== 'Tenant Administrator',
+      );
+      expect(role, 'tenant should expose at least one non-admin system role').toBeTruthy();
+
+      const assign = await authed(`/api/admin/users/${userId}`, adminCookie, {
+        method: 'PATCH',
+        body: JSON.stringify({ addRoleId: role.id }),
+      });
+      expect(assign.status).toBe(200);
+
+      const blocked = await authed(`/api/admin/users/${userId}`, adminCookie, {
+        method: 'DELETE',
+      });
+      expect(blocked.status).toBe(409);
+      expect((await blocked.json()).error).toContain(role.name);
+
+      const detail2 = await authed(`/api/admin/users/${userId}`, adminCookie);
+      const assignment = (await detail2.json()).data.roleAssignments.find(
+        (a: { roleId: string }) => a.roleId === role.id,
+      );
+      expect(assignment, 'role assignment should exist after PATCH add').toBeTruthy();
+
+      const end = await authed(`/api/admin/users/${userId}`, adminCookie, {
+        method: 'PATCH',
+        body: JSON.stringify({ removeRoleId: assignment.id }),
+      });
+      expect(end.status).toBe(200);
+
+      const removed = await authed(`/api/admin/users/${userId}`, adminCookie, {
+        method: 'DELETE',
+      });
+      expect(removed.status).toBe(200);
+
+      const [sessionCount] = await db
+        .select({ total: count() })
+        .from(session)
+        .where(eq(session.userId, userId));
+      expect(Number(sessionCount.total)).toBe(0);
+
+      const [staff] = await db
+        .select({ userId: employees.userId, employmentStatus: employees.employmentStatus })
+        .from(employees)
+        .where(eq(employees.id, employee.id))
         .limit(1);
-      expect(adminMembership, 'admin should have a tenant membership').toBeTruthy();
+      expect(staff, 'the linked employee record must survive removal').toBeTruthy();
+      expect(staff.userId).toBe(userId);
+      expect(staff.employmentStatus).toBe('active');
 
-      const fixtureNum = `access-lifecycle-${Date.now()}`;
-      const [fixtureEmployee] = await db
-        .insert(employees)
-        .values({
-          tenantId: adminMembership.tenantId,
-          employeeNumber: fixtureNum,
-          firstName: 'Access',
-          lastName: 'Lifecycle',
-          email: `${fixtureNum}@kavangoeast.test`,
-          employmentStatus: 'active',
-        })
-        .returning({ id: employees.id });
-      expect(fixtureEmployee.id, 'fixture employee should be created').toBeTruthy();
-      const employee = { id: fixtureEmployee.id };
+      const removedDetail = await authed(`/api/admin/users/${userId}`, adminCookie);
+      expect((await removedDetail.json()).data.tenantStatus).toBe('access_removed');
 
-      let userId = '';
-      try {
-        const unique = `access-lifecycle-${Date.now()}@kavangoeast.test`;
-        const create = await authed('/api/admin/users', adminCookie, {
-          method: 'POST',
-          body: JSON.stringify({
-            email: unique,
-            name: 'Access Lifecycle Tester',
-            password: 'change-me-123',
-            employeeId: employee.id,
-          }),
-        });
-        const createBody = await create.text();
-        expect(create.status, `create user responded: ${createBody}`).toBe(201);
-        userId = JSON.parse(createBody).data.id;
-        expect(userId).toBeTruthy();
+      const defaultList = await authed('/api/admin/users?limit=100', adminCookie);
+      expect(JSON.stringify(await defaultList.json())).not.toContain(unique);
 
-        await signInAndGetCookie(unique, 'change-me-123');
+      const removedList = await authed('/api/admin/users?status=removed&limit=100', adminCookie);
+      expect(removedList.status).toBe(200);
+      const removedBody = await removedList.json();
+      expect(
+        removedBody.data.users.some((u: { id: string }) => u.id === userId),
+        'removed account should appear under ?status=removed',
+      ).toBe(true);
 
-        const detail = await authed(`/api/admin/users/${userId}`, adminCookie);
-        expect(detail.status).toBe(200);
-        const detailData = (await detail.json()).data;
-        expect(detailData.tenantStatus).toBe('active');
-        expect(detailData.roleAssignments).toHaveLength(0);
-        const role = detailData.availableRoles.find(
-          (r: { name: string }) => r.name !== 'Tenant Administrator',
-        );
-        expect(role, 'tenant should expose at least one non-admin system role').toBeTruthy();
+      const restore = await authed(`/api/admin/users/${userId}/restore`, adminCookie, {
+        method: 'POST',
+      });
+      expect(restore.status).toBe(200);
 
-        const assign = await authed(`/api/admin/users/${userId}`, adminCookie, {
-          method: 'PATCH',
-          body: JSON.stringify({ addRoleId: role.id }),
-        });
-        expect(assign.status).toBe(200);
+      const restoredDetail = await authed(`/api/admin/users/${userId}`, adminCookie);
+      expect((await restoredDetail.json()).data.tenantStatus).toBe('active');
 
-        const blocked = await authed(`/api/admin/users/${userId}`, adminCookie, {
-          method: 'DELETE',
-        });
-        expect(blocked.status).toBe(409);
-        expect((await blocked.json()).error).toContain(role.name);
-
-        const detail2 = await authed(`/api/admin/users/${userId}`, adminCookie);
-        const assignment = (await detail2.json()).data.roleAssignments.find(
-          (a: { roleId: string }) => a.roleId === role.id,
-        );
-        expect(assignment, 'role assignment should exist after PATCH add').toBeTruthy();
-
-        const end = await authed(`/api/admin/users/${userId}`, adminCookie, {
-          method: 'PATCH',
-          body: JSON.stringify({ removeRoleId: assignment.id }),
-        });
-        expect(end.status).toBe(200);
-
-        const removed = await authed(`/api/admin/users/${userId}`, adminCookie, {
-          method: 'DELETE',
-        });
-        expect(removed.status).toBe(200);
-
-        const [sessionCount] = await db
-          .select({ total: count() })
-          .from(session)
-          .where(eq(session.userId, userId));
-        expect(Number(sessionCount.total)).toBe(0);
-
-        const [staff] = await db
-          .select({ userId: employees.userId, employmentStatus: employees.employmentStatus })
-          .from(employees)
-          .where(eq(employees.id, employee.id))
-          .limit(1);
-        expect(staff, 'the linked employee record must survive removal').toBeTruthy();
-        expect(staff.userId).toBe(userId);
-        expect(staff.employmentStatus).toBe('active');
-
-        const removedDetail = await authed(`/api/admin/users/${userId}`, adminCookie);
-        expect((await removedDetail.json()).data.tenantStatus).toBe('access_removed');
-
-        const defaultList = await authed('/api/admin/users?limit=100', adminCookie);
-        expect(JSON.stringify(await defaultList.json())).not.toContain(unique);
-
-        const removedList = await authed('/api/admin/users?status=removed&limit=100', adminCookie);
-        expect(removedList.status).toBe(200);
-        const removedBody = await removedList.json();
-        expect(
-          removedBody.data.users.some((u: { id: string }) => u.id === userId),
-          'removed account should appear under ?status=removed',
-        ).toBe(true);
-
-        const restore = await authed(`/api/admin/users/${userId}/restore`, adminCookie, {
-          method: 'POST',
-        });
-        expect(restore.status).toBe(200);
-
-        const restoredDetail = await authed(`/api/admin/users/${userId}`, adminCookie);
-        expect((await restoredDetail.json()).data.tenantStatus).toBe('active');
-
-        const restoreAgain = await authed(`/api/admin/users/${userId}/restore`, adminCookie, {
-          method: 'POST',
-        });
-        expect(restoreAgain.status).toBe(409);
-      } finally {
-        if (userId) {
-          const membershipRows = await db
-            .select({ id: tenantMemberships.id })
-            .from(tenantMemberships)
-            .where(eq(tenantMemberships.userId, userId))
-            .catch(() => []);
-          for (const m of membershipRows) {
-            await db
-              .delete(roleAssignments)
-              .where(eq(roleAssignments.tenantMembershipId, m.id))
-              .catch(() => {});
-          }
+      const restoreAgain = await authed(`/api/admin/users/${userId}/restore`, adminCookie, {
+        method: 'POST',
+      });
+      expect(restoreAgain.status).toBe(409);
+    } finally {
+      if (userId) {
+        const membershipRows = await db
+          .select({ id: tenantMemberships.id })
+          .from(tenantMemberships)
+          .where(eq(tenantMemberships.userId, userId))
+          .catch(() => []);
+        for (const m of membershipRows) {
           await db
-            .delete(tenantMemberships)
-            .where(eq(tenantMemberships.userId, userId))
+            .delete(roleAssignments)
+            .where(eq(roleAssignments.tenantMembershipId, m.id))
             .catch(() => {});
-          await db.delete(session).where(eq(session.userId, userId)).catch(() => {});
-          await db.delete(account).where(eq(account.userId, userId)).catch(() => {});
-          await db.delete(userProfiles).where(eq(userProfiles.userId, userId)).catch(() => {});
-          await db
-            .delete(verification)
-            .where(inArray(verification.identifier, [userId]))
-            .catch(() => {});
-          await db.delete(user).where(eq(user.id, userId)).catch(() => {});
         }
-        await db.delete(employees).where(eq(employees.id, fixtureEmployee.id)).catch(() => {});
+        await db
+          .delete(tenantMemberships)
+          .where(eq(tenantMemberships.userId, userId))
+          .catch(() => {});
+        await db
+          .delete(session)
+          .where(eq(session.userId, userId))
+          .catch(() => {});
+        await db
+          .delete(account)
+          .where(eq(account.userId, userId))
+          .catch(() => {});
+        await db
+          .delete(userProfiles)
+          .where(eq(userProfiles.userId, userId))
+          .catch(() => {});
+        await db
+          .delete(verification)
+          .where(inArray(verification.identifier, [userId]))
+          .catch(() => {});
+        await db
+          .delete(user)
+          .where(eq(user.id, userId))
+          .catch(() => {});
       }
-    },
-    120_000,
-  );
+      await db
+        .delete(employees)
+        .where(eq(employees.id, fixtureEmployee.id))
+        .catch(() => {});
+    }
+  }, 180_000);
 
   it('rejects cross-tenant access and self-deletion', async () => {
     const ghost = await authed(

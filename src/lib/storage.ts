@@ -37,6 +37,13 @@ export interface UploadOptions {
   tenantPrefix?: string;
   /** Whether the file is publicly readable (default: false) */
   isPublic?: boolean;
+  /** Optional per-request deadline. The default remains SDK-controlled. */
+  timeoutMs?: number;
+}
+
+export interface DownloadOptions {
+  /** Optional per-request deadline. The default remains SDK-controlled. */
+  timeoutMs?: number;
 }
 
 export interface UploadResult {
@@ -92,8 +99,7 @@ function getClient(): S3Client | null {
   if (_client) return _client;
 
   const region = 'auto'; // R2 uses 'auto'
-  const endpoint =
-    env.R2_ENDPOINT || `https://${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`;
+  const endpoint = env.R2_ENDPOINT || `https://${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com`;
 
   _client = new S3Client({
     region,
@@ -109,6 +115,37 @@ function getClient(): S3Client | null {
 }
 
 const BUCKET = env.R2_BUCKET_NAME || 'grn-fleet';
+
+async function sendWithOptionalTimeout<T>(
+  send: (abortSignal?: AbortSignal) => Promise<T>,
+  timeoutMs?: number,
+): Promise<T> {
+  if (!timeoutMs) return send();
+
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(
+        new Error(`Durable storage timed out after ${Math.ceil(timeoutMs / 1000)} seconds.`),
+      );
+    }, timeoutMs);
+  });
+  try {
+    // Promise.race is deliberate: some S3-compatible transports do not settle
+    // promptly after receiving an abort signal. The caller still receives a
+    // deterministic failure and can mark the recovery attempt retryable.
+    return await Promise.race([send(controller.signal), timeout]);
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(`Durable storage timed out after ${Math.ceil(timeoutMs / 1000)} seconds.`);
+    }
+    throw error;
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Category → path mapping (shared with upload + dedup routes)
@@ -126,7 +163,6 @@ export const CATEGORY_PATHS = {
 } as const;
 
 export type UploadCategory = keyof typeof CATEGORY_PATHS;
-
 
 // ---------------------------------------------------------------------------
 // Public helpers
@@ -153,11 +189,7 @@ export function sanitiseKey(filename: string): string {
  * submission. Keep object identity independent from business-record/version
  * identity so concurrent uploads are always isolated in storage.
  */
-export function buildKey(
-  filename: string,
-  type: string,
-  tenantPrefix?: string,
-): string {
+export function buildKey(filename: string, type: string, tenantPrefix?: string): string {
   const base = sanitiseKey(filename);
   const ts = Date.now();
   const nonce = randomUUID();
@@ -201,7 +233,10 @@ export async function uploadFile(
   }
 
   const command = new PutObjectCommand(input);
-  const result = await client.send(command);
+  const result = await sendWithOptionalTimeout(
+    (abortSignal) => client.send(command, abortSignal ? { abortSignal } : undefined),
+    options.timeoutMs,
+  );
 
   const publicUrl = options.isPublic
     ? `https://${BUCKET}.${env.R2_ACCOUNT_ID}.r2.cloudflarestorage.com/${key}`
@@ -219,7 +254,10 @@ export async function uploadFile(
  * Download a file from R2 by key.
  * Returns the file body, content type, and metadata — or null if not found.
  */
-export async function downloadFile(key: string): Promise<StorageFile | null> {
+export async function downloadFile(
+  key: string,
+  options: DownloadOptions = {},
+): Promise<StorageFile | null> {
   const client = getClient();
   if (!client) return null;
 
@@ -230,7 +268,10 @@ export async function downloadFile(key: string): Promise<StorageFile | null> {
     };
 
     const command = new GetObjectCommand(input);
-    const result = await client.send(command);
+    const result = await sendWithOptionalTimeout(
+      (abortSignal) => client.send(command, abortSignal ? { abortSignal } : undefined),
+      options.timeoutMs,
+    );
 
     return {
       key,
