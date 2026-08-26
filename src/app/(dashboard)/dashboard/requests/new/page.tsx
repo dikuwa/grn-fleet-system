@@ -1482,7 +1482,7 @@ export default function NewRequestPage() {
           title: 'Programme not loaded',
           description:
             loadError instanceof Error ? loadError.message : 'Programme could not be loaded.',
-          variant: 'destructive',
+          variant: 'error',
         });
       });
 

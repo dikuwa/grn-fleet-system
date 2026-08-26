@@ -41,6 +41,16 @@ export type ApprovalBriefInput = {
   startAt?: string | null;
   endAt?: string | null;
   purpose?: string | null;
+  finance?: {
+    requestOrigin: string;
+    financialImpact: string;
+    tripCategory: string;
+    estimatedCost?: string | null;
+    currency: string;
+    costCentre?: string | null;
+    fundingSource?: string | null;
+    budgetReference?: string | null;
+  };
   vehicleType?: string | null;
   driverAssigned: boolean;
   specialAuthorityRequired: boolean;
@@ -94,8 +104,11 @@ export function buildStructuredDecisionBrief(input: ApprovalBriefInput, locale =
   const vehicle = clean(input.vehicleType) || 'Not provided';
   const driver = input.driverAssigned ? 'Assigned' : 'Not yet assigned';
   const authority = input.specialAuthorityRequired ? 'Required' : 'Not required';
+  const finance = input.finance
+    ? ` Request origin: ${input.finance.requestOrigin.replace(/_/g, ' ')}. Financial impact: ${input.finance.financialImpact.replace(/_/g, ' ')}${input.finance.estimatedCost ? ` (${input.finance.currency} ${input.finance.estimatedCost})` : ''}.`
+    : '';
 
-  return `${input.travellerCount} traveller${input.travellerCount === 1 ? '' : 's'} will travel from ${origin} to ${destination} from ${formatDate(input.startAt)} to ${formatDate(input.endAt)} for ${purpose}. Requested vehicle: ${vehicle}. Driver: ${driver}. Special authority: ${authority}. Current decision: ${input.currentStage}.`;
+  return `${input.travellerCount} traveller${input.travellerCount === 1 ? '' : 's'} will travel from ${origin} to ${destination} from ${formatDate(input.startAt)} to ${formatDate(input.endAt)} for ${purpose}. Requested vehicle: ${vehicle}. Driver: ${driver}. Special authority: ${authority}.${finance} Current decision: ${input.currentStage}.`;
 }
 
 export function getApprovalPrimaryAction(actionType?: string | null) {

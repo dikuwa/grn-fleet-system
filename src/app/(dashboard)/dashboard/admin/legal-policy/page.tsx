@@ -51,7 +51,7 @@ export default function LegalPolicyRegisterPage() {
       setEntries(payload.data || []);
       setCanManage(Boolean(payload.canManage));
     } catch (error) {
-      toast({ title: 'Legal register unavailable', description: error instanceof Error ? error.message : 'Register could not be loaded.', variant: 'destructive' });
+      toast({ title: 'Legal register unavailable', description: error instanceof Error ? error.message : 'Register could not be loaded.', variant: 'error' });
     } finally {
       setLoading(false);
     }
@@ -84,7 +84,7 @@ export default function LegalPolicyRegisterPage() {
       toast({ title: editing ? 'Register entry updated' : 'Register entry created', description: `${form.citation} is recorded with an audit trail.` });
       await load();
     } catch (error) {
-      toast({ title: 'Save failed', description: error instanceof Error ? error.message : 'Entry could not be saved.', variant: 'destructive' });
+      toast({ title: 'Save failed', description: error instanceof Error ? error.message : 'Entry could not be saved.', variant: 'error' });
     } finally {
       setSaving(false);
     }
