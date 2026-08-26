@@ -21,6 +21,7 @@ import { workflowActions, workflowInstances } from '@/db/schema/workflows';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { recordAuditEvent } from '@/lib/audit-event';
+import { reportPeriodLabel } from '@/lib/report-period';
 import {sql, eq, and, gte, count, desc} from 'drizzle-orm';
 
 // ---------------------------------------------------------------------------
@@ -620,14 +621,7 @@ export async function GET(request: NextRequest) {
         .limit(1)) as unknown as { name: string; documentFooter: string | null }[];
 
       const tenantName = tenant?.name || 'Fleet Management';
-      const periodLabel =
-        period === '7d'
-          ? 'Last 7 Days'
-          : period === '30d'
-            ? 'Last 30 Days'
-            : period === '90d'
-              ? 'Last Quarter'
-              : 'Year to Date';
+      const periodLabel = reportPeriodLabel(period);
       const generatedAt = new Date().toISOString();
       const filename = `enhanced-analytics-${period}-${generatedAt.split('T')[0]}`;
 

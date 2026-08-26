@@ -1,6 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { canAccessDashboardPath } from './dashboard-access';
+import { canAccessDashboardPath, canPerformDashboardAction } from './dashboard-access';
 import { SystemRoles as R, WorkspaceIds as W } from './workspaces';
 
 const deliveryDashboardPath = '/dashboard/notifications/deliveries';
@@ -13,6 +13,28 @@ describe('notification delivery workspace boundary', () => {
     ).toBe(true);
     expect(canAccessDashboardPath(deliveryDashboardPath, [R.TENANT_ADMIN], W.TENANT_ADMIN)).toBe(
       true,
+    );
+  });
+
+  it('advertises retry as a real update action only in operational workspaces', () => {
+    expect(
+      canPerformDashboardAction(
+        deliveryDashboardPath,
+        [R.TRANSPORT_ADMIN],
+        'update',
+        W.TRANSPORT_ADMIN,
+      ),
+    ).toBe(true);
+    expect(
+      canPerformDashboardAction(
+        deliveryDashboardPath,
+        [R.TENANT_ADMIN],
+        'update',
+        W.TENANT_ADMIN,
+      ),
+    ).toBe(true);
+    expect(canPerformDashboardAction(deliveryDashboardPath, [R.AUDITOR], 'update', W.AUDIT)).toBe(
+      false,
     );
   });
 
@@ -32,6 +54,7 @@ describe('notification delivery workspace boundary', () => {
     }
 
     expect(listSource).not.toContain('Permissions.AUDIT_READ');
+    expect(retrySource).toContain("'update'");
     expect(retrySource).toContain('Permissions.TENANT_MANAGE');
     expect(retrySource).toContain('Permissions.DRIVER_MANAGE');
   });

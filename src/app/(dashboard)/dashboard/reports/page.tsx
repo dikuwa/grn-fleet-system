@@ -43,11 +43,12 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { DocumentPdfPreview } from '@/app/(dashboard)/dashboard/documents/[id]/document-pdf-preview';
+import { REPORT_PERIOD_OPTIONS, type ReportPeriod } from '@/lib/report-period';
 
 type ReportType =
   'fuel' | 'fleet' | 'trips' | 'maintenance' | 'requests' | 'approvals' | 'enhanced';
 
-type TimeRange = '7d' | '30d' | '90d' | '1y' | 'custom';
+type TimeRange = ReportPeriod;
 
 const reportTypes: {
   value: ReportType;
@@ -100,13 +101,7 @@ const reportTypes: {
   },
 ];
 
-const timeRanges: { value: TimeRange; label: string }[] = [
-  { value: '7d', label: 'Last 7 Days' },
-  { value: '30d', label: 'Last 30 Days' },
-  { value: '90d', label: 'Last Quarter' },
-  { value: '1y', label: 'Year to Date' },
-  { value: 'custom', label: 'Custom Range' },
-];
+const timeRanges: readonly { value: TimeRange; label: string }[] = REPORT_PERIOD_OPTIONS;
 
 function maintenanceServiceTypeLabel(value: string) {
   if (value === 'scheduled') return 'Routine Service';
@@ -217,10 +212,9 @@ async function fetchReportData(type: ReportType, period: TimeRange) {
 }
 
 function reportExportUrl(type: ReportType, period: TimeRange, format: 'csv' | 'excel' | 'pdf') {
-  const periodParam = period === 'custom' ? '30d' : period;
   return type === 'enhanced'
-    ? `/api/reports/enhanced?period=${periodParam}&export=${format}`
-    : `/api/reports?type=${type}&period=${periodParam}&export=${format}`;
+    ? `/api/reports/enhanced?period=${period}&export=${format}`
+    : `/api/reports?type=${type}&period=${period}&export=${format}`;
 }
 
 // ---------------------------------------------------------------------------
@@ -270,7 +264,7 @@ export default function ReportsPage() {
 
   const handleExport = useCallback(
     async (format: 'csv' | 'excel' | 'pdf') => {
-      const periodParam = timeRange === 'custom' ? '30d' : timeRange;
+      const periodParam = timeRange;
       const url = reportExportUrl(selectedReport, timeRange, format);
       setPendingAction(format);
       try {

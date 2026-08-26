@@ -16,6 +16,7 @@ import { offices } from '@/db/schema/people';
 import { regions } from '@/db/schema/fleet';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
+import { reportPeriodLabel } from '@/lib/report-period';
 import { resolveTenantDocumentBranding } from '@/lib/tenant-branding';
 
 // ---------------------------------------------------------------------------
@@ -414,14 +415,7 @@ export async function GET(request: NextRequest) {
       });
       const reportPayload = {
         title,
-        period:
-          period === '7d'
-            ? 'Last 7 Days'
-            : period === '30d'
-              ? 'Last 30 Days'
-              : period === '90d'
-                ? 'Last Quarter'
-                : 'Year to Date',
+        period: reportPeriodLabel(period),
         tenantName: tenant?.name || 'Fleet Management',
         generatedAt,
         summary,

@@ -1004,7 +1004,14 @@ export const routeRegistry: readonly RouteDefinition[] = [
     icon: 'Send',
     section: 'Tenant Configuration',
     workspaces: [W.TRANSPORT_ADMIN, W.TENANT_ADMIN],
-    access: { [W.TRANSPORT_ADMIN]: tenantRead(), [W.TENANT_ADMIN]: tenantManage(READ_EXPORT) },
+    access: {
+      [W.TRANSPORT_ADMIN]: {
+        accessMode: 'tenant_read',
+        recordScope: 'tenant',
+        actions: ['view', 'update'],
+      },
+      [W.TENANT_ADMIN]: tenantManage(['view', 'update', 'export']),
+    },
     sectionByWorkspace: { [W.TRANSPORT_ADMIN]: 'Documents & Reporting' },
     tenantScoped: true,
     order: 380,
@@ -1014,7 +1021,7 @@ export const routeRegistry: readonly RouteDefinition[] = [
   {
     id: 'notification-history',
     path: '/dashboard/notifications/history',
-    label: 'Email History',
+    label: 'Delivery History',
     icon: 'Mail',
     section: 'Tenant Configuration',
     workspaces: [W.TENANT_ADMIN, W.AUDIT],
