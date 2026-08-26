@@ -10,6 +10,7 @@ import { getDb } from '@/db';
 import { tenantInvitations, invitationRoles } from '@/db/schema/invitations';
 import { roleAssignments, tenantMemberships, tenants } from '@/db/schema/tenants';
 import { user, account } from '@/db/schema/better-auth';
+import { userProfiles } from '@/db/schema/auth';
 import { eq, and, or, lt, gte, desc } from 'drizzle-orm';
 import { createHash, randomBytes, randomUUID } from 'crypto';
 import bcrypt from 'bcryptjs';
@@ -273,10 +274,19 @@ export function shouldStartTenantSetup(invitationType: string, lifecycleStatus: 
   return invitationType === 'tenant_admin' && ONBOARDING_INVITATION_LIFECYCLES.has(lifecycleStatus);
 }
 
+export function isActiveInvitationIdentityProfile(profile: {
+  status: string;
+  accountEnabled: boolean;
+} | null | undefined): boolean {
+  return Boolean(profile?.accountEnabled && profile.status === 'active');
+}
+
 /**
  * Accept an invitation atomically:
  *  - Claims the single-use invitation inside the transaction
  *  - Reuses an existing account without changing its password
+ *  - Rejects globally disabled identities instead of reactivating them indirectly
+ *  - Ensures every accepted identity has a user_profiles security/lifecycle row
  *  - Creates a local password credential only when one is actually needed
  *  - Reuses an existing tenant membership and role assignments when present
  *  - Advances lifecycle only for the first Tenant Administrator onboarding invite
@@ -328,6 +338,20 @@ export async function acceptInvitation(input: AcceptInvitationInput): Promise<{
     let userId: string;
     if (existingUser) {
       userId = existingUser.id;
+      const [existingProfile] = await tx
+        .select({
+          status: userProfiles.status,
+          accountEnabled: userProfiles.accountEnabled,
+        })
+        .from(userProfiles)
+        .where(eq(userProfiles.userId, userId))
+        .limit(1);
+
+      if (existingProfile && !isActiveInvitationIdentityProfile(existingProfile)) {
+        throw new Error(
+          'This GRN Fleet identity is disabled and cannot accept a new organisation invitation until it is re-enabled.',
+        );
+      }
       if (!existingUser.name && input.name) {
         await tx.update(user).set({ name: input.name, updatedAt: now }).where(eq(user.id, userId));
       }
@@ -374,6 +398,37 @@ export async function acceptInvitation(input: AcceptInvitationInput): Promise<{
       }
     }
     // Existing password credentials are intentionally preserved.
+
+    // A legacy Better Auth account may predate the GRN Fleet lifecycle profile.
+    // Create only the missing extension row; never upsert over a disabled profile.
+    await tx
+      .insert(userProfiles)
+      .values({
+        id: userId,
+        userId,
+        displayName: existingUser?.name || input.name || email.split('@')[0],
+        requiresPasswordChange: false,
+        passwordStatus: 'permanent',
+        status: 'active',
+        accountEnabled: true,
+      })
+      .onConflictDoNothing({ target: userProfiles.userId });
+
+    // Re-read after the conflict-safe insert so concurrent invitations cannot
+    // make a disabled identity active through membership creation.
+    const [acceptedProfile] = await tx
+      .select({
+        status: userProfiles.status,
+        accountEnabled: userProfiles.accountEnabled,
+      })
+      .from(userProfiles)
+      .where(eq(userProfiles.userId, userId))
+      .limit(1);
+    if (!isActiveInvitationIdentityProfile(acceptedProfile)) {
+      throw new Error(
+        'This GRN Fleet identity is disabled and cannot accept a new organisation invitation until it is re-enabled.',
+      );
+    }
 
     const [existingMembership] = await tx
       .select({ id: tenantMemberships.id })
