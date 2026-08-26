@@ -20,6 +20,11 @@ import { AI_OCR_CONFIDENCE, extractReceiptWithAi, isAiFeatureEnabled } from '@/l
 import { ALLOWED_IMAGE_TYPES, UPLOAD_MAX_SIZE_BYTES } from '@/lib/constants';
 import { fuelScopeCondition } from '@/lib/record-scope';
 import { runAtomicMutations } from '@/lib/db-atomic';
+import {
+  isTerminalReceiptReviewStatus,
+  normaliseReceiptCorrections,
+  type ReceiptCorrectionValue,
+} from '@/lib/fuel-receipt-review';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -129,7 +134,9 @@ export async function POST(request: NextRequest) {
       tenantPrefix: `tenant/${session.tenantId}`,
     });
 
-    let ocrStatus = 'ocr_confirmed';
+    // OCR extraction is provisional evidence. Only the explicit confirmation
+    // action may move the receipt to ocr_confirmed.
+    let ocrStatus = 'awaiting_verification';
     let rawOcrResponse: Record<string, unknown> = {};
     let extractionData: Record<string, unknown> = {};
     let fieldConfidence: Record<string, number> = {};
@@ -164,13 +171,6 @@ export async function POST(request: NextRequest) {
         tripStart: context.tripStart,
         tripEnd: context.tripEnd,
       });
-      if (
-        extractionConfidence < 0.65 ||
-        flags.length > 0 ||
-        (aiFields.amount === undefined && aiFields.litres === undefined)
-      ) {
-        ocrStatus = 'awaiting_verification';
-      }
     } else {
       try {
         const processed = await sharp(original)
@@ -203,13 +203,6 @@ export async function POST(request: NextRequest) {
             tripStart: context.tripStart,
             tripEnd: context.tripEnd,
           });
-          if (
-            extractionConfidence < 0.65 ||
-            Object.values(parsed.confidence).some((confidence) => confidence < 0.6) ||
-            flags.length > 0
-          ) {
-            ocrStatus = 'awaiting_verification';
-          }
         } finally {
           await worker.terminate();
         }
@@ -303,7 +296,7 @@ export async function PATCH(request: NextRequest) {
     const body = (await request.json()) as {
       receiptId?: string;
       action?: 'correct' | 'confirm' | 'verify' | 'reject';
-      corrections?: Record<string, string | number>;
+      corrections?: Record<string, ReceiptCorrectionValue>;
       reason?: string;
     };
     if (!body.receiptId || !body.action) {
@@ -349,25 +342,33 @@ export async function PATCH(request: NextRequest) {
       .limit(1);
     if (!record) return NextResponse.json({ error: 'Receipt not found' }, { status: 404 });
 
+    if (isTerminalReceiptReviewStatus(record.receipt.ocrStatus)) {
+      return NextResponse.json(
+        {
+          error: `This receipt has already been ${record.receipt.ocrStatus} and cannot be changed without a formal review workflow`,
+        },
+        { status: 409 },
+      );
+    }
+
     const extraction = (record.receipt.extractionData ?? {}) as Record<string, unknown>;
     if (action === 'correct') {
       if (!body.corrections || Object.keys(body.corrections).length === 0) {
         return NextResponse.json({ error: 'At least one correction is required' }, { status: 422 });
       }
-      const entries = Object.entries(body.corrections).filter(([field]) =>
-        CORRECTABLE_FIELDS.has(field as keyof ReceiptFields),
-      );
-      if (entries.length !== Object.keys(body.corrections).length) {
+      const normalised = normaliseReceiptCorrections(body.corrections, CORRECTABLE_FIELDS);
+      if (!normalised.ok) {
         return NextResponse.json({ error: 'One or more receipt fields cannot be corrected' }, { status: 422 });
       }
-      const nextExtraction = { ...extraction, ...Object.fromEntries(entries) };
+      const corrections = Object.fromEntries(normalised.entries);
+      const nextExtraction = { ...extraction, ...corrections };
       await runAtomicMutations((executor) => [
         executor.insert(receiptFieldCorrections).values(
-          entries.map(([fieldName, correctedValue]) => ({
+          normalised.entries.map(([fieldName, correctedValue]) => ({
             receiptId,
             fieldName,
             extractedValue: extraction[fieldName] === undefined ? null : String(extraction[fieldName]),
-            correctedValue: String(correctedValue),
+            correctedValue: correctedValue === null ? '' : String(correctedValue),
             correctedByUserId: session.user.id,
           })),
         ),
@@ -384,11 +385,14 @@ export async function PATCH(request: NextRequest) {
           entityType: 'fuel_receipt',
           entityId: receiptId,
           before: extraction,
-          after: Object.fromEntries(entries),
+          after: corrections,
           sourceChannel: 'web',
         }),
       ]);
     } else if (action === 'confirm') {
+      if (record.receipt.ocrStatus === 'ocr_confirmed') {
+        return NextResponse.json({ success: true, idempotent: true });
+      }
       await runAtomicMutations((executor) => [
         executor
           .update(fuelReceipts)
@@ -492,6 +496,12 @@ export async function PATCH(request: NextRequest) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
+    if ((error as { code?: string })?.code === '23514') {
+      return NextResponse.json(
+        { error: 'This receipt review was already completed. Refresh to view the latest state.' },
+        { status: 409 },
+      );
+    }
     console.error('[fuel/receipts] PATCH failed:', error);
     return NextResponse.json({ error: 'Could not update receipt' }, { status: 500 });
   }
