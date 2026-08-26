@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
-import { employees, workflowDefinitions, workflowSteps } from '@/db/schema';
+import { employees, programmes, workflowDefinitions, workflowSteps } from '@/db/schema';
 import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { parseRequestRoutingInput } from '@/lib/request-routing-input';
@@ -17,15 +17,44 @@ export async function POST(request: NextRequest) {
 
   const body = (await request.json().catch(() => ({}))) as Record<string, unknown>;
   const scope = body.scope === 'national' ? 'national' : 'regional';
+  const db = getDb();
+
+  const programmeId = typeof body.programmeId === 'string' ? body.programmeId.trim() : '';
+  let hasProgramme = false;
+  if (programmeId) {
+    const [linkedProgramme] = await db
+      .select({ id: programmes.id })
+      .from(programmes)
+      .where(
+        and(
+          eq(programmes.id, programmeId),
+          eq(programmes.tenantId, session.tenantId),
+          sql`${programmes.status} IN ('approved', 'published')`,
+          sql`${programmes.archivedAt} IS NULL`,
+          sql`(${programmes.endDate} IS NULL OR ${programmes.endDate} >= now())`,
+        ),
+      )
+      .limit(1);
+    if (!linkedProgramme) {
+      return NextResponse.json(
+        {
+          error:
+            'The selected programme is not available. Only approved or published, current, non-archived programmes can be linked to transport requests.',
+        },
+        { status: 400 },
+      );
+    }
+    hasProgramme = true;
+  }
+
   const routingInput = parseRequestRoutingInput(body, {
     requesterType: body.requesterType ?? 'internal',
-    hasProgramme: Boolean(body.programmeId),
+    hasProgramme,
   });
   if (!routingInput.ok) {
     return NextResponse.json({ error: routingInput.error }, { status: 422 });
   }
 
-  const db = getDb();
   const requestedEmployeeId =
     typeof body.requesterEmployeeId === 'string' ? body.requesterEmployeeId.trim() : '';
   if (requestedEmployeeId) {
