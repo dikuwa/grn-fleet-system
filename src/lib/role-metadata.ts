@@ -67,19 +67,21 @@ export const SYSTEM_ROLE_RESPONSIBILITIES: Readonly<Record<string, string>> = {
   [RoleDefinitions.TENANT_ADMIN.name]:
     'Administers the organisation: manages users, staff, programmes and tenant settings.',
   [RoleDefinitions.TRANSPORT_ADMIN.name]:
-    'Reviews transport requests, coordinates vehicles and drivers, and manages transport operations.',
+    'Reviews transport requests where assigned by the configured route, coordinates vehicles and drivers, and manages transport operations.',
   [RoleDefinitions.REQUESTER.name]:
     'Creates transport requests and manages programmes used for travel planning.',
   [RoleDefinitions.SUPERVISOR.name]:
-    'Reviews requests submitted by staff under their supervision and provides the first approval decision.',
+    'Reviews transport requests for staff under their supervision when supervisor review is included in the configured route.',
   [RoleDefinitions.FINANCE_BUDGET_REVIEWER.name]:
-    'Reviews the financial impact of transport requests and records the governing budget decision.',
+    'Reviews request budget impact and records the governing budget decision when Finance / Budget Review is included in the configured route.',
   [RoleDefinitions.CONTROL_ADMIN_OFFICER.name]:
-    'Performs administrative review and release of trips and carries out official vehicle inspections.',
-  [RoleDefinitions.DEPUTY_DIRECTOR.name]: 'Gives final authorisation for regional trips.',
-  [RoleDefinitions.DIRECTOR.name]: 'Releases national trips for final authorisation.',
+    'Performs administrative review, release and official vehicle inspection duties where assigned by the configured workflow.',
+  [RoleDefinitions.DEPUTY_DIRECTOR.name]:
+    'Provides regional trip authorisation where assigned by the configured workflow route.',
+  [RoleDefinitions.DIRECTOR.name]:
+    'Provides Director / Sponsor approval or national-trip release where assigned by the configured workflow route.',
   [RoleDefinitions.CHIEF_REGIONAL_OFFICER.name]:
-    'Gives final authorisation for national trips, including emergency overrides.',
+    'Provides national or emergency trip authorisation where assigned by the configured workflow route.',
   [RoleDefinitions.DRIVER.name]:
     'Accesses assigned trips, records journey information, and reports defects, accidents or breakdowns.',
   [RoleDefinitions.INSPECTOR.name]:

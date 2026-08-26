@@ -148,11 +148,16 @@ export async function GET(
     const canEdit =
       ['draft', 'changes_requested'].includes(programme.status) &&
       (isOwner ? canEditOwn : canEditAny);
+    const isCurrentProgramme =
+      programme.archivedAt == null &&
+      (programme.endDate == null || programme.endDate >= new Date());
     const capabilities = {
       edit: canEdit,
       delete: programme.status === 'draft' && (isOwner ? canEditOwn : canEditAny),
       createTransportRequest:
-        ['approved', 'published'].includes(programme.status) && canCreateTransportRequest,
+        ['approved', 'published'].includes(programme.status) &&
+        isCurrentProgramme &&
+        canCreateTransportRequest,
       actions: {
         submit:
           ['draft', 'changes_requested'].includes(programme.status) &&
