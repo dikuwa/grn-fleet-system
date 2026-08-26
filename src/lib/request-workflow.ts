@@ -57,11 +57,11 @@ function isConcurrentFallbackPublish(error: unknown) {
 
 /**
  * Guarantee that standard tenants have a real fallback workflow definition
- * before the engine initialises a request. Scoped region/office/department
- * routes do not count as a fallback because they cannot safely serve unrelated
- * requests. This prevents a tenant with only a specialised route from leaving
- * other submissions or corrected/resubmitted requests without an approval
- * path.
+ * before the engine initialises a request. A route only counts as the fallback
+ * when every routing dimension is a wildcard. Geography-, origin-, finance-
+ * or category-specific routes cannot safely serve unrelated requests. This
+ * prevents a tenant with only specialised routes from leaving other submissions
+ * or corrected/resubmitted requests without an approval path.
  */
 async function ensureDefaultWorkflowDefinition(
   tenantId: string,
@@ -75,6 +75,9 @@ async function ensureDefaultWorkflowDefinition(
     isNull(workflowDefinitions.regionId),
     isNull(workflowDefinitions.officeId),
     isNull(workflowDefinitions.departmentId),
+    isNull(workflowDefinitions.requestOrigin),
+    isNull(workflowDefinitions.financialImpact),
+    isNull(workflowDefinitions.tripCategory),
   );
   const [existing] = await db
     .select({ id: workflowDefinitions.id })
@@ -176,10 +179,11 @@ async function ensureDefaultWorkflowDefinition(
       tx.insert(workflowSteps).values([...common, ...scoped, driverStep]),
     ]);
   } catch (error) {
-    // Migration 0090 guarantees one active exact route. Two first-time
-    // submissions can still race between the read above and the insert; if the
-    // other request successfully created the fallback, recover instead of
-    // failing an otherwise valid submission/resubmission.
+    // Migration 0094 guarantees one active exact route across all routing
+    // dimensions. Two first-time submissions can still race between the read
+    // above and the insert; if the other request successfully created the true
+    // all-wildcard fallback, recover instead of failing an otherwise valid
+    // submission/resubmission.
     if (!isConcurrentFallbackPublish(error)) throw error;
     const [concurrentFallback] = await db
       .select({ id: workflowDefinitions.id })
