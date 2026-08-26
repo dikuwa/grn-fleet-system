@@ -1,4 +1,4 @@
-import { GOVERNED_ACTION_ORDER } from '@/lib/workflow-builder';
+import { validateGovernedActions } from '@/lib/workflow-builder';
 
 export type PersistedRoutingStep = {
   id: string;
@@ -76,15 +76,11 @@ export function validateWorkflowRouting(
   }
 
   const actionOrder = ordered.map((step) => persistedById.get(step.id)?.actionType ?? '');
-  const canonical = GOVERNED_ACTION_ORDER.filter((action) => actionOrder.includes(action));
-  if (
-    actionOrder.length !== canonical.length ||
-    actionOrder.some((action, index) => canonical[index] !== action)
-  ) {
+  const governedOrder = validateGovernedActions(actionOrder);
+  if (!governedOrder.ok) {
     return {
       ok: false,
-      error:
-        'Approval gates must remain in the governed transport lifecycle order. Change assignees or optional stages instead of reordering system stages.',
+      error: governedOrder.error,
     };
   }
 

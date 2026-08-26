@@ -20,6 +20,8 @@ import { ensureRequestWorkflow } from '@/lib/request-workflow';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
 import { generateIdentityAwareTransportRequestDocument } from '@/lib/transport-request-document';
+import { parseRequestRoutingInput } from '@/lib/request-routing-input';
+import { resolveWorkflowRoute } from '@/lib/workflow-route-resolver';
 
 export async function POST(request: NextRequest) {
   try {
@@ -46,6 +48,12 @@ export async function POST(request: NextRequest) {
       externalDriverId?: string;
       requesterTravels?: boolean;
       clientSubmissionId?: string;
+      financialImpact?: string;
+      tripCategory?: string;
+      estimatedCost?: number | string;
+      costCentre?: string;
+      fundingSource?: string;
+      budgetReference?: string;
     };
     const externalRequesterId = String(body.externalRequesterId || '').trim();
     const responsibleEmployeeId = String(body.responsibleEmployeeId || '').trim();
@@ -70,6 +78,12 @@ export async function POST(request: NextRequest) {
     }
     if (purpose.length > 2000 || origin.length > 300 || destination.length > 300) {
       return NextResponse.json({ error: 'Request text is too long' }, { status: 422 });
+    }
+    const routingInput = parseRequestRoutingInput(body as Record<string, unknown>, {
+      requesterType: 'external',
+    });
+    if (!routingInput.ok) {
+      return NextResponse.json({ error: routingInput.error }, { status: 422 });
     }
 
     const db = getDb();
@@ -133,9 +147,14 @@ export async function POST(request: NextRequest) {
     const routes = await db
       .select({
         id: workflowDefinitions.id,
+        version: workflowDefinitions.version,
+        tripScope: workflowDefinitions.tripScope,
         regionId: workflowDefinitions.regionId,
         officeId: workflowDefinitions.officeId,
         departmentId: workflowDefinitions.departmentId,
+        requestOrigin: workflowDefinitions.requestOrigin,
+        financialImpact: workflowDefinitions.financialImpact,
+        tripCategory: workflowDefinitions.tripCategory,
       })
       .from(workflowDefinitions)
       .where(
@@ -145,15 +164,23 @@ export async function POST(request: NextRequest) {
           eq(workflowDefinitions.isActive, true),
         ),
       );
-    const hasRoute = routes.some(
-      (route) =>
-        (!route.regionId || route.regionId === responsibleEmployee.regionId) &&
-        (!route.officeId || route.officeId === responsibleEmployee.officeId) &&
-        (!route.departmentId || route.departmentId === responsibleEmployee.departmentId),
-    );
-    if (!hasRoute) {
+    const routeResolution = resolveWorkflowRoute(routes, {
+      tripScope: scope,
+      regionId: responsibleEmployee.regionId,
+      officeId: responsibleEmployee.officeId,
+      departmentId: responsibleEmployee.departmentId,
+      requestOrigin: routingInput.fields.requestOrigin,
+      financialImpact: routingInput.fields.financialImpact,
+      tripCategory: routingInput.fields.tripCategory,
+    });
+    if (routeResolution.status !== 'matched') {
       return NextResponse.json(
-        { error: 'No active approval route matches the responsible employee’s region, office and department' },
+        {
+          error:
+            routeResolution.status === 'ambiguous'
+              ? 'Multiple equally specific approval routes match this external request.'
+              : 'No active approval route matches this external request and responsible office.',
+        },
         { status: 409 },
       );
     }
@@ -215,6 +242,7 @@ export async function POST(request: NextRequest) {
           scope,
           status: 'submitted',
           requesterType: 'external',
+          ...routingInput.fields,
           requesterEmployeeId: responsibleEmployee.id,
           externalRequesterId,
           requesterUserId: null,

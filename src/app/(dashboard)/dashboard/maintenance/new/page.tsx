@@ -191,7 +191,7 @@ export default function NewMaintenancePage() {
                 <Input type="number" min={0} placeholder="e.g. 45000" value={formData.serviceOdometer} onChange={(event) => updateForm({ serviceOdometer: event.target.value })} />
               </div>
               <div className="space-y-1.5">
-                <Label>Cost (NAD)</Label>
+                <Label>Cost (N$)</Label>
                 <Input type="number" min={0} step="0.01" placeholder="e.g. 2500.00" value={formData.cost} onChange={(event) => updateForm({ cost: event.target.value })} />
               </div>
               <div className="space-y-1.5">

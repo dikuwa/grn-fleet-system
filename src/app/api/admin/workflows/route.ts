@@ -11,6 +11,7 @@ import {
   offices,
   departments,
   regions,
+  tenants,
 } from '@/db/schema';
 import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
@@ -25,6 +26,19 @@ import {
   WORKFLOW_PRESETS,
   GOVERNED_ACTION_ORDER,
 } from '@/lib/workflow-builder';
+import {
+  FINANCIAL_IMPACTS,
+  REQUEST_ORIGINS,
+  workflowRoutesAreAmbiguous,
+} from '@/lib/workflow-route-resolver';
+
+function optionalCondition(value: unknown, allowed?: readonly string[]): string | null {
+  if (value == null || value === '') return null;
+  const normalized = String(value).trim().toLowerCase();
+  if (allowed && !allowed.includes(normalized)) return '__invalid__';
+  if (!allowed && !/^[a-z0-9][a-z0-9_-]{1,49}$/.test(normalized)) return '__invalid__';
+  return normalized;
+}
 
 export async function GET(request: NextRequest) {
   const auth = await requireRequestAuth(request);
@@ -119,6 +133,11 @@ export async function GET(request: NextRequest) {
       return true;
     });
   }
+  const [tenantConfig] = await db
+    .select({ metadata: tenants.metadata })
+    .from(tenants)
+    .where(eq(tenants.id, session.tenantId))
+    .limit(1);
 
   return NextResponse.json({
     success: true,
@@ -140,6 +159,9 @@ export async function GET(request: NextRequest) {
       presets: WORKFLOW_PRESETS,
       governedStages: GOVERNED_ACTION_ORDER.map((actionType) => ({ actionType })),
       assignmentStrategies: WORKFLOW_ASSIGNMENT_STRATEGIES,
+      workflowRecommendations:
+        (tenantConfig?.metadata?.workflowRecommendations as Record<string, unknown> | undefined) ??
+        null,
     },
   });
 }
@@ -172,6 +194,15 @@ export async function POST(request: NextRequest) {
   const officeId = typeof body.officeId === 'string' && body.officeId ? body.officeId : null;
   const departmentId =
     typeof body.departmentId === 'string' && body.departmentId ? body.departmentId : null;
+  const requestOrigin = optionalCondition(body.requestOrigin, REQUEST_ORIGINS);
+  const financialImpact = optionalCondition(body.financialImpact, FINANCIAL_IMPACTS);
+  const tripCategory = optionalCondition(body.tripCategory);
+  if ([requestOrigin, financialImpact, tripCategory].includes('__invalid__')) {
+    return NextResponse.json(
+      { error: 'One or more routing conditions are invalid.' },
+      { status: 422 },
+    );
+  }
   const db = getDb();
   const scopeCriteria = [
     {
@@ -233,12 +264,35 @@ export async function POST(request: NextRequest) {
       (item) =>
         item.regionId === regionId &&
         item.officeId === officeId &&
-        item.departmentId === departmentId,
+        item.departmentId === departmentId &&
+        item.requestOrigin === requestOrigin &&
+        item.financialImpact === financialImpact &&
+        item.tripCategory === tripCategory,
     )
   ) {
     return NextResponse.json(
       {
-        error: 'An active route already exists for this exact region, office and department scope.',
+        error: 'An active route already exists for these exact routing conditions.',
+      },
+      { status: 409 },
+    );
+  }
+  const proposedRoute = {
+    id: 'proposed',
+    version: 1,
+    tripScope,
+    regionId,
+    officeId,
+    departmentId,
+    requestOrigin,
+    financialImpact,
+    tripCategory,
+  };
+  if (existing.some((item) => workflowRoutesAreAmbiguous(item, proposedRoute))) {
+    return NextResponse.json(
+      {
+        error:
+          'This route overlaps another active route at the same precedence. Add a more specific condition or revise the existing route.',
       },
       { status: 409 },
     );
@@ -248,7 +302,11 @@ export async function POST(request: NextRequest) {
   const stepValues = actionValidation.actions.map((actionType, index) => {
     const stage = governedStage(actionType, tripScope);
     const strategy =
-      actionType === 'supervisor_approve' ? 'requester_supervisor' : 'permission_pool';
+      actionType === 'supervisor_approve'
+        ? 'requester_supervisor'
+        : actionType === 'organisational_approve' && requestOrigin === 'external'
+          ? 'responsible_sponsor'
+          : 'permission_pool';
     return {
       id: crypto.randomUUID(),
       definitionId,
@@ -258,7 +316,9 @@ export async function POST(request: NextRequest) {
       assignedUserId: null,
       label: stage.label,
       description: stage.description,
-      requiresComment: actionType === 'authorise' && tripScope === 'national',
+      requiresComment:
+        actionType === 'finance_review' ||
+        (actionType === 'authorise' && tripScope === 'national'),
       reminderAfterHours: 2,
       escalationAfterHours: 4,
       allowsEmergencyOverride: actionType === 'release' || actionType === 'authorise',
@@ -277,12 +337,21 @@ export async function POST(request: NextRequest) {
       regionId,
       officeId,
       departmentId,
+      requestOrigin,
+      financialImpact,
+      tripCategory,
       version: 1,
       name,
       isActive: true,
       config: {
         preset: preset?.id ?? 'advanced',
-        isFallback: !regionId && !officeId && !departmentId,
+        isFallback:
+          !regionId &&
+          !officeId &&
+          !departmentId &&
+          !requestOrigin &&
+          !financialImpact &&
+          !tripCategory,
       },
       createdAt: now,
       updatedAt: now,
@@ -297,7 +366,16 @@ export async function POST(request: NextRequest) {
     entityType: 'workflow_definition',
     entityId: definitionId,
     summary: `${name} created from ${preset?.label ?? 'Advanced'} stages`,
-    after: { tripScope, regionId, officeId, departmentId, actions: actionValidation.actions },
+    after: {
+      tripScope,
+      regionId,
+      officeId,
+      departmentId,
+      requestOrigin,
+      financialImpact,
+      tripCategory,
+      actions: actionValidation.actions,
+    },
   });
   return NextResponse.json({ success: true, data: { definitionId, version: 1 } }, { status: 201 });
 }
@@ -360,7 +438,8 @@ export async function PUT(request: NextRequest) {
           description: stage.description,
           requiresComment:
             source?.requiresComment ??
-            (actionType === 'authorise' && definition.tripScope === 'national'),
+            (actionType === 'finance_review' ||
+              (actionType === 'authorise' && definition.tripScope === 'national')),
           reminderAfterHours: source?.reminderAfterHours ?? 2,
           escalationAfterHours: source?.escalationAfterHours ?? 4,
           allowsEmergencyOverride:
@@ -371,7 +450,12 @@ export async function PUT(request: NextRequest) {
           config: normalizeAssignmentConfig(
             source?.config ?? {
               assignmentStrategy:
-                actionType === 'supervisor_approve' ? 'requester_supervisor' : 'permission_pool',
+                actionType === 'supervisor_approve'
+                  ? 'requester_supervisor'
+                  : actionType === 'organisational_approve' &&
+                      definition.requestOrigin === 'external'
+                    ? 'responsible_sponsor'
+                    : 'permission_pool',
             },
             source?.assignedUserId,
           ),
@@ -575,6 +659,15 @@ export async function PATCH(request: NextRequest) {
   const nextRegionId = body.regionId || null;
   const nextOfficeId = body.officeId || null;
   const nextDepartmentId = body.departmentId || null;
+  const nextRequestOrigin = optionalCondition(body.requestOrigin, REQUEST_ORIGINS);
+  const nextFinancialImpact = optionalCondition(body.financialImpact, FINANCIAL_IMPACTS);
+  const nextTripCategory = optionalCondition(body.tripCategory);
+  if ([nextRequestOrigin, nextFinancialImpact, nextTripCategory].includes('__invalid__')) {
+    return NextResponse.json(
+      { error: 'One or more routing conditions are invalid.' },
+      { status: 422 },
+    );
+  }
   const competingRoutes = await db
     .select()
     .from(workflowDefinitions)
@@ -591,11 +684,34 @@ export async function PATCH(request: NextRequest) {
       (route) =>
         route.regionId === nextRegionId &&
         route.officeId === nextOfficeId &&
-        route.departmentId === nextDepartmentId,
+        route.departmentId === nextDepartmentId &&
+        route.requestOrigin === nextRequestOrigin &&
+        route.financialImpact === nextFinancialImpact &&
+        route.tripCategory === nextTripCategory,
     )
   ) {
     return NextResponse.json(
       { error: 'Another active route already covers this exact scope.' },
+      { status: 409 },
+    );
+  }
+  const proposedRoute = {
+    id: definition.id,
+    version: definition.version + 1,
+    tripScope: definition.tripScope,
+    regionId: nextRegionId,
+    officeId: nextOfficeId,
+    departmentId: nextDepartmentId,
+    requestOrigin: nextRequestOrigin,
+    financialImpact: nextFinancialImpact,
+    tripCategory: nextTripCategory,
+  };
+  if (competingRoutes.some((route) => workflowRoutesAreAmbiguous(route, proposedRoute))) {
+    return NextResponse.json(
+      {
+        error:
+          'These conditions overlap another active route at the same precedence. Make the route more specific.',
+      },
       { status: 409 },
     );
   }
@@ -605,6 +721,9 @@ export async function PATCH(request: NextRequest) {
     definition.regionId !== nextRegionId ||
     definition.officeId !== nextOfficeId ||
     definition.departmentId !== nextDepartmentId ||
+    definition.requestOrigin !== nextRequestOrigin ||
+    definition.financialImpact !== nextFinancialImpact ||
+    definition.tripCategory !== nextTripCategory ||
     definitionSteps.some(
       (step) =>
         step.assignedUserId !== submittedById.get(step.id)?.assignedUserId ||
@@ -637,6 +756,9 @@ export async function PATCH(request: NextRequest) {
       regionId: nextRegionId,
       officeId: nextOfficeId,
       departmentId: nextDepartmentId,
+      requestOrigin: nextRequestOrigin,
+      financialImpact: nextFinancialImpact,
+      tripCategory: nextTripCategory,
       version: nextVersion,
       name: definition.name,
       isActive: true,
@@ -691,6 +813,9 @@ export async function PATCH(request: NextRequest) {
       regionId: definition.regionId,
       officeId: definition.officeId,
       departmentId: definition.departmentId,
+      requestOrigin: definition.requestOrigin,
+      financialImpact: definition.financialImpact,
+      tripCategory: definition.tripCategory,
       steps: definitionSteps.map((step) => ({
         id: step.id,
         stepOrder: step.stepOrder,

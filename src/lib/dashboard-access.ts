@@ -577,7 +577,7 @@ export const routeRegistry: readonly RouteDefinition[] = [
   {
     id: 'fleet-compliance',
     path: '/dashboard/fleet/compliance',
-    label: 'Compliance Reports',
+    label: 'Vehicle Document Readiness',
     icon: 'Shield',
     section: 'Audit Registers',
     workspaces: [W.TRANSPORT_ADMIN, W.AUDIT],
@@ -585,6 +585,18 @@ export const routeRegistry: readonly RouteDefinition[] = [
     sectionByWorkspace: { [W.TRANSPORT_ADMIN]: 'Operational Management' },
     tenantScoped: true,
     order: 215,
+    navigationVisible: true,
+  },
+  {
+    id: 'legal-policy-register',
+    path: '/dashboard/admin/legal-policy',
+    label: 'Legal & Policy Register',
+    icon: 'BookOpenCheck',
+    section: 'Audit Registers',
+    workspaces: [W.TENANT_ADMIN, W.AUDIT],
+    access: { [W.TENANT_ADMIN]: tenantManage(), [W.AUDIT]: tenantRead(true) },
+    tenantScoped: true,
+    order: 216,
     navigationVisible: true,
   },
   {
@@ -825,7 +837,7 @@ export const routeRegistry: readonly RouteDefinition[] = [
     },
     labelByWorkspace: {
       [W.TENANT_ADMIN]: 'Tenant Reports',
-      [W.AUDIT]: 'Compliance Reports & Export Centre',
+      [W.AUDIT]: 'Audit Reports & Export Centre',
     },
     sectionByWorkspace: { [W.TENANT_ADMIN]: 'Governance', [W.AUDIT]: 'Audit Registers' },
     tenantScoped: true,

@@ -139,11 +139,10 @@ function formFromPackage(pkg: SubscriptionPackage): PackageFormState {
 
 function formatMoney(cents: number | null) {
   if (cents == null) return 'Custom';
-  return new Intl.NumberFormat('en-NA', {
-    style: 'currency',
-    currency: 'NAD',
+  return `N$ ${new Intl.NumberFormat('en-NA', {
+    minimumFractionDigits: 2,
     maximumFractionDigits: 2,
-  }).format(cents / 100);
+  }).format(cents / 100)}`;
 }
 
 export default function PlatformPackagesPage() {

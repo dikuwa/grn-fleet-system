@@ -36,14 +36,10 @@ export function formatDocumentStatus(value: string): string {
 export function formatMoney(value: unknown, locale = 'en-NA'): string {
   const amount = Number(value);
   if (!Number.isFinite(amount)) return 'Not estimated';
-  return new Intl.NumberFormat(locale, {
-    style: 'currency',
-    currency: 'NAD',
-    currencyDisplay: 'narrowSymbol',
+  return `N$ ${new Intl.NumberFormat(locale, {
     minimumFractionDigits: 2,
-  })
-    .format(amount)
-    .replace(/^NAD\s?/, 'N$ ');
+    maximumFractionDigits: 2,
+  }).format(amount)}`;
 }
 
 export function formatHumanDate(value: unknown, locale = 'en-NA'): string {

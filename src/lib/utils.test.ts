@@ -28,7 +28,7 @@ describe('formatNumber', () => {
 describe('formatCurrency', () => {
   it('formats NAD currency', () => {
     const result = formatCurrency(1250.5);
-    expect(result).toContain('1,250.50');
+    expect(result).toBe('N$ 1,250.50');
   });
 
   it('handles zero', () => {

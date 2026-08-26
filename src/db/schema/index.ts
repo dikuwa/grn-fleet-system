@@ -23,4 +23,5 @@ export * from './trips';
 export * from './documents';
 export * from './notifications';
 export * from './audit';
+export * from './legal-policy';
 export * from './fleet-payments';

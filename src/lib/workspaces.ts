@@ -6,6 +6,7 @@ export const SystemRoles = {
   TRANSPORT_ADMIN: 'Transport Administrator',
   REQUESTER: 'Requester / Programme Owner',
   SUPERVISOR: 'Immediate Supervisor',
+  FINANCE_BUDGET_REVIEWER: 'Finance / Budget Reviewer',
   RELEASE_OFFICER: 'Control Administrative Officer',
   DEPUTY_DIRECTOR: 'Deputy Director',
   DIRECTOR: 'Director',
@@ -68,6 +69,7 @@ export const workspaceRegistry: readonly WorkspaceDefinition[] = [
     label: 'Approvals',
     roleNames: [
       R.SUPERVISOR,
+      R.FINANCE_BUDGET_REVIEWER,
       R.RELEASE_OFFICER,
       R.DEPUTY_DIRECTOR,
       R.DIRECTOR,

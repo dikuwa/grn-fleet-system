@@ -2,8 +2,8 @@
  * Workflow Engine
  *
  * State machine that manages transport request approval workflows through
- * defined stages: supervisor_approve → transport_review → release →
- * authorise → acknowledge.
+ * defined governance gates followed by the locked operational lifecycle:
+ * transport_review → optional release → authorise → acknowledge.
  *
  * Each workflow definition is versioned per tenant and trip scope (regional
  * vs national). The engine validates permissions, separation of duty,
@@ -50,6 +50,12 @@ import {
 } from '@/lib/notification-service';
 import { WorkspaceIds } from '@/lib/workspaces';
 import { normalizeAssignmentConfig, type AssignmentStrategy } from '@/lib/workflow-builder';
+import {
+  normaliseFinancialImpact,
+  normaliseRequestOrigin,
+  resolveWorkflowRoute,
+  type WorkflowRouteContext,
+} from '@/lib/workflow-route-resolver';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -63,7 +69,13 @@ export const ADHOC_DEFINITION_ID = '00000000-0000-0000-0000-000000000000';
 // ---------------------------------------------------------------------------
 
 export type WorkflowActionType =
-  'supervisor_approve' | 'transport_review' | 'release' | 'authorise' | 'acknowledge';
+  | 'supervisor_approve'
+  | 'organisational_approve'
+  | 'finance_review'
+  | 'transport_review'
+  | 'release'
+  | 'authorise'
+  | 'acknowledge';
 
 export type WorkflowActionResult =
   'approved' | 'rejected' | 'returned' | 'released' | 'authorised' | 'acknowledged' | 'overridden';
@@ -207,8 +219,8 @@ export class WorkflowEngine {
 
   /**
    * Create a workflow instance for a transport request.
-   * Looks up the appropriate definition based on trip scope, or creates
-   * an ad-hoc instance if no definition is found.
+   * Looks up the active tenant definition using the request's frozen routing
+   * criteria. Existing definitions with null conditions remain wildcards.
    */
   async initializeForRequest(requestId: string, tenantId: string): Promise<EngineResult> {
     const [request] = await this.db
@@ -218,6 +230,11 @@ export class WorkflowEngine {
         officeId: transportRequests.officeId,
         departmentId: transportRequests.departmentId,
         regionId: transportRequests.regionId,
+        requesterType: transportRequests.requesterType,
+        requestOrigin: transportRequests.requestOrigin,
+        financialImpact: transportRequests.financialImpact,
+        tripCategory: transportRequests.tripCategory,
+        programmeId: transportRequests.programmeId,
       })
       .from(transportRequests)
       .where(and(eq(transportRequests.id, requestId), eq(transportRequests.tenantId, tenantId)))
@@ -231,6 +248,18 @@ export class WorkflowEngine {
     }
 
     const scope = request.scope || 'regional';
+    const routingContext: WorkflowRouteContext = {
+      tripScope: scope,
+      regionId: request.regionId,
+      officeId: request.officeId,
+      departmentId: request.departmentId,
+      requestOrigin: normaliseRequestOrigin(
+        request.requestOrigin || request.requesterType,
+        Boolean(request.programmeId),
+      ),
+      financialImpact: normaliseFinancialImpact(request.financialImpact),
+      tripCategory: request.tripCategory?.trim() || 'general',
+    };
 
     // Try to find a matching active definition
     const definitionCandidates = await this.db
@@ -244,26 +273,9 @@ export class WorkflowEngine {
         ),
       )
       .orderBy(workflowDefinitions.version);
-    const definition = definitionCandidates
-      .filter(
-        (candidate) =>
-          (!candidate.regionId || candidate.regionId === request.regionId) &&
-          (!candidate.officeId || candidate.officeId === request.officeId) &&
-          (!candidate.departmentId || candidate.departmentId === request.departmentId),
-      )
-      .sort((left, right) => {
-        const leftSpecificity =
-          Number(Boolean(left.regionId)) +
-          Number(Boolean(left.officeId)) +
-          Number(Boolean(left.departmentId));
-        const rightSpecificity =
-          Number(Boolean(right.regionId)) +
-          Number(Boolean(right.officeId)) +
-          Number(Boolean(right.departmentId));
-        return rightSpecificity - leftSpecificity || right.version - left.version;
-      })[0];
+    const routeResolution = resolveWorkflowRoute(definitionCandidates, routingContext);
 
-    if (!definition) {
+    if (routeResolution.status === 'no_match') {
       return {
         ok: false,
         error: NextResponse.json(
@@ -274,6 +286,20 @@ export class WorkflowEngine {
         ),
       };
     }
+    if (routeResolution.status === 'ambiguous') {
+      return {
+        ok: false,
+        error: NextResponse.json(
+          {
+            error:
+              'Multiple equally specific approval routes match this request. A Tenant Administrator must resolve the overlapping workflow definitions before submission.',
+            conflictingDefinitionIds: routeResolution.candidates.map((candidate) => candidate.id),
+          },
+          { status: 409 },
+        ),
+      };
+    }
+    const definition = routeResolution.definition;
 
     const [instance] = await this.db
       .insert(workflowInstances)
@@ -283,6 +309,13 @@ export class WorkflowEngine {
         definitionVersion: definition.version,
         currentStepOrder: 1,
         status: 'active',
+        routingContext: {
+          ...routingContext,
+          definitionId: definition.id,
+          definitionVersion: definition.version,
+          specificity: routeResolution.specificity,
+          selectedAt: new Date().toISOString(),
+        },
       })
       .returning();
 
@@ -1192,6 +1225,52 @@ export class WorkflowEngine {
         ].filter((value, index, values) => values.indexOf(value) === index);
 
         const resolved = async (strategy: AssignmentStrategy) => {
+          if (strategy === 'responsible_sponsor') {
+            const [sponsor] = await this.db
+              .select({
+                userId: employees.userId,
+                employeeId: employees.id,
+                employmentStatus: employees.employmentStatus,
+                availabilityStatus: employees.availabilityStatus,
+              })
+              .from(employees)
+              .where(
+                and(
+                  eq(employees.id, request.requesterEmployeeId),
+                  eq(employees.tenantId, request.tenantId),
+                ),
+              )
+              .limit(1);
+            if (
+              !sponsor?.userId ||
+              sponsor.employmentStatus !== 'active' ||
+              sponsor.availabilityStatus === 'unavailable'
+            ) {
+              return null;
+            }
+            const [grant] = await this.db
+              .select({ userId: tenantMemberships.userId })
+              .from(tenantMemberships)
+              .innerJoin(
+                roleAssignments,
+                eq(roleAssignments.tenantMembershipId, tenantMemberships.id),
+              )
+              .innerJoin(rolePermissions, eq(rolePermissions.roleId, roleAssignments.roleId))
+              .where(
+                and(
+                  eq(tenantMemberships.tenantId, request.tenantId),
+                  eq(tenantMemberships.userId, sponsor.userId),
+                  eq(tenantMemberships.status, 'active'),
+                  eq(rolePermissions.permissionCode, step.requiredPermission!),
+                  lte(roleAssignments.startDate, new Date()),
+                  or(isNull(roleAssignments.endDate), gt(roleAssignments.endDate, new Date())),
+                ),
+              )
+              .limit(1);
+            return grant
+              ? { userId: sponsor.userId, employeeId: sponsor.employeeId, strategy }
+              : null;
+          }
           if (strategy === 'named_user') {
             if (!step.assignedUserId) return null;
             const [person] = await this.db

@@ -156,9 +156,7 @@ function packagePrice(pkg: PackageOption, interval: BillingInterval) {
 
 function formatPackagePrice(priceCents: number | null, interval: BillingInterval) {
   if (priceCents == null) return 'Custom pricing';
-  const price = new Intl.NumberFormat('en-NA', { style: 'currency', currency: 'NAD' }).format(
-    priceCents / 100,
-  );
+  const price = `N$ ${new Intl.NumberFormat('en-NA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(priceCents / 100)}`;
   return `${price} / ${interval === 'annually' ? 'year' : interval === 'quarterly' ? 'quarter' : 'month'}`;
 }
 
@@ -379,11 +377,13 @@ export default function PlatformSubscriptionsPage() {
   );
 
   const formatCurrency = (cents: number, currency = 'NAD') =>
-    new Intl.NumberFormat('en-NA', {
-      style: 'currency',
-      currency,
-      maximumFractionDigits: 2,
-    }).format(cents / 100);
+    currency === 'NAD'
+      ? `N$ ${new Intl.NumberFormat('en-NA', { minimumFractionDigits: 2, maximumFractionDigits: 2 }).format(cents / 100)}`
+      : new Intl.NumberFormat('en-NA', {
+          style: 'currency',
+          currency,
+          maximumFractionDigits: 2,
+        }).format(cents / 100);
 
   const formatDate = (dateStr: string | null) => {
     if (!dateStr) return '—';

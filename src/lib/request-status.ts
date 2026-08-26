@@ -16,6 +16,8 @@ export const REQUEST_STATUSES: Record<string, StatusConfig> = {
   draft: { label: 'Draft', variant: 'secondary', order: 1 },
   submitted: { label: 'Submitted', variant: 'pending', order: 2, description: 'Awaiting supervisor review' },
   supervisor_review: { label: 'Supervisor Review', variant: 'pending', order: 3, description: 'Being reviewed by the immediate supervisor' },
+  organisational_review: { label: 'Director / Sponsor Approval', variant: 'pending', order: 3.2, description: 'Awaiting the responsible organisational authority' },
+  finance_review: { label: 'Finance / Budget Review', variant: 'pending', order: 3.4, description: 'Funding and budget impact are being reviewed' },
   supervisor_rejected: { label: 'Supervisor Rejected', variant: 'error', order: 4, description: 'Returned by supervisor — please revise and resubmit' },
   transport_review: { label: 'Transport Review', variant: 'pending', order: 5, description: 'Being reviewed by the transport office' },
   vehicle_allocated: { label: 'Vehicle Allocated', variant: 'info', order: 6, description: 'A vehicle has been assigned' },
@@ -42,6 +44,8 @@ export const REQUEST_STATUS_GROUPS = {
   pendingApproval: [
     'submitted',
     'supervisor_review',
+    'organisational_review',
+    'finance_review',
     'transport_review',
     'release_pending',
     'final_authorisation_pending',
@@ -109,6 +113,8 @@ export function workflowStepToStatus(
 ): string {
   const BY_ACTION: Record<string, string> = {
     supervisor_approve: 'supervisor_review',
+    organisational_approve: 'organisational_review',
+    finance_review: 'finance_review',
     transport_review: 'transport_review',
     release: 'release_pending',
     authorise: 'final_authorisation_pending',

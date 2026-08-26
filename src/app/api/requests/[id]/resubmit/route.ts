@@ -431,6 +431,11 @@ export async function POST(
   }
 
   const specialAuthorityRequired = body.specialAuthorityRequired ?? existing.specialAuthorityRequired;
+  const requestOrigin = programmeId
+    ? 'programme'
+    : existing.requesterType === 'external'
+      ? 'external'
+      : 'internal';
   const specialAuthorityReason = specialAuthorityRequired
     ? body.specialAuthorityReason !== undefined
       ? body.specialAuthorityReason.trim() || null
@@ -458,6 +463,7 @@ export async function POST(
     purpose: purpose !== existing.purpose,
     scope: scope !== existing.scope,
     programmeId: programmeId !== existing.programmeId,
+    requestOrigin: requestOrigin !== existing.requestOrigin,
     specialAuthority:
       specialAuthorityRequired !== existing.specialAuthorityRequired ||
       specialAuthorityReason !== existing.specialAuthorityReason,
@@ -478,6 +484,7 @@ export async function POST(
       scope: existing.scope,
       purpose: existing.purpose,
       programmeId: existing.programmeId,
+      requestOrigin: existing.requestOrigin,
       specialAuthorityRequired: existing.specialAuthorityRequired,
       specialAuthorityReason: existing.specialAuthorityReason,
       driverPreference: existing.driverPreference,
@@ -530,6 +537,7 @@ export async function POST(
               purpose = ${purpose},
               scope = ${scope},
               programme_id = ${programmeId}::uuid,
+              request_origin = ${requestOrigin},
               special_authority_required = ${specialAuthorityRequired},
               special_authority_reason = ${specialAuthorityReason},
               driver_preference = ${body.driverPreference ?? existing.driverPreference},

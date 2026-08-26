@@ -24,6 +24,8 @@ import { SystemRoles, WorkspaceIds } from '@/lib/workspaces';
 import { runAtomicMutations } from '@/lib/db-atomic';
 import { ensureRequestWorkflow } from '@/lib/request-workflow';
 import { validateRequesterDriverNominations } from '@/lib/request-driver-eligibility';
+import { parseRequestRoutingInput } from '@/lib/request-routing-input';
+import { resolveWorkflowRoute } from '@/lib/workflow-route-resolver';
 
 export async function POST(req: NextRequest) {
   try {
@@ -183,6 +185,13 @@ export async function POST(req: NextRequest) {
         );
       }
       resolvedProgrammeId = linkedProgramme.id;
+    }
+    const routingInput = parseRequestRoutingInput(body, {
+      requesterType: 'internal',
+      hasProgramme: Boolean(resolvedProgrammeId),
+    });
+    if (!routingInput.ok) {
+      return NextResponse.json({ error: routingInput.error }, { status: 422 });
     }
 
     if (clientSubmissionId) {
@@ -405,9 +414,14 @@ export async function POST(req: NextRequest) {
     const availableRoutes = await db
       .select({
         id: workflowDefinitions.id,
+        version: workflowDefinitions.version,
+        tripScope: workflowDefinitions.tripScope,
         regionId: workflowDefinitions.regionId,
         officeId: workflowDefinitions.officeId,
         departmentId: workflowDefinitions.departmentId,
+        requestOrigin: workflowDefinitions.requestOrigin,
+        financialImpact: workflowDefinitions.financialImpact,
+        tripCategory: workflowDefinitions.tripCategory,
       })
       .from(workflowDefinitions)
       .where(
@@ -417,13 +431,16 @@ export async function POST(req: NextRequest) {
           eq(workflowDefinitions.isActive, true),
         ),
       );
-    const hasMatchingRoute = availableRoutes.some(
-      (route) =>
-        (!route.regionId || route.regionId === requesterEmployee.regionId) &&
-        (!route.officeId || route.officeId === requesterEmployee.officeId) &&
-        (!route.departmentId || route.departmentId === requesterEmployee.departmentId),
-    );
-    if (!hasMatchingRoute) {
+    const routeResolution = resolveWorkflowRoute(availableRoutes, {
+      tripScope: scope,
+      regionId: requesterEmployee.regionId,
+      officeId: requesterEmployee.officeId,
+      departmentId: requesterEmployee.departmentId,
+      requestOrigin: routingInput.fields.requestOrigin,
+      financialImpact: routingInput.fields.financialImpact,
+      tripCategory: routingInput.fields.tripCategory,
+    });
+    if (routeResolution.status !== 'matched') {
       try {
         const recipients = await resolveActiveRoleRecipients(tenantId, [SystemRoles.TENANT_ADMIN]);
         await createScopedNotifications({
@@ -445,7 +462,10 @@ export async function POST(req: NextRequest) {
       }
       return NextResponse.json(
         {
-          error: `No active ${scope} approval route is configured for this region, office and department. The Tenant Administrator has been notified.`,
+          error:
+            routeResolution.status === 'ambiguous'
+              ? 'Multiple equally specific approval routes match this request. The Tenant Administrator has been notified.'
+              : `No active ${scope} approval route is configured for these request conditions. The Tenant Administrator has been notified.`,
         },
         { status: 409 },
       );
@@ -492,6 +512,7 @@ export async function POST(req: NextRequest) {
             clientSubmissionId: clientSubmissionId || null,
             scope,
             status: 'submitted',
+            ...routingInput.fields,
             requesterEmployeeId: requesterEmployee.id,
             requesterUserId: requesterEmployee.userId,
             enteredByUserId: userId,

@@ -31,6 +31,10 @@ export const workflowDefinitions = pgTable(
     regionId: uuid('region_id'),
     officeId: uuid('office_id'),
     departmentId: uuid('department_id'),
+    // Null routing conditions are wildcards, preserving legacy definitions.
+    requestOrigin: text('request_origin'), // internal, external, programme
+    financialImpact: text('financial_impact'), // none, within_budget, additional_funding
+    tripCategory: text('trip_category'),
     version: integer('version').notNull().default(1),
     name: text('name').notNull(),
     isActive: boolean('is_active').notNull().default(true),
@@ -46,6 +50,9 @@ export const workflowDefinitions = pgTable(
         sql`COALESCE(${table.regionId}, '00000000-0000-0000-0000-000000000000'::uuid)`,
         sql`COALESCE(${table.officeId}, '00000000-0000-0000-0000-000000000000'::uuid)`,
         sql`COALESCE(${table.departmentId}, '00000000-0000-0000-0000-000000000000'::uuid)`,
+        sql`COALESCE(${table.requestOrigin}, '__any__')`,
+        sql`COALESCE(${table.financialImpact}, '__any__')`,
+        sql`COALESCE(${table.tripCategory}, '__any__')`,
       )
       .where(sql`${table.isActive} = true`),
   ],
@@ -60,7 +67,7 @@ export const workflowSteps = pgTable('workflow_steps', {
     .notNull()
     .references(() => workflowDefinitions.id, { onDelete: 'cascade' }),
   stepOrder: integer('step_order').notNull(),
-  actionType: text('action_type').notNull(), // supervisor_approve, transport_review, release, authorise, acknowledge
+  actionType: text('action_type').notNull(), // governed action type; see workflow-builder.ts
   requiredPermission: text('required_permission'),
   assignedUserId: text('assigned_user_id'),
   label: text('label').notNull(),
@@ -100,6 +107,11 @@ export const workflowInstances = pgTable(
     // shared by every workflow instance using the definition.
     currentAssignedUserId: text('current_assigned_user_id'),
     currentAssignmentMeta: jsonb('current_assignment_meta')
+      .$type<Record<string, unknown>>()
+      .notNull()
+      .default({}),
+    /** Frozen request criteria used to select this workflow definition. */
+    routingContext: jsonb('routing_context')
       .$type<Record<string, unknown>>()
       .notNull()
       .default({}),

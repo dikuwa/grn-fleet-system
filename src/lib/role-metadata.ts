@@ -28,6 +28,7 @@ export const TENANT_SYSTEM_ROLE_NAMES: readonly string[] = [
   RoleDefinitions.TRANSPORT_ADMIN.name,
   RoleDefinitions.REQUESTER.name,
   RoleDefinitions.SUPERVISOR.name,
+  RoleDefinitions.FINANCE_BUDGET_REVIEWER.name,
   RoleDefinitions.CONTROL_ADMIN_OFFICER.name,
   RoleDefinitions.DEPUTY_DIRECTOR.name,
   RoleDefinitions.DIRECTOR.name,
@@ -71,6 +72,8 @@ export const SYSTEM_ROLE_RESPONSIBILITIES: Readonly<Record<string, string>> = {
     'Creates transport requests and manages programmes used for travel planning.',
   [RoleDefinitions.SUPERVISOR.name]:
     'Reviews requests submitted by staff under their supervision and provides the first approval decision.',
+  [RoleDefinitions.FINANCE_BUDGET_REVIEWER.name]:
+    'Reviews the financial impact of transport requests and records the governing budget decision.',
   [RoleDefinitions.CONTROL_ADMIN_OFFICER.name]:
     'Performs administrative review and release of trips and carries out official vehicle inspections.',
   [RoleDefinitions.DEPUTY_DIRECTOR.name]: 'Gives final authorisation for regional trips.',
@@ -136,6 +139,8 @@ const PERMISSION_LABELS: Readonly<Record<string, string>> = {
   [Permissions.REQUEST_CREATE]: 'Create transport requests',
   [Permissions.REQUEST_VIEW]: 'View transport requests',
   [Permissions.REQUEST_APPROVE_SUPERVISOR]: 'Approve staff transport requests',
+  [Permissions.REQUEST_APPROVE_ORGANISATIONAL]: 'Approve requests for the responsible organisation',
+  [Permissions.REQUEST_REVIEW_FINANCE]: 'Review request budget impact',
   [Permissions.REQUEST_REVIEW_TRANSPORT]: 'Review transport requests',
   [Permissions.REQUEST_WITHDRAW]: 'Withdraw own requests',
   [Permissions.REQUEST_CANCEL]: 'Cancel transport requests',
@@ -208,6 +213,8 @@ const PERMISSION_LABELS: Readonly<Record<string, string>> = {
 
   [Permissions.AUDIT_READ]: 'View audit records',
   [Permissions.AUDIT_EXPORT]: 'Export audit records',
+  [Permissions.LEGAL_POLICY_VIEW]: 'View Legal & Policy Register',
+  [Permissions.LEGAL_POLICY_MANAGE]: 'Manage Legal & Policy Register',
 
   [Permissions.TENANT_MANAGE]: 'Manage tenant settings',
   [Permissions.TENANT_VIEW]: 'View tenant information',

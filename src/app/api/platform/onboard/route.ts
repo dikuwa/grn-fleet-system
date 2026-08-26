@@ -20,6 +20,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { tenants, tenantBranding, roles, rolePermissions } from '@/db/schema/tenants';
+import { legalPolicyRegister } from '@/db/schema/legal-policy';
 import { offices, departments } from '@/db/schema/people';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions, RoleDefinitions } from '@/lib/permissions';
@@ -31,6 +32,11 @@ import { sendInvitationEmail } from '@/lib/platform/email-templates';
 import { seedTenantOperationalDefaults } from '@/lib/platform/tenant-operational-defaults';
 import { cleanupFailedTenantOnboarding } from '@/lib/platform/onboarding-cleanup';
 import { writePublicEmployeeRequestConfig } from '@/lib/public-request-access';
+import {
+  recommendWorkflowRoutes,
+  type BudgetControl,
+  type TransportProcess,
+} from '@/lib/workflow-onboarding-recommendation';
 
 interface OnboardingRequest {
   organisation: {
@@ -76,6 +82,11 @@ interface OnboardingRequest {
     code: string;
   }>;
   roles?: string[];
+  transportProcess?: {
+    model: TransportProcess;
+    budgetControl: BudgetControl;
+    acceptsExternalSponsoredRequests: boolean;
+  };
 }
 
 type OnboardingBootstrapResult = {
@@ -107,6 +118,15 @@ export async function POST(request: NextRequest) {
 
     const body: OnboardingRequest = await request.json();
 
+    if (
+      body.transportProcess &&
+      (!['request_led', 'programme_led', 'mixed'].includes(body.transportProcess.model) ||
+        !['conditional', 'always', 'none'].includes(body.transportProcess.budgetControl) ||
+        typeof body.transportProcess.acceptsExternalSponsoredRequests !== 'boolean')
+    ) {
+      return NextResponse.json({ error: 'Transport process answers are invalid.' }, { status: 422 });
+    }
+
     if (!body.organisation?.name?.trim()) {
       return NextResponse.json({ error: 'Organisation name is required' }, { status: 400 });
     }
@@ -134,6 +154,17 @@ export async function POST(request: NextRequest) {
 
     const db = getDb();
     const org = body.organisation;
+    const transportProcess = body.transportProcess ?? {
+      model: 'mixed' as const,
+      budgetControl: 'conditional' as const,
+      acceptsExternalSponsoredRequests: false,
+    };
+    const workflowRecommendations = recommendWorkflowRoutes({
+      organisationType: org.type || 'regional_council',
+      transportProcess: transportProcess.model,
+      budgetControl: transportProcess.budgetControl,
+      acceptsExternalSponsoredRequests: transportProcess.acceptsExternalSponsoredRequests,
+    });
 
     const [existing] = await db
       .select()
@@ -173,10 +204,50 @@ export async function POST(request: NextRequest) {
           lifecycleChangedAt: new Date(),
           timezone: org.timezone || 'Africa/Windhoek',
           locale: org.locale || 'en-NA',
-          metadata: writePublicEmployeeRequestConfig({}, false),
+          metadata: writePublicEmployeeRequestConfig(
+            {
+              transportProcess,
+              workflowRecommendations: {
+                status: 'draft_recommendation',
+                generatedAt: new Date().toISOString(),
+                routes: workflowRecommendations,
+              },
+            },
+            false,
+          ),
         })
         .returning();
       createdTenantId = tenant.id;
+
+      await db.insert(legalPolicyRegister).values([
+        {
+          tenantId: tenant.id,
+          title: 'Road Traffic and Transport Act, 1999',
+          instrumentType: 'Act',
+          citation: 'Act 22 of 1999',
+          sourceUrl: 'https://namiblii.org/akn/na/act/1999/22/eng@2008-12-09',
+          status: 'in_force',
+          applicability:
+            'Statutory framework for road traffic, vehicle and transport operations in Namibia.',
+          notes:
+            'Verify the current consolidated text and applicable regulations when conducting a legal review.',
+          createdByUserId: session.user.id,
+          updatedByUserId: session.user.id,
+        },
+        {
+          tenantId: tenant.id,
+          title: 'Road Traffic and Transport Amendment Act, 2008',
+          instrumentType: 'Amendment Act',
+          citation: 'Act 6 of 2008',
+          sourceUrl: 'https://namiblii.org/akn/na/act/2008/6/eng@2008-12-09',
+          status: 'in_force',
+          effectiveDate: '2008-12-09',
+          applicability: 'Amendments applicable to the Road Traffic and Transport Act, 1999.',
+          notes: 'Retained separately so applicable amendments remain visible and reviewable.',
+          createdByUserId: session.user.id,
+          updatedByUserId: session.user.id,
+        },
+      ]);
 
       let subscription: Awaited<ReturnType<typeof createSubscription>>;
       try {
@@ -256,6 +327,7 @@ export async function POST(request: NextRequest) {
         'TRANSPORT_ADMIN',
         'REQUESTER',
         'SUPERVISOR',
+        'FINANCE_BUDGET_REVIEWER',
         'CONTROL_ADMIN_OFFICER',
         'DEPUTY_DIRECTOR',
         'DIRECTOR',

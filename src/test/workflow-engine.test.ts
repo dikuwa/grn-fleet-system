@@ -142,9 +142,31 @@ describe('WorkflowEngine — Initialisation', () => {
   it('creates an active workflow instance for an existing request', async () => {
     const { WorkflowEngine } = await import('@/lib/workflow-engine');
     const mockDb = createMockDb();
-    mockDb.limit = vi.fn().mockResolvedValueOnce([{ id: 'request-1', scope: 'regional', officeId: null, departmentId: null, regionId: null }]);
+    mockDb.limit = vi.fn().mockResolvedValueOnce([{
+      id: 'request-1',
+      scope: 'regional',
+      officeId: null,
+      departmentId: null,
+      regionId: null,
+      requesterType: 'internal',
+      requestOrigin: 'internal',
+      financialImpact: 'none',
+      tripCategory: 'general',
+      programmeId: null,
+    }]);
     mockDb.orderBy = vi.fn()
-      .mockResolvedValueOnce([{ id: 'definition-1', tenantId: 'tenant-1', tripScope: 'regional', version: 1, regionId: null, officeId: null, departmentId: null }])
+      .mockResolvedValueOnce([{
+        id: 'definition-1',
+        tenantId: 'tenant-1',
+        tripScope: 'regional',
+        version: 1,
+        regionId: null,
+        officeId: null,
+        departmentId: null,
+        requestOrigin: null,
+        financialImpact: null,
+        tripCategory: null,
+      }])
       .mockResolvedValueOnce([{ definitionId: 'definition-1', stepOrder: 1, actionType: 'supervisor_approve', label: 'Supervisor Approval', assignedUserId: null }]);
     mockDb.returning = vi.fn().mockResolvedValue([{ ...MOCK_WORKFLOW_INSTANCE_SELECT, definitionId: 'definition-1' }]);
 

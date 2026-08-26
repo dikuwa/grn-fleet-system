@@ -9,6 +9,7 @@ import { Label, Textarea } from '@/components/ui/input';
 import { getApprovalPrimaryAction, isApprovalCommentRequired } from '@/lib/approval-decision';
 import { useToast } from '@/lib/use-toast';
 import { cn } from '@/lib/utils';
+import { StyledSelect } from '@/components/ui/styled-select';
 
 type DecisionResult = 'approved' | 'returned' | 'rejected';
 
@@ -35,10 +36,14 @@ export function ApprovalActionPanel({
   const { toast } = useToast();
   const primary = getApprovalPrimaryAction(actionType);
   const isAcknowledgement = actionType === 'acknowledge';
+  const isFinanceReview = actionType === 'finance_review';
   const [selected, setSelected] = useState<DecisionResult | null>(null);
   const [comment, setComment] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [financeOutcome, setFinanceOutcome] = useState('');
+  const [budgetReference, setBudgetReference] = useState('');
+  const [approvedAmount, setApprovedAmount] = useState('');
   const commentRequired = selected
     ? isApprovalCommentRequired(selected, stepRequiresComment)
     : stepRequiresComment;
@@ -49,13 +54,33 @@ export function ApprovalActionPanel({
       setError('A reason is required for this decision.');
       return;
     }
+    if (
+      isFinanceReview &&
+      selected === 'approved' &&
+      (!financeOutcome || budgetReference.trim().length < 3)
+    ) {
+      setError('Choose the Finance/Budget outcome and enter its governing budget reference.');
+      return;
+    }
     setIsSubmitting(true);
     setError('');
     try {
       const response = await fetch(`/api/approvals/${instanceId}/action`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ actionType: selected, comment: comment.trim() || null }),
+        body: JSON.stringify({
+          actionType: selected,
+          comment: comment.trim() || null,
+          financeEvidence:
+            isFinanceReview && selected === 'approved'
+              ? {
+                  outcome: financeOutcome,
+                  budgetReference: budgetReference.trim(),
+                  approvedAmount: approvedAmount || null,
+                  currency: 'NAD',
+                }
+              : undefined,
+        }),
       });
       const result = await response.json();
       if (!response.ok) throw new Error(result.error || 'Action failed');
@@ -77,7 +102,7 @@ export function ApprovalActionPanel({
       toast({ title: isAcknowledgement ? 'Acknowledgement failed' : 'Action failed', description: message, variant: 'error' });
       setIsSubmitting(false);
     }
-  }, [comment, instanceId, isAcknowledgement, primary.past, router, selected, stepRequiresComment, toast]);
+  }, [approvedAmount, budgetReference, comment, financeOutcome, instanceId, isAcknowledgement, isFinanceReview, primary.past, router, selected, stepRequiresComment, toast]);
 
   const decisionOptions: Array<{
     value: DecisionResult;
@@ -167,6 +192,57 @@ export function ApprovalActionPanel({
           ))}
         </fieldset>
 
+        {isFinanceReview && selected === 'approved' && (
+          <section className="border-border bg-muted/30 space-y-3 rounded-[10px] border p-4">
+            <div>
+              <h3 className="text-ink-950 text-sm font-semibold">Finance / Budget evidence</h3>
+              <p className="text-ink-500 mt-1 text-xs">
+                This evidence is stored with the governed workflow decision. Currency is NAD (N$).
+              </p>
+            </div>
+            <div>
+              <Label htmlFor="finance-outcome" required>Budget outcome</Label>
+              <StyledSelect
+                id="finance-outcome"
+                value={financeOutcome}
+                onChange={(event) => setFinanceOutcome(event.target.value)}
+                disabled={isSubmitting}
+              >
+                <option value="">Choose an outcome</option>
+                <option value="budget_available">Budget available</option>
+                <option value="funding_approved_with_conditions">Funding approved with conditions</option>
+                <option value="no_commitment_required">No budget commitment required</option>
+              </StyledSelect>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <div>
+                <Label htmlFor="budget-reference" required>Budget reference</Label>
+                <input
+                  id="budget-reference"
+                  value={budgetReference}
+                  onChange={(event) => setBudgetReference(event.target.value)}
+                  maxLength={120}
+                  disabled={isSubmitting}
+                  className="border-border bg-surface text-ink-950 mt-1 h-10 w-full rounded-[8px] border px-3 text-sm"
+                />
+              </div>
+              <div>
+                <Label htmlFor="approved-amount">Approved amount (N$)</Label>
+                <input
+                  id="approved-amount"
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={approvedAmount}
+                  onChange={(event) => setApprovedAmount(event.target.value)}
+                  disabled={isSubmitting}
+                  className="border-border bg-surface text-ink-950 mt-1 h-10 w-full rounded-[8px] border px-3 text-sm"
+                />
+              </div>
+            </div>
+          </section>
+        )}
+
         <div className="space-y-1.5">
           <Label htmlFor="approval-comment" required={commentRequired}>{isAcknowledgement ? 'Acknowledgement note' : 'Decision comment'}</Label>
           <Textarea
@@ -220,7 +296,14 @@ export function ApprovalActionPanel({
           <Button
             variant={selected === 'rejected' ? 'destructive' : 'primary'}
             onClick={() => void handleAction()}
-            disabled={!selected || isSubmitting || (commentRequired && !comment.trim())}
+            disabled={
+              !selected ||
+              isSubmitting ||
+              (commentRequired && !comment.trim()) ||
+              (isFinanceReview &&
+                selected === 'approved' &&
+                (!financeOutcome || budgetReference.trim().length < 3))
+            }
           >
             {isSubmitting && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
             {isSubmitting ? (isAcknowledgement ? 'Recording acknowledgement…' : 'Processing decision…') : isAcknowledgement ? 'Confirm Acknowledgement' : 'Confirm Decision'}

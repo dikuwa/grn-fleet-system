@@ -108,6 +108,10 @@ export function getApprovalPrimaryAction(actionType?: string | null) {
       return { label: 'Acknowledge', past: 'acknowledged' };
     case 'transport_review':
       return { label: 'Complete Review', past: 'reviewed' };
+    case 'finance_review':
+      return { label: 'Confirm Budget Review', past: 'budget reviewed' };
+    case 'organisational_approve':
+      return { label: 'Approve as Director / Sponsor', past: 'organisationally approved' };
     default:
       return { label: 'Approve', past: 'approved' };
   }
