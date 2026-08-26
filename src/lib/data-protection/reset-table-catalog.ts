@@ -104,6 +104,7 @@ export const RESETTABLE_TABLES = [
 export const PROTECTED_RESET_TABLES = [
   'account',
   'audit_events',
+  'legal_policy_register',
   'payment_submissions',
   'permissions',
   'platform_backups',

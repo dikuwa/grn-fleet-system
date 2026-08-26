@@ -28,6 +28,7 @@ describe('tenant reset table catalog coverage', () => {
     expect(RESET_TABLE_CLASSIFICATION.protected).toEqual(
       expect.arrayContaining([
         'audit_events',
+        'legal_policy_register',
         'tenant_reset_requests',
         'reset_request_steps',
         'platform_backups',

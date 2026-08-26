@@ -1,5 +1,8 @@
 import { validateGovernedActions } from '@/lib/workflow-builder';
 
+const GOVERNED_ORDER_ERROR =
+  'Approval gates must remain in the governed transport lifecycle order. Change assignees or optional stages instead of reordering system stages.';
+
 export type PersistedRoutingStep = {
   id: string;
   stepOrder: number;
@@ -80,7 +83,9 @@ export function validateWorkflowRouting(
   if (!governedOrder.ok) {
     return {
       ok: false,
-      error: governedOrder.error,
+      // Keep the publication API's established error contract while the
+      // builder provides more specific guidance for newly composed routes.
+      error: GOVERNED_ORDER_ERROR,
     };
   }
 
@@ -88,7 +93,7 @@ export function validateWorkflowRouting(
     (step) => persistedById.get(step.id)?.actionType === 'acknowledge',
   );
   if (acknowledgementSteps.length !== 1 || acknowledgementSteps[0]?.id !== ordered.at(-1)?.id) {
-    return { ok: false, error: 'Driver Acknowledgement must remain the final workflow step.' };
+    return { ok: false, error: GOVERNED_ORDER_ERROR };
   }
 
   const originalOrder = [...persistedSteps]
