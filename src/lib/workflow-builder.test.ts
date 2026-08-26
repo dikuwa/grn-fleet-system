@@ -13,9 +13,35 @@ describe('governed tenant workflow builder', () => {
       'controlled',
       'internal_organisational',
       'internal_budget_controlled',
+      'sponsored_external_organisational',
       'sponsored_external_first',
       'programme_transport',
     ]);
+  });
+
+  it('keeps sponsor-first external routing valid with or without a Finance gate', () => {
+    const withoutFinance = WORKFLOW_PRESETS.find(
+      (preset) => preset.id === 'sponsored_external_organisational',
+    );
+    const withFinance = WORKFLOW_PRESETS.find(
+      (preset) => preset.id === 'sponsored_external_first',
+    );
+
+    expect(withoutFinance?.actions).toEqual([
+      'organisational_approve',
+      'transport_review',
+      'authorise',
+      'acknowledge',
+    ]);
+    expect(withFinance?.actions).toEqual([
+      'organisational_approve',
+      'finance_review',
+      'transport_review',
+      'authorise',
+      'acknowledge',
+    ]);
+    expect(validateGovernedActions(withoutFinance?.actions).ok).toBe(true);
+    expect(validateGovernedActions(withFinance?.actions).ok).toBe(true);
   });
 
   it('allows origin-specific governance ordering while locking the operational tail', () => {

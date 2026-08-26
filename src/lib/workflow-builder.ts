@@ -15,6 +15,7 @@ export type WorkflowPresetId =
   | 'controlled'
   | 'internal_organisational'
   | 'internal_budget_controlled'
+  | 'sponsored_external_organisational'
   | 'sponsored_external_first'
   | 'programme_transport';
 export type AssignmentStrategy =
@@ -139,10 +140,22 @@ export const WORKFLOW_PRESETS = [
     ] as GovernedWorkflowAction[],
   },
   {
-    id: 'sponsored_external_first' as const,
-    label: 'Sponsored / External First',
+    id: 'sponsored_external_organisational' as const,
+    label: 'Sponsored / External — Sponsor First',
     description:
-      'The responsible Director or Sponsor acts first, followed by conditional budget review and transport governance.',
+      'The responsible Director or Sponsor acts first, followed directly by transport governance when Finance review does not apply.',
+    actions: [
+      'organisational_approve',
+      'transport_review',
+      'authorise',
+      'acknowledge',
+    ] as GovernedWorkflowAction[],
+  },
+  {
+    id: 'sponsored_external_first' as const,
+    label: 'Sponsored / External — Sponsor + Finance',
+    description:
+      'The responsible Director or Sponsor acts first, followed by Finance/Budget Review and transport governance.',
     actions: [
       'organisational_approve',
       'finance_review',

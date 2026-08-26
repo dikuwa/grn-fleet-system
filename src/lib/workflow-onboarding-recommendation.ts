@@ -68,13 +68,50 @@ export function recommendWorkflowRoutes(
   }
 
   if (input.acceptsExternalSponsoredRequests) {
-    routes.push({
-      name: 'Sponsored or external transport',
-      presetId: 'sponsored_external_first',
-      requestOrigin: 'external',
-      financialImpact: null,
-      rationale: 'Places the responsible Director / Sponsor decision before finance and transport review.',
-    });
+    if (input.budgetControl === 'always') {
+      routes.push({
+        name: 'Sponsored or external transport',
+        presetId: 'sponsored_external_first',
+        requestOrigin: 'external',
+        financialImpact: null,
+        rationale:
+          'Places the responsible Director / Sponsor first, then requires Finance / Budget Review before transport governance.',
+      });
+    } else if (input.budgetControl === 'conditional') {
+      routes.push({
+        name: 'Sponsored or external transport — no financial impact',
+        presetId: 'sponsored_external_organisational',
+        requestOrigin: 'external',
+        financialImpact: 'none',
+        rationale:
+          'Places the responsible Director / Sponsor first and skips Finance review when no financial impact is declared.',
+      });
+      routes.push({
+        name: 'Sponsored or external transport — within budget',
+        presetId: 'sponsored_external_first',
+        requestOrigin: 'external',
+        financialImpact: 'within_budget',
+        rationale:
+          'Places the responsible Director / Sponsor first, then records the applicable Finance / Budget Review.',
+      });
+      routes.push({
+        name: 'Sponsored or external transport — additional funding',
+        presetId: 'sponsored_external_first',
+        requestOrigin: 'external',
+        financialImpact: 'additional_funding',
+        rationale:
+          'Places the responsible Director / Sponsor first, then records funding approval before transport governance.',
+      });
+    } else {
+      routes.push({
+        name: 'Sponsored or external transport',
+        presetId: 'sponsored_external_organisational',
+        requestOrigin: 'external',
+        financialImpact: null,
+        rationale:
+          'Places the responsible Director / Sponsor first without adding a Finance gate that this organisation does not use.',
+      });
+    }
   }
 
   return routes;
