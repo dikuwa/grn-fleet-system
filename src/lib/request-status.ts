@@ -14,7 +14,12 @@ export interface StatusConfig {
 
 export const REQUEST_STATUSES: Record<string, StatusConfig> = {
   draft: { label: 'Draft', variant: 'secondary', order: 1 },
-  submitted: { label: 'Submitted', variant: 'pending', order: 2, description: 'Awaiting supervisor review' },
+  submitted: {
+    label: 'Submitted',
+    variant: 'pending',
+    order: 2,
+    description: 'Awaiting the first configured approval or review stage',
+  },
   supervisor_review: { label: 'Supervisor Review', variant: 'pending', order: 3, description: 'Being reviewed by the immediate supervisor' },
   organisational_review: { label: 'Director / Sponsor Approval', variant: 'pending', order: 3.2, description: 'Awaiting the responsible organisational authority' },
   finance_review: { label: 'Finance / Budget Review', variant: 'pending', order: 3.4, description: 'Funding and budget impact are being reviewed' },
