@@ -132,7 +132,7 @@ export const REGIONAL_WORKFLOW_STEPS = [
     requiresComment: false,
     reminderAfterHours: 1,
     escalationAfterHours: 4,
-    allowsEmergencyOverride: true,
+    allowsEmergencyOverride: false,
     separationDutyRole: null,
   },
   {
@@ -144,7 +144,7 @@ export const REGIONAL_WORKFLOW_STEPS = [
     requiresComment: false,
     reminderAfterHours: 2,
     escalationAfterHours: 8,
-    allowsEmergencyOverride: true,
+    allowsEmergencyOverride: false,
     separationDutyRole: null,
   },
   {
@@ -173,7 +173,7 @@ export const NATIONAL_WORKFLOW_STEPS = [
     requiresComment: false,
     reminderAfterHours: 2,
     escalationAfterHours: 8,
-    allowsEmergencyOverride: true,
+    allowsEmergencyOverride: false,
     separationDutyRole: null,
   },
   {
@@ -185,7 +185,7 @@ export const NATIONAL_WORKFLOW_STEPS = [
     requiresComment: true,
     reminderAfterHours: 2,
     escalationAfterHours: 8,
-    allowsEmergencyOverride: true,
+    allowsEmergencyOverride: false,
     separationDutyRole: null,
   },
   {

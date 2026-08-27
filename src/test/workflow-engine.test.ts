@@ -505,9 +505,9 @@ describe('WorkflowEngine — CRO and Director role audit', () => {
     const croPerms = RoleDefinitions.CHIEF_REGIONAL_OFFICER.permissions;
     const driverPerms = RoleDefinitions.DRIVER.permissions;
 
-    // CRO must have national authorisation
+    // CRO keeps normal national authorisation; the legacy emergency bypass is retired.
     expect(croPerms).toContain(Permissions.TRIP_AUTHORIZE_NATIONAL);
-    expect(croPerms).toContain(Permissions.TRIP_AUTHORIZE_EMERGENCY);
+    expect(croPerms).not.toContain(Permissions.TRIP_AUTHORIZE_EMERGENCY);
 
     // CRO must NOT have driver-specific permissions
     expect(croPerms).not.toContain(Permissions.DRIVER_LOG_CREATE);

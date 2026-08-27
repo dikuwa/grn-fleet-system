@@ -34,6 +34,9 @@ export const Permissions = {
   // Trip authorisation
   TRIP_AUTHORIZE_REGIONAL: 'trip:authorize-regional',
   TRIP_AUTHORIZE_NATIONAL: 'trip:authorize-national',
+  // Retained only so historical role/audit rows can still be decoded. Runtime
+  // authorization, active role definitions and permission-management surfaces
+  // deliberately exclude this retired workflow-bypass capability.
   TRIP_AUTHORIZE_EMERGENCY: 'trip:authorize-emergency',
 
   // Inspections
@@ -143,6 +146,10 @@ export function isPermissionAvailableInWorkspace(
   permission: PermissionCode,
   workspace: WorkspaceId,
 ) {
+  // Fail closed for legacy tenant/custom-role grants. The string remains a
+  // known PermissionCode only for backwards-compatible history decoding.
+  if (permission === Permissions.TRIP_AUTHORIZE_EMERGENCY) return false;
+
   const W = WorkspaceIds;
   const commonRequestPermissions: readonly PermissionCode[] = [
     Permissions.REQUEST_CREATE,
@@ -171,7 +178,6 @@ export function isPermissionAvailableInWorkspace(
       Permissions.VEHICLE_RELEASE_NATIONAL,
       Permissions.TRIP_AUTHORIZE_REGIONAL,
       Permissions.TRIP_AUTHORIZE_NATIONAL,
-      Permissions.TRIP_AUTHORIZE_EMERGENCY,
       Permissions.FILE_VIEW,
     ],
     [W.DRIVER]: [
@@ -581,7 +587,6 @@ export const RoleDefinitions = {
     isSystem: true,
     permissions: [
       Permissions.TRIP_AUTHORIZE_NATIONAL,
-      Permissions.TRIP_AUTHORIZE_EMERGENCY,
       Permissions.TRIP_VIEW,
       Permissions.REQUEST_VIEW,
     ],
@@ -621,10 +626,14 @@ export const RoleDefinitions = {
 } as const;
 
 /**
- * Get all default permission codes for seeding
+ * Get all default permission codes for seeding. Retired permissions are kept
+ * as constants for historical decoding but are not seeded into active role
+ * management data.
  */
 export function getAllPermissionCodes(): PermissionCode[] {
-  return Object.values(Permissions);
+  return Object.values(Permissions).filter(
+    (permission) => permission !== Permissions.TRIP_AUTHORIZE_EMERGENCY,
+  );
 }
 
 /**
@@ -675,11 +684,7 @@ export const PermissionGroups: Record<string, { label: string; permissions: Perm
   },
   authorisation: {
     label: 'Trip Authorisation',
-    permissions: [
-      Permissions.TRIP_AUTHORIZE_REGIONAL,
-      Permissions.TRIP_AUTHORIZE_NATIONAL,
-      Permissions.TRIP_AUTHORIZE_EMERGENCY,
-    ],
+    permissions: [Permissions.TRIP_AUTHORIZE_REGIONAL, Permissions.TRIP_AUTHORIZE_NATIONAL],
   },
   inspections: {
     label: 'Inspections',
