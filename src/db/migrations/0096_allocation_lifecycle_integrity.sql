@@ -16,6 +16,7 @@ AS $$
 DECLARE
   conflicting_id uuid;
   request_status text;
+  enters_live_reservation boolean;
 BEGIN
   -- Cancelled/released allocations do not reserve resources and must remain
   -- writable by lifecycle cleanup without re-entering allocation validation.
@@ -28,31 +29,42 @@ BEGIN
       USING ERRCODE = '23514';
   END IF;
 
-  -- Serialize by request before checking its lifecycle state. A concurrent
-  -- workflow return/reject either commits first (and this allocation is
-  -- rejected) or waits until this allocation finishes, then retires it.
+  -- Every live allocation write still uses the request advisory lock so a
+  -- workflow return/reject and an allocation mutation cannot pass each other.
   PERFORM pg_advisory_xact_lock(hashtextextended('allocation-request:' || NEW.request_id::text, 0));
 
-  SELECT status
-  INTO request_status
-  FROM transport_requests
-  WHERE id = NEW.request_id
-  FOR UPDATE;
+  -- Validate request lifecycle when a reservation is first created, moved to a
+  -- different request, or resurrected from a non-live state. Ordinary progress
+  -- of an existing reservation (for example confirmed -> issued after final
+  -- authorisation) must remain legal even though the request has advanced past
+  -- Transport Review by then.
+  enters_live_reservation :=
+    TG_OP = 'INSERT'
+    OR OLD.request_id IS DISTINCT FROM NEW.request_id
+    OR OLD.state NOT IN ('provisional', 'confirmed', 'issued');
 
-  IF request_status IS NULL THEN
-    RAISE EXCEPTION 'allocation_request_not_found'
-      USING ERRCODE = '23503';
-  END IF;
+  IF enters_live_reservation THEN
+    SELECT status
+    INTO request_status
+    FROM transport_requests
+    WHERE id = NEW.request_id
+    FOR UPDATE;
 
-  IF request_status NOT IN (
-    'approved',
-    'under_review',
-    'transport_review',
-    'release_pending',
-    'vehicle_allocated'
-  ) THEN
-    RAISE EXCEPTION 'allocation_request_not_allocatable:%', request_status
-      USING ERRCODE = '23514';
+    IF request_status IS NULL THEN
+      RAISE EXCEPTION 'allocation_request_not_found'
+        USING ERRCODE = '23503';
+    END IF;
+
+    IF request_status NOT IN (
+      'approved',
+      'under_review',
+      'transport_review',
+      'release_pending',
+      'vehicle_allocated'
+    ) THEN
+      RAISE EXCEPTION 'allocation_request_not_allocatable:%', request_status
+        USING ERRCODE = '23514';
+    END IF;
   END IF;
 
   PERFORM pg_advisory_xact_lock(hashtextextended('allocation-vehicle:' || NEW.vehicle_id::text, 0));
