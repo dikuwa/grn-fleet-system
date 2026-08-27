@@ -13,6 +13,7 @@ import {
   programmeOwnershipCondition,
   resolveProgrammeAccess,
 } from '@/lib/programme-access';
+import { programmeEndDateCurrentSql } from '@/lib/programme-availability';
 import { runAtomicMutations } from '@/lib/db-atomic';
 
 /**
@@ -64,7 +65,7 @@ export async function GET(request: NextRequest) {
     if (selectable) {
       conditions.push(sql`${programmes.status} IN ('approved', 'published')`);
       conditions.push(sql`${programmes.archivedAt} IS NULL`);
-      conditions.push(sql`(${programmes.endDate} IS NULL OR ${programmes.endDate} >= now())`);
+      conditions.push(programmeEndDateCurrentSql(programmes.endDate));
     } else if (!access.tenantWide) {
       // The Personal workspace is explicitly own-scope. Do not expose another
       // requester's drafts, review notes, rejected programmes or history.
