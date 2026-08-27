@@ -4,6 +4,7 @@ import { tripAmendments, tripAuthorities, trips } from '@/db/schema/trips';
 
 export const DRIVER_REACCEPTANCE_AMENDMENT_TYPES = [
   'vehicle_replacement',
+  'driver_replacement',
   'date_extension',
   'route_change',
   'purpose_clarification',
