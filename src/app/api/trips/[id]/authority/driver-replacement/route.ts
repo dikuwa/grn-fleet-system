@@ -7,6 +7,7 @@ import {
   requireAnyPermission,
   requireDashboardAction,
   requireRequestAuth,
+  type AuthSession,
 } from '@/lib/auth-helpers';
 import { decidePostAuthorisationDriverReplacement } from '@/lib/driver-authority-replacement';
 import { Permissions } from '@/lib/permissions';
@@ -16,9 +17,13 @@ const AUTHORISER_PERMISSIONS = [
   Permissions.TRIP_AUTHORIZE_NATIONAL,
 ] as const;
 
+type AuthoriserResult =
+  | { ok: true; session: AuthSession }
+  | { ok: false; error: NextResponse };
+
 async function requireDriverReplacementAuthoriser(
   request: NextRequest,
-): Promise<{ ok: true; session: Awaited<ReturnType<typeof requireRequestAuth>> extends infer T ? T extends { ok: true; session: infer S } ? S : never : never } | { ok: false; error: NextResponse }> {
+): Promise<AuthoriserResult> {
   const auth = await requireRequestAuth(request);
   if (!auth.ok) return auth;
   const { session } = auth;
