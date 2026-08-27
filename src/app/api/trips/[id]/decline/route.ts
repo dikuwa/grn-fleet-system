@@ -13,9 +13,9 @@ import { SystemRoles, WorkspaceIds } from '@/lib/workspaces';
  * Driver cannot perform the already-authorised assignment.
  *
  * This is deliberately not a request cancellation and not a workflow rejection.
- * The approved trip remains at driver acknowledgement while the current driver
- * is removed from the confirmed allocation. Transport Administration can then
- * assign another compliant driver without replaying the approval chain.
+ * The request remains at driver acknowledgement. The authorised allocation and
+ * Trip Authority driver stay aligned until Transport nominates a replacement
+ * and the revised authority receives the required approval.
  */
 export async function POST(
   request: NextRequest,
@@ -104,50 +104,41 @@ export async function POST(
 
     const now = new Date();
     const auditSequence = Date.now();
+    const declineSnapshot = {
+      employeeId: employee.id,
+      userId: session.user.id,
+      reason,
+      declinedAt: now.toISOString(),
+    };
+
     await db.execute(sql`
-      WITH allocation_claim AS (
-        UPDATE vehicle_allocations va
-        SET driver_employee_id = NULL,
-            override_reason = ${`Driver unable to perform: ${reason}`},
-            version = va.version + 1,
+      WITH authority_claim AS (
+        UPDATE trip_authorities ta
+        SET data = COALESCE(ta.data, '{}'::jsonb) || jsonb_build_object(
+              'driverDecline', ${JSON.stringify(declineSnapshot)}::jsonb
+            ),
             updated_at = ${now}
-        WHERE va.id = ${context.allocationId}::uuid
-          AND va.state = 'confirmed'
-          AND va.driver_employee_id = ${employee.id}::uuid
+        WHERE ta.id = ${context.authorityId}::uuid
+          AND ta.tenant_id = ${session.tenantId}::uuid
+          AND ta.status = 'awaiting_driver_acceptance'
           AND EXISTS (
             SELECT 1
             FROM trips t
+            INNER JOIN vehicle_allocations va ON va.id = t.allocation_id
             INNER JOIN transport_requests tr ON tr.id = t.request_id
-            INNER JOIN trip_authorities ta ON ta.trip_id = t.id
             WHERE t.id = ${id}::uuid
               AND t.tenant_id = ${session.tenantId}::uuid
               AND t.status = 'pending'
               AND t.issued_at IS NULL
               AND t.driver_acknowledged_at IS NULL
+              AND va.id = ${context.allocationId}::uuid
+              AND va.state = 'confirmed'
+              AND va.driver_employee_id = ${employee.id}::uuid
               AND tr.tenant_id = ${session.tenantId}::uuid
               AND tr.status = 'driver_acknowledgement_pending'
-              AND ta.tenant_id = ${session.tenantId}::uuid
-              AND ta.status = 'awaiting_driver_acceptance'
+              AND tr.assigned_driver_employee_id = ${employee.id}::uuid
           )
-        RETURNING va.id, va.request_id
-      ),
-      request_updated AS (
-        UPDATE transport_requests tr
-        SET assigned_driver_employee_id = NULL, updated_at = ${now}
-        FROM allocation_claim ac
-        WHERE tr.id = ac.request_id
-          AND tr.tenant_id = ${session.tenantId}::uuid
-          AND tr.status = 'driver_acknowledgement_pending'
-          AND tr.assigned_driver_employee_id = ${employee.id}::uuid
-        RETURNING tr.id
-      ),
-      request_driver_updated AS (
-        UPDATE request_drivers rd
-        SET is_confirmed = false
-        FROM request_updated ru
-        WHERE rd.request_id = ru.id
-          AND rd.employee_id = ${employee.id}::uuid
-        RETURNING rd.id
+        RETURNING ta.id
       ),
       audit_inserted AS (
         INSERT INTO audit_events (
@@ -165,20 +156,28 @@ export async function POST(
           ${id}::uuid,
           ${`Assigned driver could not perform request ${context.requestReference}`},
           ${reason},
-          jsonb_build_object('allocationId', ${context.allocationId}::text, 'driverEmployeeId', ${employee.id}::text),
-          jsonb_build_object('allocationId', ${context.allocationId}::text, 'driverEmployeeId', NULL, 'reassignmentRequired', true),
+          jsonb_build_object(
+            'allocationId', ${context.allocationId}::text,
+            'driverEmployeeId', ${employee.id}::text,
+            'authorityId', ${context.authorityId}::text
+          ),
+          jsonb_build_object(
+            'allocationId', ${context.allocationId}::text,
+            'driverEmployeeId', ${employee.id}::text,
+            'authorityId', ${context.authorityId}::text,
+            'driverDeclined', true,
+            'reassignmentRequired', true
+          ),
           'web'
-        FROM request_updated
+        FROM authority_claim
         RETURNING id
       )
       SELECT CAST(CASE
-        WHEN (SELECT count(*) FROM allocation_claim) = 1
-         AND (SELECT count(*) FROM request_updated) = 1
+        WHEN (SELECT count(*) FROM authority_claim) = 1
          AND (SELECT count(*) FROM audit_inserted) = 1
         THEN '1'
         ELSE 'atomic_driver_decline_failed_'
-          || (SELECT count(*) FROM allocation_claim)::text
-          || (SELECT count(*) FROM request_updated)::text
+          || (SELECT count(*) FROM authority_claim)::text
           || (SELECT count(*) FROM audit_inserted)::text
       END AS integer) AS committed
     `);

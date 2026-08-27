@@ -9,6 +9,7 @@ import {
   type EmployeeSearchOption,
 } from '@/components/ui/employee-combobox';
 import { AlertTriangle, CheckCircle2, Loader2, User, UserPlus } from 'lucide-react';
+import { useToast } from '@/lib/use-toast';
 
 interface DriverCompliance {
   status:
@@ -80,6 +81,7 @@ function complianceBadge(driver: DriverEligibility) {
 
 export function DriverAssignment({ allocationId, currentDriverId }: DriverAssignmentProps) {
   const router = useRouter();
+  const { toast } = useToast();
   const [selectedDriverId, setSelectedDriverId] = useState(currentDriverId || '');
   const [selectedOption, setSelectedOption] = useState<EmployeeSearchOption | null>(null);
   const [currentEligibility, setCurrentEligibility] = useState<DriverEligibility | null>(null);
@@ -192,6 +194,28 @@ export function DriverAssignment({ allocationId, currentDriverId }: DriverAssign
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Failed to assign driver');
+
+      if (data.pendingApproval) {
+        toast({
+          title: 'Replacement awaiting authority approval',
+          description:
+            data.message ||
+            'The current driver remains assigned until the revised Trip Authority is approved.',
+        });
+        if (currentDriverId && currentEligibility) {
+          setSelectedDriverId(currentDriverId);
+          setSelectedEligibility(currentEligibility);
+          setSelectedOption(toEmployeeOption(currentEligibility));
+        }
+      } else {
+        toast({
+          title: currentDriverId ? 'Driver replaced' : 'Driver assigned',
+          description: currentDriverId
+            ? 'The live allocation has been updated to the replacement driver.'
+            : 'The driver assignment has been saved.',
+          variant: 'success',
+        });
+      }
       setReplacementReason('');
       setUnassignmentReason('');
       router.refresh();
@@ -200,7 +224,7 @@ export function DriverAssignment({ allocationId, currentDriverId }: DriverAssign
     } finally {
       setIsSaving(false);
     }
-  }, [allocationId, currentDriverId, replacementReason, selectedDriverId, selectedEligibility, router]);
+  }, [allocationId, currentDriverId, currentEligibility, replacementReason, selectedDriverId, selectedEligibility, router, toast]);
 
   const handleUnassign = useCallback(async () => {
     if (!unassignmentReason.trim()) {
@@ -223,13 +247,18 @@ export function DriverAssignment({ allocationId, currentDriverId }: DriverAssign
       setSelectedEligibility(null);
       setReplacementReason('');
       setUnassignmentReason('');
+      toast({
+        title: 'Driver removed',
+        description: 'The pre-authorisation driver assignment has been removed.',
+        variant: 'success',
+      });
       router.refresh();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to unassign driver');
     } finally {
       setIsSaving(false);
     }
-  }, [allocationId, router, unassignmentReason]);
+  }, [allocationId, router, toast, unassignmentReason]);
 
   const assignmentBlocked = Boolean(
     !selectedDriverId ||
@@ -314,7 +343,7 @@ export function DriverAssignment({ allocationId, currentDriverId }: DriverAssign
               className="w-full resize-y rounded-[8px] border border-border bg-background px-3 py-2 text-sm text-ink-950 outline-none transition-colors placeholder:text-ink-400 focus:border-ink-400 focus:ring-2 focus:ring-ink-200"
             />
             <p className="text-xs text-ink-500">
-              The reason is saved to the audit trail and shared with the affected driver.
+              The reason is saved to the audit trail and shared with the affected driver. Once a Trip Authority exists, nominate a replacement instead of removing the authorised driver directly.
             </p>
           </div>
         </div>
@@ -363,7 +392,7 @@ export function DriverAssignment({ allocationId, currentDriverId }: DriverAssign
               className="w-full resize-y rounded-[8px] border border-border bg-background px-3 py-2 text-sm text-ink-950 outline-none transition-colors placeholder:text-ink-400 focus:border-ink-400 focus:ring-2 focus:ring-ink-200"
             />
             <p className="text-xs text-ink-500">
-              This reason is recorded in the audit trail and shared with the affected driver.
+              This reason is recorded in the audit trail. If final authorisation already exists, the nomination stays pending until an authorised officer approves a revised Trip Authority.
             </p>
           </div>
         )}
