@@ -7,6 +7,7 @@ import { tenants } from '@/db/schema/tenants';
 import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { executeApprovedTenantOperationalReset } from '@/lib/data-protection/reset-service';
+import { reconcileTenantOperationalResetState } from '@/lib/data-reset/post-operational-reset';
 import { normalizeResetSpec } from '@/lib/reset-catalog';
 import { resetExecutionOwner } from '@/lib/reset-workflow';
 import {
@@ -175,6 +176,23 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       return NextResponse.json({ error: 'Reset request not found.' }, { status: 404 });
     }
 
+    let postResetReconciliation:
+      | Awaited<ReturnType<typeof reconcileTenantOperationalResetState>>
+      | null = null;
+    if (result.result === 'completed' && resetSpec.categories.includes('operations')) {
+      postResetReconciliation = await reconcileTenantOperationalResetState(result.tenantId);
+      await recordAuditEvent({
+        tenantId: result.tenantId,
+        actorUserId: session.user.id,
+        action: 'reset_request.operational_state_reconciled',
+        entityType: 'reset_request',
+        entityId: id,
+        summary:
+          'Operational reset postconditions reconciled notifications, vehicle status and driver availability.',
+        after: postResetReconciliation,
+      });
+    }
+
     if (result.tenantOrigin) {
       const failureNotes =
         result.result === 'failed'
@@ -206,7 +224,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (result.result === 'completed') revalidatePath('/dashboard', 'layout');
 
     return NextResponse.json(
-      { success: result.result === 'completed', data: result },
+      {
+        success: result.result === 'completed',
+        data: { ...result, postResetReconciliation },
+      },
       { status: result.result === 'completed' ? 200 : 500 },
     );
   } catch (error) {
