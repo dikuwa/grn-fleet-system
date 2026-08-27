@@ -7,7 +7,7 @@
 
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { trips, vehicleAllocations } from '@/db/schema/trips';
+import { tripAuthorities, trips, vehicleAllocations } from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
 import {
   employees,
@@ -445,11 +445,19 @@ export async function DELETE(
         requestReference: transportRequests.reference,
         tripIssuedAt: trips.issuedAt,
         tripDriverAcknowledgedAt: trips.driverAcknowledgedAt,
+        authorityId: tripAuthorities.id,
       })
       .from(vehicleAllocations)
       .innerJoin(vehicles, eq(vehicleAllocations.vehicleId, vehicles.id))
       .innerJoin(transportRequests, eq(vehicleAllocations.requestId, transportRequests.id))
       .leftJoin(trips, and(eq(trips.allocationId, vehicleAllocations.id), eq(trips.tenantId, session.tenantId)))
+      .leftJoin(
+        tripAuthorities,
+        and(
+          eq(tripAuthorities.tripId, trips.id),
+          eq(tripAuthorities.tenantId, session.tenantId),
+        ),
+      )
       .where(and(
         eq(vehicleAllocations.id, id),
         eq(vehicles.tenantId, session.tenantId),
@@ -466,6 +474,15 @@ export async function DELETE(
         {
           error:
             'The primary driver cannot be removed after driver acknowledgement or physical vehicle issue. Cancel the unissued trip or use the formal in-trip handover process after departure.',
+        },
+        { status: 409 },
+      );
+    }
+    if (allocation.authorityId) {
+      return NextResponse.json(
+        {
+          error:
+            'This driver is recorded on an issued Trip Authority and cannot be removed directly. Nominate the replacement driver instead; the current assignment remains in force until the revised authority is approved.',
         },
         { status: 409 },
       );
