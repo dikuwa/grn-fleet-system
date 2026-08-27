@@ -197,11 +197,92 @@ export async function POST(
             )
           RETURNING request_id
         ),
+        workflow_context AS (
+          SELECT
+            wi.id AS previous_instance_id,
+            wi.request_id,
+            wi.definition_id,
+            wi.definition_version,
+            wi.status AS previous_status,
+            wi.routing_context
+          FROM allocation_claim ac
+          JOIN transport_requests tr
+            ON tr.id = ac.request_id
+           AND tr.tenant_id = ${session.tenantId}::uuid
+          JOIN workflow_instances wi
+            ON wi.id = tr.workflow_instance_id
+           AND wi.request_id = tr.id
+        ),
+        transport_review_step AS (
+          SELECT
+            wc.previous_instance_id,
+            wc.request_id,
+            wc.definition_id,
+            wc.definition_version,
+            wc.previous_status,
+            wc.routing_context,
+            ws.step_order
+          FROM workflow_context wc
+          JOIN workflow_steps ws
+            ON ws.definition_id = wc.definition_id
+           AND ws.action_type = 'transport_review'
+          ORDER BY ws.step_order
+          LIMIT 1
+        ),
+        workflow_retire AS (
+          UPDATE workflow_instances wi
+          SET status = 'cancelled',
+              current_assigned_user_id = NULL,
+              current_assignment_meta = '{}'::jsonb,
+              updated_at = ${now}
+          FROM workflow_context wc
+          WHERE wi.id = wc.previous_instance_id
+            AND wi.status = 'active'
+          RETURNING wi.id
+        ),
+        workflow_continuation AS (
+          INSERT INTO workflow_instances (
+            request_id,
+            definition_id,
+            definition_version,
+            current_step_order,
+            status,
+            current_assigned_user_id,
+            current_assignment_meta,
+            routing_context,
+            created_at,
+            updated_at
+          )
+          SELECT
+            trs.request_id,
+            trs.definition_id,
+            trs.definition_version,
+            trs.step_order,
+            'active',
+            NULL,
+            '{}'::jsonb,
+            trs.routing_context,
+            ${now},
+            ${now}
+          FROM transport_review_step trs
+          WHERE trs.previous_status <> 'active'
+             OR EXISTS (
+               SELECT 1
+               FROM workflow_retire wr
+               WHERE wr.id = trs.previous_instance_id
+             )
+          RETURNING id, request_id
+        ),
         request_reset AS (
           UPDATE transport_requests tr
           SET status = 'transport_review',
+              workflow_instance_id = COALESCE(
+                (SELECT wc.id FROM workflow_continuation wc WHERE wc.request_id = tr.id LIMIT 1),
+                tr.workflow_instance_id
+              ),
               assigned_driver_employee_id = NULL,
               assigned_driver_external_party_id = NULL,
+              version = version + 1,
               updated_at = ${now}
           FROM allocation_claim ac
           WHERE tr.id = ac.request_id
@@ -210,7 +291,15 @@ export async function POST(
               'approved', 'under_review', 'transport_review', 'release_pending',
               'vehicle_allocated', 'authorised'
             )
-          RETURNING tr.id
+            AND (
+              tr.workflow_instance_id IS NULL
+              OR EXISTS (
+                SELECT 1
+                FROM workflow_continuation wc
+                WHERE wc.request_id = tr.id
+              )
+            )
+          RETURNING tr.id, tr.workflow_instance_id
         ),
         drivers_reset AS (
           UPDATE request_drivers rd
@@ -260,12 +349,14 @@ export async function POST(
             ${cancellationReason},
             jsonb_build_object(
               'state', ${allocation.state},
-              'driverEmployeeId', ${allocation.driverEmployeeId}
+              'driverEmployeeId', ${allocation.driverEmployeeId},
+              'workflowInstanceId', (SELECT previous_instance_id FROM workflow_context LIMIT 1)
             ),
             jsonb_build_object(
               'state', 'cancelled',
               'requestStatus', 'transport_review',
-              'driverEmployeeId', NULL
+              'driverEmployeeId', NULL,
+              'workflowInstanceId', (SELECT workflow_instance_id FROM request_reset LIMIT 1)
             ),
             'web'
           FROM request_reset
@@ -285,7 +376,9 @@ export async function POST(
     } catch (mutationError) {
       if (String(mutationError).includes('atomic_allocation_cancel_failed')) {
         return NextResponse.json(
-          { error: 'The allocation or trip changed while cancellation was being saved. Refresh and review the latest state.' },
+          {
+            error: 'The allocation, request, or workflow changed while cancellation was being saved. Refresh and review the latest state.',
+          },
           { status: 409 },
         );
       }
