@@ -25,6 +25,7 @@ import { requestDrivers, transportRequests } from '@/db/schema/requests';
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
 import { createScopedNotifications } from '@/lib/notification-service';
 import { WorkspaceIds } from '@/lib/workspaces';
+import { requestPostAuthorisationDriverReplacement } from '@/lib/driver-authority-replacement';
 
 const LIVE_ALLOCATION_STATES = ['provisional', 'confirmed'] as const;
 
@@ -99,6 +100,19 @@ export async function PATCH(
     if (cleanReason.length > 500) {
       return NextResponse.json({ error: 'Driver replacement reason must be 500 characters or fewer' }, { status: 422 });
     }
+
+    // Once final authorisation has produced a Trip Authority, a different
+    // primary driver is a governance change rather than an ordinary allocation
+    // edit. The helper creates a pending, versioned authority amendment and
+    // deliberately leaves the live allocation/request driver untouched until
+    // that amendment receives an authorised decision.
+    const governedReplacement = await requestPostAuthorisationDriverReplacement({
+      allocationId: id,
+      driverEmployeeId,
+      reason: cleanReason,
+      session,
+    });
+    if (governedReplacement.handled) return governedReplacement.response;
 
     const [driver] = await db
       .select({
