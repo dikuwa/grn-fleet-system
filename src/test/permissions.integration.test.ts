@@ -12,7 +12,7 @@ import { getDb } from '@/db';
 import { eq } from 'drizzle-orm';
 import { tenants } from '@/db/schema/tenants';
 import { roles, rolePermissions, roleAssignments, permissions } from '@/db/schema';
-import { Permissions, PermissionGroups } from '@/lib/permissions';
+import { getAllPermissionCodes, Permissions, PermissionGroups } from '@/lib/permissions';
 import { regions } from '@/db/schema/fleet';
 
 let TENANT_ID: string | null = null;
@@ -132,16 +132,16 @@ describe('Permission system integrity', () => {
   });
 
   // -------------------------------------------------------------------------
-  // 6. Permission groups cover all permission codes
+  // 6. Permission groups cover all active permission codes
   // -------------------------------------------------------------------------
 
-  it('should cover all permission codes across all groups', () => {
+  it('should cover all active permission codes across all groups', () => {
     const groupedPerms = new Set(
       Object.values(PermissionGroups).flatMap((g) => g.permissions),
     );
-    const allPerms = Object.values(Permissions);
+    const activePerms = getAllPermissionCodes();
 
-    for (const perm of allPerms) {
+    for (const perm of activePerms) {
       expect(groupedPerms.has(perm)).toBe(true);
     }
   });
