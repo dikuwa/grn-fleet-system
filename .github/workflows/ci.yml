@@ -101,8 +101,8 @@ jobs:
         env:
           DATABASE_URL: ${{ env.DATABASE_URL }}
 
-      - name: Seed database
-        run: pnpm db:seed
+      - name: Seed database with explicit demo fixtures
+        run: pnpm db:seed:demo
         env:
           DATABASE_URL: ${{ env.DATABASE_URL }}
 
