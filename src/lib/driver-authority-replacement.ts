@@ -66,6 +66,7 @@ type EligibleDriver = {
   employeeNumber: string | null;
   profileId: string;
   licenceId: string;
+  licenceNumber: string;
   licenceClass: string;
   licenceExpiry: string;
   compliance: ReturnType<typeof calculateDriverCompliance>;
@@ -174,6 +175,7 @@ async function loadEligibleReplacementDriver(input: {
       driverStatus: driverProfiles.driverStatus,
       profileAvailability: driverProfiles.availabilityStatus,
       licenceId: driverLicences.id,
+      licenceNumber: driverLicences.licenceNumber,
       licenceStatus: driverLicences.verificationStatus,
       licenceExpiry: driverLicences.expiryDate,
       licenceClass: driverLicences.licenceClass,
@@ -298,6 +300,7 @@ async function loadEligibleReplacementDriver(input: {
       employeeNumber: driver.employeeNumber,
       profileId: driver.profileId,
       licenceId: driver.licenceId,
+      licenceNumber: driver.licenceNumber,
       licenceClass: driver.licenceClass,
       licenceExpiry: driver.licenceExpiry,
       compliance,
@@ -305,12 +308,6 @@ async function loadEligibleReplacementDriver(input: {
   };
 }
 
-/**
- * Intercepts only a post-authorisation driver change. Before Trip Authority
- * creation the caller continues through the ordinary allocation assignment
- * path. Once an authority exists, a different primary driver becomes a pending
- * immutable authority amendment instead of mutating the live allocation.
- */
 export async function requestPostAuthorisationDriverReplacement(input: {
   allocationId: string;
   driverEmployeeId: string;
@@ -366,9 +363,6 @@ export async function requestPostAuthorisationDriverReplacement(input: {
       ),
     };
   }
-
-  // Reassigning the same authority driver after a pre-acceptance unassignment
-  // does not change the signed authority and can safely use the normal path.
   if (currentPrimary.employeeId === input.driverEmployeeId) return { handled: false };
 
   const eligible = await loadEligibleReplacementDriver({
@@ -783,7 +777,7 @@ export async function decidePostAuthorisationDriverReplacement(input: {
           ${eligible.driver.employeeId}::uuid,
           'primary',
           ${eligible.driver.employeeNumber},
-          ${maskLicenceNumber(eligible.driver.licenceId)},
+          ${maskLicenceNumber(eligible.driver.licenceNumber)},
           ${eligible.driver.licenceClass},
           ${licenceExpiry},
           ${record.amendmentReason},
