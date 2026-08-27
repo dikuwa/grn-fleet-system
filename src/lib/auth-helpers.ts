@@ -216,6 +216,11 @@ export async function hasPermission(
   session: AuthSession,
   permissionCode: PermissionCode,
 ): Promise<boolean> {
+  // Legacy emergency workflow override is retired. Keep the permission code
+  // readable for historical role/audit records, but never authorize it at
+  // runtime — including for tenant roles that still carry an old stored grant.
+  if (permissionCode === Permissions.TRIP_AUTHORIZE_EMERGENCY) return false;
+
   const context = await loadRoleContext(session.user.id, session.tenantId);
   if (!context) return false;
   if (!context.permissionCodes.includes(permissionCode)) return false;
@@ -225,8 +230,10 @@ export async function hasPermission(
 export async function getSessionPermissions(session: AuthSession): Promise<PermissionCode[]> {
   const context = await loadRoleContext(session.user.id, session.tenantId);
   if (!context) return [];
-  return context.permissionCodes.filter((permission) =>
-    isPermissionAvailableInWorkspace(permission, context.activeWorkspace),
+  return context.permissionCodes.filter(
+    (permission) =>
+      permission !== Permissions.TRIP_AUTHORIZE_EMERGENCY &&
+      isPermissionAvailableInWorkspace(permission, context.activeWorkspace),
   );
 }
 
