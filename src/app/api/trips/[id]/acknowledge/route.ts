@@ -101,6 +101,7 @@ export async function POST(
         workflowInstanceId: transportRequests.workflowInstanceId,
         authorityId: tripAuthorities.id,
         authorityStatus: tripAuthorities.status,
+        authorityData: tripAuthorities.data,
         validUntil: tripAuthorities.validUntil,
         requiredLicenceClass: vehicles.requiredLicenceClass,
         professionalAuthorisationRequired: vehicles.professionalAuthorisationRequired,
@@ -136,6 +137,24 @@ export async function POST(
         {
           error:
             'The live driver assignment does not match the current Trip Authority. Transport Administration must complete the driver-replacement authority amendment before acknowledgement.',
+        },
+        { status: 409 },
+      );
+    }
+
+    const authorityData = trip.authorityData as Record<string, unknown> | null;
+    const declineValue = authorityData?.driverDecline;
+    const declineRecord =
+      declineValue && typeof declineValue === 'object' && !Array.isArray(declineValue)
+        ? (declineValue as Record<string, unknown>)
+        : null;
+    const declinedEmployeeId =
+      typeof declineRecord?.employeeId === 'string' ? declineRecord.employeeId : null;
+    if (declinedEmployeeId === trip.driverEmployeeId) {
+      return NextResponse.json(
+        {
+          error:
+            'You already declined this authorised assignment. Transport Administration must nominate a replacement and the revised Trip Authority must be approved before acknowledgement can continue.',
         },
         { status: 409 },
       );
