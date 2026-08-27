@@ -35,12 +35,32 @@ describe('post-authorisation driver replacement governance', () => {
     expect(deleteRoute).toContain('Nominate the replacement driver instead');
   });
 
+  it('records driver decline without clearing the authorised live-driver snapshots', () => {
+    const declineRoute = source('src/app/api/trips/[id]/decline/route.ts');
+
+    expect(declineRoute).toContain('authority_claim');
+    expect(declineRoute).toContain("'driverDecline'");
+    expect(declineRoute).not.toContain('SET driver_employee_id = NULL');
+    expect(declineRoute).not.toContain('SET assigned_driver_employee_id = NULL');
+    expect(declineRoute).toContain("'driver_assignment_declined'");
+    expect(declineRoute).toContain("'reassignmentRequired', true");
+  });
+
   it('fails acknowledgement closed when the live allocation driver differs from the authority primary driver', () => {
     const acknowledgeRoute = source('src/app/api/trips/[id]/acknowledge/route.ts');
 
     expect(acknowledgeRoute).toContain("eq(tripAuthorisedDrivers.driverType, 'primary')");
     expect(acknowledgeRoute).toContain('trip.authorityDriverEmployeeId !== trip.driverEmployeeId');
     expect(acknowledgeRoute).toContain('does not match the current Trip Authority');
+  });
+
+  it('prevents a driver from acknowledging the same authority after recording a decline', () => {
+    const acknowledgeRoute = source('src/app/api/trips/[id]/acknowledge/route.ts');
+
+    expect(acknowledgeRoute).toContain('authorityData: tripAuthorities.data');
+    expect(acknowledgeRoute).toContain('authorityData?.driverDecline');
+    expect(acknowledgeRoute).toContain('declinedEmployeeId === trip.driverEmployeeId');
+    expect(acknowledgeRoute).toContain('You already declined this authorised assignment');
   });
 
   it('approves a replacement only by versioning the authority and synchronising all live driver snapshots', () => {
