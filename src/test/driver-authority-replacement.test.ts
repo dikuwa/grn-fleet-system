@@ -23,6 +23,18 @@ describe('post-authorisation driver replacement governance', () => {
     expect(allocationRoute).toContain('if (governedReplacement.handled) return governedReplacement.response;');
   });
 
+  it('requires a governed replacement instead of direct driver removal once a Trip Authority exists', () => {
+    const allocationRoute = source('src/app/api/allocations/[id]/driver/route.ts');
+    const deleteRoute = allocationRoute.slice(allocationRoute.indexOf('export async function DELETE'));
+    const authorityGuard = deleteRoute.indexOf('if (allocation.authorityId)');
+    const unassignmentMutation = deleteRoute.indexOf('SET driver_employee_id = NULL');
+
+    expect(deleteRoute).toContain('authorityId: tripAuthorities.id');
+    expect(authorityGuard).toBeGreaterThan(-1);
+    expect(unassignmentMutation).toBeGreaterThan(authorityGuard);
+    expect(deleteRoute).toContain('Nominate the replacement driver instead');
+  });
+
   it('fails acknowledgement closed when the live allocation driver differs from the authority primary driver', () => {
     const acknowledgeRoute = source('src/app/api/trips/[id]/acknowledge/route.ts');
 
