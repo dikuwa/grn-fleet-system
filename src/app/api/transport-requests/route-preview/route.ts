@@ -7,6 +7,7 @@ import { Permissions } from '@/lib/permissions';
 import { parseRequestRoutingInput } from '@/lib/request-routing-input';
 import { resolveWorkflowRoute } from '@/lib/workflow-route-resolver';
 import { normalizeAssignmentConfig } from '@/lib/workflow-builder';
+import { programmeEndDateCurrentSql } from '@/lib/programme-availability';
 
 export async function POST(request: NextRequest) {
   const auth = await requireRequestAuth(request);
@@ -34,7 +35,7 @@ export async function POST(request: NextRequest) {
           eq(programmes.tenantId, session.tenantId),
           sql`${programmes.status} IN ('approved', 'published')`,
           sql`${programmes.archivedAt} IS NULL`,
-          sql`(${programmes.endDate} IS NULL OR ${programmes.endDate} >= now())`,
+          programmeEndDateCurrentSql(programmes.endDate),
         ),
       )
       .limit(1);
