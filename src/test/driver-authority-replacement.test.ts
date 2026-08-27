@@ -52,4 +52,29 @@ describe('post-authorisation driver replacement governance', () => {
     expect(helper).toContain('maskLicenceNumber(eligible.driver.licenceNumber)');
     expect(helper).not.toContain('maskLicenceNumber(eligible.driver.licenceId)');
   });
+
+  it('keeps the amendment decision with final-authorisation holders rather than Transport trip managers', () => {
+    const decisionRoute = source('src/app/api/trips/[id]/authority/driver-replacement/route.ts');
+    const permissionBlock = decisionRoute.slice(
+      decisionRoute.indexOf('const AUTHORISER_PERMISSIONS'),
+      decisionRoute.indexOf('type AuthoriserResult'),
+    );
+
+    expect(permissionBlock).toContain('Permissions.TRIP_AUTHORIZE_REGIONAL');
+    expect(permissionBlock).toContain('Permissions.TRIP_AUTHORIZE_NATIONAL');
+    expect(permissionBlock).not.toContain('Permissions.TRIP_MANAGE');
+    expect(decisionRoute).toContain("requireDashboardAction(session, '/dashboard/approvals', 'approve')");
+  });
+
+  it('exposes approve and reject controls on the existing Trip Authority surface', () => {
+    const authorityActions = source(
+      'src/app/(dashboard)/dashboard/trips/[id]/authority/AuthorityActions.tsx',
+    );
+
+    expect(authorityActions).toContain('/authority/driver-replacement');
+    expect(authorityActions).toContain("decideReplacement('approve')");
+    expect(authorityActions).toContain("decideReplacement('reject')");
+    expect(authorityActions).toContain('Approve revised authority');
+    expect(authorityActions).toContain('The current live assignment and signed authority remain unchanged until you decide this amendment.');
+  });
 });
