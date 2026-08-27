@@ -9,7 +9,12 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
-import { trips, tripAuthorities, vehicleAllocations } from '@/db/schema/trips';
+import {
+  trips,
+  tripAuthorities,
+  tripAuthorisedDrivers,
+  vehicleAllocations,
+} from '@/db/schema/trips';
 import { transportRequests } from '@/db/schema/requests';
 import { vehicles } from '@/db/schema/fleet';
 import {
@@ -89,6 +94,7 @@ export async function POST(
         driverAcknowledgedAt: trips.driverAcknowledgedAt,
         vehicleId: trips.vehicleId,
         driverEmployeeId: vehicleAllocations.driverEmployeeId,
+        authorityDriverEmployeeId: tripAuthorisedDrivers.employeeId,
         requestId: transportRequests.id,
         requestReference: transportRequests.reference,
         requestStatus: transportRequests.status,
@@ -104,6 +110,13 @@ export async function POST(
       .innerJoin(transportRequests, eq(trips.requestId, transportRequests.id))
       .innerJoin(tripAuthorities, eq(tripAuthorities.tripId, trips.id))
       .innerJoin(
+        tripAuthorisedDrivers,
+        and(
+          eq(tripAuthorisedDrivers.authorityId, tripAuthorities.id),
+          eq(tripAuthorisedDrivers.driverType, 'primary'),
+        ),
+      )
+      .innerJoin(
         vehicles,
         and(eq(vehicles.id, trips.vehicleId), eq(vehicles.tenantId, session.tenantId)),
       )
@@ -118,6 +131,15 @@ export async function POST(
       )
       .limit(1);
     if (!trip) return NextResponse.json({ error: 'Current confirmed trip not found' }, { status: 404 });
+    if (!trip.driverEmployeeId || trip.authorityDriverEmployeeId !== trip.driverEmployeeId) {
+      return NextResponse.json(
+        {
+          error:
+            'The live driver assignment does not match the current Trip Authority. Transport Administration must complete the driver-replacement authority amendment before acknowledgement.',
+        },
+        { status: 409 },
+      );
+    }
 
     const [employee] = await db
       .select({ id: employees.id })
