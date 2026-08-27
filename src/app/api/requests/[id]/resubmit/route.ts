@@ -22,6 +22,7 @@ import { abandonRequestWorkflow, ensureRequestWorkflow } from '@/lib/request-wor
 import { recordAuditEvent } from '@/lib/audit-event';
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
 import { validateRequesterDriverNominations } from '@/lib/request-driver-eligibility';
+import { programmeEndDateCurrentSql } from '@/lib/programme-availability';
 
 const EDITABLE_STATUSES = ['returned', 'rejected', 'supervisor_rejected'] as const;
 
@@ -418,7 +419,7 @@ export async function POST(
         eq(programmes.tenantId, session.tenantId),
         sql`${programmes.status} IN ('approved', 'published')`,
         sql`${programmes.archivedAt} IS NULL`,
-        sql`(${programmes.endDate} IS NULL OR ${programmes.endDate} >= now())`,
+        programmeEndDateCurrentSql(programmes.endDate),
       ))
       .limit(1);
     if (!linkedProgramme) {

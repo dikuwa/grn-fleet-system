@@ -26,6 +26,7 @@ import { ensureRequestWorkflow } from '@/lib/request-workflow';
 import { validateRequesterDriverNominations } from '@/lib/request-driver-eligibility';
 import { parseRequestRoutingInput } from '@/lib/request-routing-input';
 import { resolveWorkflowRoute } from '@/lib/workflow-route-resolver';
+import { programmeEndDateCurrentSql } from '@/lib/programme-availability';
 
 export async function POST(req: NextRequest) {
   try {
@@ -171,7 +172,7 @@ export async function POST(req: NextRequest) {
             eq(programmes.tenantId, tenantId),
             sql`${programmes.status} IN ('approved', 'published')`,
             sql`${programmes.archivedAt} IS NULL`,
-            sql`(${programmes.endDate} IS NULL OR ${programmes.endDate} >= now())`,
+            programmeEndDateCurrentSql(programmes.endDate),
           ),
         )
         .limit(1);

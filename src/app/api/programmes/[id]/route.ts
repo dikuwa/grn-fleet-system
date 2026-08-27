@@ -12,6 +12,7 @@ import {
   isProgrammeOwnedByUser,
   resolveProgrammeAccess,
 } from '@/lib/programme-access';
+import { isProgrammeEndDateCurrent } from '@/lib/programme-availability';
 
 /**
  * Programme detail API
@@ -149,8 +150,7 @@ export async function GET(
       ['draft', 'changes_requested'].includes(programme.status) &&
       (isOwner ? canEditOwn : canEditAny);
     const isCurrentProgramme =
-      programme.archivedAt == null &&
-      (programme.endDate == null || programme.endDate >= new Date());
+      programme.archivedAt == null && isProgrammeEndDateCurrent(programme.endDate);
     const capabilities = {
       edit: canEdit,
       delete: programme.status === 'draft' && (isOwner ? canEditOwn : canEditAny),
