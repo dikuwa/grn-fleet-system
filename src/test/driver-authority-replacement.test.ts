@@ -15,7 +15,7 @@ describe('post-authorisation driver replacement governance', () => {
   it('intercepts an authorised driver replacement before the ordinary live-allocation mutation path', () => {
     const allocationRoute = source('src/app/api/allocations/[id]/driver/route.ts');
     const governedCall = allocationRoute.indexOf('requestPostAuthorisationDriverReplacement({');
-    const ordinaryMutation = allocationRoute.indexOf('.update(vehicleAllocations)');
+    const ordinaryMutation = allocationRoute.indexOf('UPDATE vehicle_allocations va');
 
     expect(governedCall).toBeGreaterThan(-1);
     expect(ordinaryMutation).toBeGreaterThan(-1);
