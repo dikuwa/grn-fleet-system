@@ -48,13 +48,20 @@ export function parseRequestRoutingInput(
     estimatedCost = amount.toFixed(2);
   }
 
+  // A supplied requestOrigin is frozen routing state and must win. When a new
+  // request has no frozen origin yet, programme membership establishes its
+  // origin at submission; requester type is only the final fallback.
+  const requestOrigin =
+    value.requestOrigin != null
+      ? normaliseRequestOrigin(value.requestOrigin, false)
+      : options.hasProgramme
+        ? 'programme'
+        : normaliseRequestOrigin(options.requesterType, false);
+
   return {
     ok: true,
     fields: {
-      requestOrigin: normaliseRequestOrigin(
-        value.requestOrigin ?? options.requesterType,
-        Boolean(options.hasProgramme),
-      ),
+      requestOrigin,
       financialImpact: requestedImpact as FinancialImpact,
       tripCategory: rawCategory,
       estimatedCost,

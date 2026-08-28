@@ -73,13 +73,13 @@ describe('request routing correction', () => {
     }
   });
 
-  it('keeps programme origin derived from the existing programme link', () => {
+  it('keeps the frozen origin when a programme is linked later', () => {
     const result = parseRequestRoutingCorrection(
       { financialImpact: 'additional_funding', tripCategory: 'outreach' },
       { ...existing, programmeId: 'programme-1' },
     );
 
     expect(result.ok).toBe(true);
-    if (result.ok) expect(result.fields.requestOrigin).toBe('programme');
+    if (result.ok) expect(result.fields.requestOrigin).toBe('internal');
   });
 });
