@@ -2,9 +2,10 @@ import { NextResponse } from 'next/server';
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/lib/auth-helpers', () => ({
-  requirePermission: vi.fn(async () =>
-    NextResponse.json({ error: 'You do not have permission to perform this action' }, { status: 403 }),
-  ),
+  // Deliberately allow the retired permission. The emergency-override method
+  // must remain fail-closed even if permission plumbing is later refactored or
+  // accidentally made permissive.
+  requirePermission: vi.fn(async () => true),
   forbiddenResponse: vi.fn((message = 'Forbidden') =>
     NextResponse.json({ error: message }, { status: 403 }),
   ),
@@ -13,7 +14,7 @@ vi.mock('@/lib/auth-helpers', () => ({
 import { WorkflowEngine } from '@/lib/workflow-engine';
 
 describe('WorkflowEngine.processEmergencyOverride', () => {
-  it('fails closed before touching workflow state', async () => {
+  it('fails closed before touching workflow state even when authorization is permissive', async () => {
     let databaseTouched = false;
     const db = new Proxy(
       {},
