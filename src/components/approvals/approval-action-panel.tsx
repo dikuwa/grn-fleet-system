@@ -13,6 +13,25 @@ import { StyledSelect } from '@/components/ui/styled-select';
 
 type DecisionResult = 'approved' | 'returned' | 'rejected';
 
+type ApprovalActionErrorPayload = {
+  error?: unknown;
+  blockers?: unknown;
+};
+
+function approvalActionErrorMessage(payload: ApprovalActionErrorPayload) {
+  const base = typeof payload.error === 'string' && payload.error.trim() ? payload.error.trim() : 'Action failed';
+  const blockers = Array.isArray(payload.blockers)
+    ? payload.blockers
+        .map((blocker) => {
+          if (!blocker || typeof blocker !== 'object') return null;
+          const message = (blocker as { message?: unknown }).message;
+          return typeof message === 'string' && message.trim() ? message.trim() : null;
+        })
+        .filter((message): message is string => Boolean(message))
+    : [];
+  return blockers.length ? `${base} ${blockers.join(' · ')}` : base;
+}
+
 export function ApprovalActionPanel({
   instanceId,
   requestTitle,
@@ -88,8 +107,10 @@ export function ApprovalActionPanel({
               : undefined,
         }),
       });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || 'Action failed');
+      const result = (await response.json()) as ApprovalActionErrorPayload & {
+        data?: { message?: string };
+      };
+      if (!response.ok) throw new Error(approvalActionErrorMessage(result));
       const label = selected === 'approved'
         ? primary.past
         : selected === 'returned'
