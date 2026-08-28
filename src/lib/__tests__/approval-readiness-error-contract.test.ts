@@ -14,4 +14,10 @@ describe('approval readiness error contract', () => {
     expect(source).toContain("blockers.join(' · ')");
     expect(source).toContain('throw new Error(approvalActionErrorMessage(result))');
   });
+
+  it('offers a safe dashboard link to the record that must be corrected', () => {
+    expect(source).toContain("result.actionUrl.startsWith('/dashboard/')");
+    expect(source).toContain('setErrorActionUrl');
+    expect(source).toContain('Open blocking record');
+  });
 });
