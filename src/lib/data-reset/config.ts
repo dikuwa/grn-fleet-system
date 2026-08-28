@@ -98,7 +98,7 @@ export interface DeleteStep {
   table: string;
   /** Human-readable domain used in reports. */
   label: string;
-  /** How the delete is scoped to the selected tenant. */
+  /** How the delete is scoped to the selected tenant's records. */
   scope: DeleteScope;
   /** Storage key columns collected from the deleted rows for R2 cleanup. */
   fileKeyColumns?: string[];
@@ -141,7 +141,12 @@ export const OPERATIONAL_DELETE_STEPS: DeleteStep[] = [
   { table: 'workflow_instances', label: 'Workflow instances', scope: 'request' },
   // Trip authority children
   { table: 'trip_authority_versions', label: 'Authority versions', scope: 'authority' },
-  { table: 'trip_authority_passengers', label: 'Authority passengers', scope: 'authority' },
+  {
+    table: 'trip_authority_passengers',
+    label: 'Authority passengers',
+    scope: 'authority',
+    fileKeyColumns: ['indemnity_document_key'],
+  },
   { table: 'trip_authorised_drivers', label: 'Authorised drivers', scope: 'authority' },
   { table: 'trip_amendments', label: 'Trip amendments', scope: 'authority' },
   // Authorities reference allocations + requests, so delete before both
@@ -154,7 +159,12 @@ export const OPERATIONAL_DELETE_STEPS: DeleteStep[] = [
   { table: 'external_driver_assignments', label: 'External driver assignments', scope: 'request' },
   { table: 'trip_issues', label: 'Vehicle issues', scope: 'allocation' },
   // Trip children
-  { table: 'trip_progress_entries', label: 'Trip progress entries', scope: 'trip' },
+  {
+    table: 'trip_progress_entries',
+    label: 'Trip progress entries',
+    scope: 'trip',
+    fileKeyColumns: ['attachment_key'],
+  },
   {
     table: 'trip_log_entries',
     label: 'Driver logsheets',
