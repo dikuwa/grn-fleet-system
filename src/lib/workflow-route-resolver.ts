@@ -91,9 +91,14 @@ export function resolveWorkflowRoute<T extends WorkflowRouteCandidate>(
   return { status: 'matched', definition: first.candidate, specificity: first.specificity };
 }
 
+/**
+ * Preserve the request origin captured at submission. Programme membership can
+ * change later, so it is only a fallback for legacy rows that do not contain a
+ * valid frozen origin.
+ */
 export function normaliseRequestOrigin(value: unknown, hasProgramme: boolean): RequestOrigin {
-  if (hasProgramme) return 'programme';
-  return value === 'external' ? 'external' : 'internal';
+  if (REQUEST_ORIGINS.includes(value as RequestOrigin)) return value as RequestOrigin;
+  return hasProgramme ? 'programme' : 'internal';
 }
 
 export function normaliseFinancialImpact(value: unknown): FinancialImpact {
