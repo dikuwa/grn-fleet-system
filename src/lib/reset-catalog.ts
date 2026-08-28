@@ -120,11 +120,17 @@ const CATEGORY_IDS = new Set<ResetCategoryId>(
   RESET_CATEGORY_CATALOG.map((category) => category.id),
 );
 /**
- * A go-live clean slate removes the tenant's working/test footprint. It is
- * deliberately not a tenant-shell wipe: fleet, people, organisation, access
- * and configuration remain available as separately reviewed selective scopes.
+ * A go-live/manual-QA clean slate removes tenant working data plus mutable
+ * people/driver and fleet test data. It deliberately preserves the tenant
+ * shell: organisation structure, access/roles and workflow configuration.
  */
-export const CLEAN_SLATE_CATEGORIES: ResetCategoryId[] = ['operations', 'documents', 'programmes'];
+export const CLEAN_SLATE_CATEGORIES: ResetCategoryId[] = [
+  'operations',
+  'documents',
+  'programmes',
+  'fleet',
+  'people',
+];
 
 export function isResetCategoryId(value: unknown): value is ResetCategoryId {
   return typeof value === 'string' && CATEGORY_IDS.has(value as ResetCategoryId);
@@ -219,7 +225,7 @@ export const RESET_ALWAYS_PROTECTED = [
   'Tenant identity and branding',
   'Subscription, billing and payments',
   'One Tenant Owner and all Platform Administrators',
-  'People, fleet and organisation master data',
+  'Organisation structure',
   'Roles, permissions and tenant configuration',
   'Audit history',
   'Protected recovery points and reset history',
