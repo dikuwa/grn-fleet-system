@@ -4,6 +4,7 @@ import { CheckCircle2, ChevronLeft, Truck } from 'lucide-react';
 import { ApprovalActionPanel } from '@/components/approvals/approval-action-panel';
 import { TransportAllocationAdjustments } from '@/components/approvals/transport-allocation-adjustments';
 import { TransportDecisionPanel } from '@/components/approvals/transport-decision-panel';
+import { TransportReviewRequestCorrections } from '@/components/approvals/transport-review-request-corrections';
 import { Breadcrumbs, PageHeader } from '@/components/layout/page-header';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
@@ -81,6 +82,17 @@ export default async function ApprovalActionPage({ params }: { params: Promise<{
           </Link>
         </Button>
       </PageHeader>
+
+      {isTransportReview && (
+        <TransportReviewRequestCorrections
+          requestId={detail.instance.requestId}
+          requestReference={detail.instance.requestReference}
+          purpose={detail.instance.requestPurpose || ''}
+          specialRequirements={detail.instance.specialRequirements || ''}
+          activities={detail.activities}
+          allocationId={detail.allocation?.id || null}
+        />
+      )}
 
       {isTransportReview && operationalAssignmentReady && detail.allocation && hasInternalDriver ? (
         <TransportAllocationAdjustments
