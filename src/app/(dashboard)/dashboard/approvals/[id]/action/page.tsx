@@ -1,11 +1,12 @@
 import Link from 'next/link';
 import { notFound, redirect } from 'next/navigation';
-import { ChevronLeft } from 'lucide-react';
+import { CheckCircle2, ChevronLeft, Truck } from 'lucide-react';
 import { ApprovalActionPanel } from '@/components/approvals/approval-action-panel';
 import { TransportAllocationAdjustments } from '@/components/approvals/transport-allocation-adjustments';
 import { TransportDecisionPanel } from '@/components/approvals/transport-decision-panel';
 import { Breadcrumbs, PageHeader } from '@/components/layout/page-header';
 import { Button } from '@/components/ui/button';
+import { Card, CardContent } from '@/components/ui/card';
 import { buildApprovalRequestTitle } from '@/lib/approval-decision';
 import { getApprovalDetail } from '@/lib/approval-detail';
 import { getSessionPermissions } from '@/lib/auth-helpers';
@@ -58,6 +59,7 @@ export default async function ApprovalActionPage({ params }: { params: Promise<{
     : detail.externalDriverAssignment
       ? `external driver ${detail.externalDriverAssignment.firstName} ${detail.externalDriverAssignment.lastName} (${detail.externalDriverAssignment.state.replaceAll('_', ' ')})`
       : 'driver not assigned';
+  const hasInternalDriver = Boolean(detail.allocation?.driverEmployeeId);
 
   return (
     <div className="space-y-6">
@@ -80,7 +82,7 @@ export default async function ApprovalActionPage({ params }: { params: Promise<{
         </Button>
       </PageHeader>
 
-      {isTransportReview && operationalAssignmentReady && detail.allocation ? (
+      {isTransportReview && operationalAssignmentReady && detail.allocation && hasInternalDriver ? (
         <TransportAllocationAdjustments
           allocationId={detail.allocation.id}
           requestId={detail.instance.requestId}
@@ -94,6 +96,28 @@ export default async function ApprovalActionPage({ params }: { params: Promise<{
           currentDriverEmployeeId={detail.allocation.driverEmployeeId}
           driverSummary={driverSummary}
         />
+      ) : isTransportReview && operationalAssignmentReady && detail.allocation ? (
+        <Card>
+          <CardContent className="flex flex-col gap-4 pt-5 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 items-start gap-3">
+              <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[8px] bg-status-success-bg text-status-success-text">
+                <CheckCircle2 className="h-5 w-5" aria-hidden="true" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-ink-950">External driver assignment ready</p>
+                <p className="mt-1 text-xs leading-5 text-ink-500">
+                  {detail.allocation.make} {detail.allocation.model} · {detail.allocation.licenceNumber} · {driverSummary}.
+                  External-driver changes remain on the dedicated allocation path so licence verification and assignment state are preserved.
+                </p>
+              </div>
+            </div>
+            <Button variant="secondary" size="sm" asChild className="w-full sm:w-auto">
+              <Link href={`/dashboard/allocations/${detail.allocation.id}`}>
+                <Truck className="h-4 w-4" aria-hidden="true" /> Manage Allocation
+              </Link>
+            </Button>
+          </CardContent>
+        </Card>
       ) : isTransportReview ? (
         <TransportDecisionPanel
           requestId={detail.instance.requestId}
