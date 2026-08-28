@@ -1,15 +1,9 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-const gateSource = readFileSync(
-  new URL('../administrative-release-gate.ts', import.meta.url),
-  'utf8',
-);
-const decisionSource = readFileSync(
-  new URL('../workflow-decision-atomic.ts', import.meta.url),
-  'utf8',
-);
-const builderSource = readFileSync(new URL('../workflow-builder.ts', import.meta.url), 'utf8');
+const gateSource = readFileSync('src/lib/administrative-release-gate.ts', 'utf8');
+const decisionSource = readFileSync('src/lib/workflow-decision-atomic.ts', 'utf8');
+const builderSource = readFileSync('src/lib/workflow-builder.ts', 'utf8');
 
 describe('Administrative Release operational readiness contract', () => {
   it('reuses the canonical trip safety gate without importing issue-stage requirements', () => {
