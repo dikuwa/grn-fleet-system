@@ -132,7 +132,7 @@ test('a newer material authority amendment invalidates old acceptance until the 
       tenantId: TENANT_ID as never,
       reference: `E2E-REV-${run.slice(0, 8)}`,
       scope: 'regional',
-      status: 'authorised',
+      status: 'transport_review',
       requesterEmployeeId: requester.id,
       requesterUserId: requester.userId,
       purpose: 'Production closure revised authority acceptance',
@@ -151,6 +151,20 @@ test('a newer material authority amendment invalidates old acceptance until the 
       allocatedByUserId: transportEmployee.userId as string,
       version: 2,
     });
+
+    // The fixture needs an authorised request for the revised-authority lifecycle,
+    // but allocation creation itself must occur while the request is legitimately
+    // allocatable. This mirrors the real Transport Review -> authorisation sequence
+    // instead of bypassing the database allocation integrity guard.
+    await db
+      .update(transportRequests)
+      .set({ status: 'authorised' })
+      .where(
+        and(
+          eq(transportRequests.id, requestId),
+          eq(transportRequests.tenantId, TENANT_ID as never),
+        ),
+      );
 
     await db.insert(trips).values({
       id: tripId,
