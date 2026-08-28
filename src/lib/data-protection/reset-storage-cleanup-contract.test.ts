@@ -1,8 +1,8 @@
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
-const wrapperSource = readFileSync(new URL('./reset-service.ts', import.meta.url), 'utf8');
-const cleanupSource = readFileSync(new URL('./reset-storage-cleanup.ts', import.meta.url), 'utf8');
+const wrapperSource = readFileSync('src/lib/data-protection/reset-service.ts', 'utf8');
+const cleanupSource = readFileSync('src/lib/data-protection/reset-storage-cleanup.ts', 'utf8');
 
 describe('governed tenant reset storage cleanup boundary', () => {
   it('collects reset-owned file keys before executing the database reset', () => {
