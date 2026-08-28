@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, CheckCircle2, Loader2, XCircle } from 'lucide-react';
@@ -16,6 +17,7 @@ type DecisionResult = 'approved' | 'returned' | 'rejected';
 type ApprovalActionErrorPayload = {
   error?: unknown;
   blockers?: unknown;
+  actionUrl?: unknown;
 };
 
 function approvalActionErrorMessage(payload: ApprovalActionErrorPayload) {
@@ -61,6 +63,7 @@ export function ApprovalActionPanel({
   const [comment, setComment] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [errorActionUrl, setErrorActionUrl] = useState<string | null>(null);
   const [financeOutcome, setFinanceOutcome] = useState('');
   const [budgetReference, setBudgetReference] = useState('');
   const [approvedAmount, setApprovedAmount] = useState('');
@@ -89,6 +92,7 @@ export function ApprovalActionPanel({
     }
     setIsSubmitting(true);
     setError('');
+    setErrorActionUrl(null);
     try {
       const response = await fetch(`/api/approvals/${instanceId}/action`, {
         method: 'POST',
@@ -110,7 +114,14 @@ export function ApprovalActionPanel({
       const result = (await response.json()) as ApprovalActionErrorPayload & {
         data?: { message?: string };
       };
-      if (!response.ok) throw new Error(approvalActionErrorMessage(result));
+      if (!response.ok) {
+        setErrorActionUrl(
+          typeof result.actionUrl === 'string' && result.actionUrl.startsWith('/dashboard/')
+            ? result.actionUrl
+            : null,
+        );
+        throw new Error(approvalActionErrorMessage(result));
+      }
       const label = selected === 'approved'
         ? primary.past
         : selected === 'returned'
@@ -200,6 +211,7 @@ export function ApprovalActionPanel({
               onClick={() => {
                 setSelected(option.value);
                 setError('');
+                setErrorActionUrl(null);
               }}
               disabled={isSubmitting}
               className={cn(
@@ -331,8 +343,13 @@ export function ApprovalActionPanel({
         )}
 
         {error && (
-          <div role="alert" className="border-status-error-bg bg-status-error-bg/20 rounded-[8px] border px-4 py-3">
+          <div role="alert" className="border-status-error-bg bg-status-error-bg/20 space-y-3 rounded-[8px] border px-4 py-3">
             <p className="text-status-error-text text-sm font-medium">{error}</p>
+            {errorActionUrl && (
+              <Button variant="secondary" size="sm" asChild>
+                <Link href={errorActionUrl}>Open blocking record</Link>
+              </Button>
+            )}
           </div>
         )}
 
