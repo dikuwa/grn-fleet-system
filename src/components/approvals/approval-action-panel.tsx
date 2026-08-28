@@ -1,5 +1,6 @@
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, CheckCircle2, Loader2, XCircle } from 'lucide-react';
@@ -12,6 +13,26 @@ import { cn } from '@/lib/utils';
 import { StyledSelect } from '@/components/ui/styled-select';
 
 type DecisionResult = 'approved' | 'returned' | 'rejected';
+
+type ApprovalActionErrorPayload = {
+  error?: unknown;
+  blockers?: unknown;
+  actionUrl?: unknown;
+};
+
+function approvalActionErrorMessage(payload: ApprovalActionErrorPayload) {
+  const base = typeof payload.error === 'string' && payload.error.trim() ? payload.error.trim() : 'Action failed';
+  const blockers = Array.isArray(payload.blockers)
+    ? payload.blockers
+        .map((blocker) => {
+          if (!blocker || typeof blocker !== 'object') return null;
+          const message = (blocker as { message?: unknown }).message;
+          return typeof message === 'string' && message.trim() ? message.trim() : null;
+        })
+        .filter((message): message is string => Boolean(message))
+    : [];
+  return blockers.length ? `${base} ${blockers.join(' · ')}` : base;
+}
 
 export function ApprovalActionPanel({
   instanceId,
@@ -37,21 +58,28 @@ export function ApprovalActionPanel({
   const primary = getApprovalPrimaryAction(actionType);
   const isAcknowledgement = actionType === 'acknowledge';
   const isFinanceReview = actionType === 'finance_review';
+  const isTransportReview = actionType === 'transport_review';
   const [selected, setSelected] = useState<DecisionResult | null>(null);
   const [comment, setComment] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState('');
+  const [errorActionUrl, setErrorActionUrl] = useState<string | null>(null);
   const [financeOutcome, setFinanceOutcome] = useState('');
   const [budgetReference, setBudgetReference] = useState('');
   const [approvedAmount, setApprovedAmount] = useState('');
+  const operationalNoteRequired = isTransportReview && selected === 'approved';
   const commentRequired = selected
-    ? isApprovalCommentRequired(selected, stepRequiresComment)
+    ? isApprovalCommentRequired(selected, stepRequiresComment) || operationalNoteRequired
     : stepRequiresComment;
 
   const handleAction = useCallback(async () => {
     if (!selected) return;
     if (isApprovalCommentRequired(selected, stepRequiresComment) && !comment.trim()) {
       setError('A reason is required for this decision.');
+      return;
+    }
+    if (isTransportReview && selected === 'approved' && comment.trim().length < 3) {
+      setError('Add an operational release note before completing Transport Review.');
       return;
     }
     if (
@@ -64,6 +92,7 @@ export function ApprovalActionPanel({
     }
     setIsSubmitting(true);
     setError('');
+    setErrorActionUrl(null);
     try {
       const response = await fetch(`/api/approvals/${instanceId}/action`, {
         method: 'POST',
@@ -82,8 +111,17 @@ export function ApprovalActionPanel({
               : undefined,
         }),
       });
-      const result = await response.json();
-      if (!response.ok) throw new Error(result.error || 'Action failed');
+      const result = (await response.json()) as ApprovalActionErrorPayload & {
+        data?: { message?: string };
+      };
+      if (!response.ok) {
+        setErrorActionUrl(
+          typeof result.actionUrl === 'string' && result.actionUrl.startsWith('/dashboard/')
+            ? result.actionUrl
+            : null,
+        );
+        throw new Error(approvalActionErrorMessage(result));
+      }
       const label = selected === 'approved'
         ? primary.past
         : selected === 'returned'
@@ -102,7 +140,7 @@ export function ApprovalActionPanel({
       toast({ title: isAcknowledgement ? 'Acknowledgement failed' : 'Action failed', description: message, variant: 'error' });
       setIsSubmitting(false);
     }
-  }, [approvedAmount, budgetReference, comment, financeOutcome, instanceId, isAcknowledgement, isFinanceReview, primary.past, router, selected, stepRequiresComment, toast]);
+  }, [approvedAmount, budgetReference, comment, financeOutcome, instanceId, isAcknowledgement, isFinanceReview, isTransportReview, primary.past, router, selected, stepRequiresComment, toast]);
 
   const decisionOptions: Array<{
     value: DecisionResult;
@@ -173,6 +211,7 @@ export function ApprovalActionPanel({
               onClick={() => {
                 setSelected(option.value);
                 setError('');
+                setErrorActionUrl(null);
               }}
               disabled={isSubmitting}
               className={cn(
@@ -244,23 +283,40 @@ export function ApprovalActionPanel({
         )}
 
         <div className="space-y-1.5">
-          <Label htmlFor="approval-comment" required={commentRequired}>{isAcknowledgement ? 'Acknowledgement note' : 'Decision comment'}</Label>
+          <Label htmlFor="approval-comment" required={commentRequired}>
+            {operationalNoteRequired
+              ? 'Operational release note'
+              : isAcknowledgement
+                ? 'Acknowledgement note'
+                : 'Decision comment'}
+          </Label>
           <Textarea
             id="approval-comment"
-            placeholder={commentRequired ? 'Explain the reason for this decision…' : isAcknowledgement ? 'Add an optional acknowledgement note…' : 'Add an optional decision note…'}
+            placeholder={
+              operationalNoteRequired
+                ? 'Record the operational handover: assignment, schedule checks, corrections made, and any instruction for the next stage…'
+                : commentRequired
+                  ? 'Explain the reason for this decision…'
+                  : isAcknowledgement
+                    ? 'Add an optional acknowledgement note…'
+                    : 'Add an optional decision note…'
+            }
             value={comment}
             onChange={(event) => setComment(event.target.value)}
             rows={5}
+            maxLength={2000}
             aria-required={commentRequired}
             aria-describedby="approval-comment-help"
             disabled={isSubmitting}
           />
           <p id="approval-comment-help" className="text-ink-500 text-xs">
-            {commentRequired
-              ? 'A comment is required and will be recorded in the audit history.'
-              : isAcknowledgement
-                ? 'The note is optional and will be recorded with your acknowledgement.'
-                : 'Comments are optional and are recorded in the workflow history.'}
+            {operationalNoteRequired
+              ? 'Required before Transport Review can advance. This note is stored in the workflow history and audit record for downstream release and authorisation.'
+              : commentRequired
+                ? 'A comment is required and will be recorded in the audit history.'
+                : isAcknowledgement
+                  ? 'The note is optional and will be recorded with your acknowledgement.'
+                  : 'Comments are optional and are recorded in the workflow history.'}
           </p>
         </div>
 
@@ -287,8 +343,13 @@ export function ApprovalActionPanel({
         )}
 
         {error && (
-          <div role="alert" className="border-status-error-bg bg-status-error-bg/20 rounded-[8px] border px-4 py-3">
+          <div role="alert" className="border-status-error-bg bg-status-error-bg/20 space-y-3 rounded-[8px] border px-4 py-3">
             <p className="text-status-error-text text-sm font-medium">{error}</p>
+            {errorActionUrl && (
+              <Button variant="secondary" size="sm" asChild>
+                <Link href={errorActionUrl}>Open blocking record</Link>
+              </Button>
+            )}
           </div>
         )}
 
@@ -299,7 +360,7 @@ export function ApprovalActionPanel({
             disabled={
               !selected ||
               isSubmitting ||
-              (commentRequired && !comment.trim()) ||
+              (commentRequired && comment.trim().length < (operationalNoteRequired ? 3 : 1)) ||
               (isFinanceReview &&
                 selected === 'approved' &&
                 (!financeOutcome || budgetReference.trim().length < 3))

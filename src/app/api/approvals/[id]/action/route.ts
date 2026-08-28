@@ -117,6 +117,19 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         { status: 409 },
       );
     }
+    if (
+      stepActionType === 'transport_review' &&
+      actionType === 'approved' &&
+      String(comment || '').trim().length < 3
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            'An operational release note is required before Transport Review can advance. Record the assignment, schedule checks, corrections made, and any instruction for the next stage.',
+        },
+        { status: 422 },
+      );
+    }
     let decisionMetadata: Record<string, unknown> | undefined;
     if (stepActionType === 'finance_review' && actionType === 'approved') {
       const outcome = String(financeEvidence?.outcome || '');
@@ -213,6 +226,28 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
             error:
               'Transport Review cannot be completed until an eligible employee driver or verified external driver is assigned.',
             actionUrl: `/dashboard/allocations/${operationalAllocation.id}`,
+          },
+          { status: 409 },
+        );
+      }
+    }
+
+    if (stepActionType === 'release' && actionType === 'approved') {
+      const releaseGate = await evaluateTripReleaseGate({
+        tenantId: session.tenantId,
+        requestId: instance.requestId,
+        stage: 'release',
+      });
+      if (!releaseGate.allowed) {
+        return NextResponse.json(
+          {
+            error: 'Release is blocked by operational readiness requirements.',
+            blockers: releaseGate.blockers,
+            checks: releaseGate.checks,
+            driverKind: releaseGate.driverKind,
+            actionUrl: releaseGate.tripId
+              ? `/dashboard/trips/${releaseGate.tripId}`
+              : `/dashboard/approvals/${id}/action`,
           },
           { status: 409 },
         );
