@@ -118,6 +118,61 @@ describe('tenant reset execution handoff boundary', () => {
 
     const backupRoute = source('src/app/api/platform/reset/[id]/backup/route.ts');
     expect(backupRoute).toContain('isResetApprovalExpired(resetRequest.reviewedAt)');
-    expect(backupRoute).toContain('Approval expired');
+    expect(backupRoute).toContain('renew Platform approval before creating a recovery point');
+  });
+});
+
+describe('reset notification delivery contract', () => {
+  it('creates separate approval and executable-readiness tenant events', () => {
+    const notifications = source('src/lib/platform/reset-notifications.ts');
+    expect(notifications).toContain("title: 'Your reset request was approved'");
+    expect(notifications).toContain("eventType: 'tenant_reset_ready'");
+    expect(notifications).toContain("title: 'Your approved reset is ready to execute'");
+    expect(notifications).toContain("status: 'action_required'");
+    expect(notifications).toContain('mandatory: true');
+    expect(notifications).toContain('WorkspaceIds.TENANT_ADMIN');
+    expect(notifications).toContain('.onConflictDoNothing()');
+    expect(notifications).toContain('.where(eq(notifications.dedupeKey, dedupeKey))');
+    expect(notifications).toContain('resolvedAt: null');
+
+    const backupRoute = source('src/app/api/platform/reset/[id]/backup/route.ts');
+    expect(backupRoute).toContain('notifyResetRequesterReady');
+  });
+
+  it('fans execution status to platform membership workspaces with deterministic dedupe keys', () => {
+    const notifications = source('src/lib/platform/reset-notifications.ts');
+    expect(notifications).toContain('activePlatformResetRecipients');
+    expect(notifications).toContain('WorkspaceIds.PLATFORM_ADMIN');
+    expect(notifications).toContain('notifyPlatformResetExecution');
+    expect(notifications).toContain('tenant_reset_${input.status}_platform:');
+  });
+
+  it('keeps unresolved required actions represented in the dashboard bell count', () => {
+    const api = source('src/app/api/notifications/route.ts');
+    expect(api).toContain("item.status === 'action_required'");
+    expect(api).toContain('actionRequiredCount');
+    expect(api).toContain('attentionCount');
+
+    const topbar = source('src/components/layout/topbar.tsx');
+    expect(topbar).toContain('notificationQuery.data?.attentionCount');
+    expect(topbar).toContain('requiring attention');
+  });
+});
+
+describe('public live demo consistency', () => {
+  it('uses the shared public hero and container without the legacy eyebrow', () => {
+    const page = source('src/app/(public)/demo/page.tsx');
+    expect(page).toContain('<PageHero');
+    expect(page).toContain('<SectionContainer>');
+    expect(page).not.toContain('GRN Fleet live demo');
+    expect(page).not.toContain('max-w-5xl');
+    expect(page).not.toContain('text-teal-300');
+    expect(page).toContain('Live demo temporarily unavailable');
+    expect(page).toContain('Request a Demo');
+  });
+
+  it('keeps the live demo reachable without an authenticated dashboard session', () => {
+    const proxy = source('src/proxy.ts');
+    expect(proxy).toContain("'/demo'");
   });
 });
