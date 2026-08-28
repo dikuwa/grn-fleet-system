@@ -6,8 +6,8 @@
  * transport_review → optional release → authorise → acknowledge.
  *
  * Each workflow definition is versioned per tenant and trip scope (regional
- * vs national). The engine validates permissions, separation of duty, and
- * records every action in the audit log.
+ * vs national). The engine validates permissions, separation of duty,
+ * handles emergency overrides, and records every action in the audit log.
  *
  * Usage (API route handler):
  *   const engine = new WorkflowEngine({ db, session });
@@ -22,6 +22,7 @@ import {
   workflowSteps,
   workflowInstances,
   workflowActions,
+  emergencyOverrides,
   transportRequests,
   auditEvents,
   vehicleAllocations,
@@ -260,6 +261,7 @@ export class WorkflowEngine {
       tripCategory: request.tripCategory?.trim() || 'general',
     };
 
+    // Try to find a matching active definition
     const definitionCandidates = await this.db
       .select()
       .from(workflowDefinitions)
@@ -317,6 +319,7 @@ export class WorkflowEngine {
       })
       .returning();
 
+    // Link the workflow instance to the transport request
     await this.db
       .update(transportRequests)
       .set({ workflowInstanceId: instance.id, updatedAt: new Date() })
@@ -324,6 +327,9 @@ export class WorkflowEngine {
 
     const resolvedSteps = await this.getDefinitionSteps(instance);
     const firstStep = resolvedSteps.find((step) => step.stepOrder === 1);
+    // Schedule the first step's reminder + escalation timers (the caller no
+    // longer hardcodes step 1 at request creation — resubmits and public
+    // submissions get the same timers through this single path).
     if (firstStep) this.scheduleStepTimers(instance.id, firstStep);
     if (firstStep?.assignedUserId) {
       await createScopedNotifications({
@@ -362,7 +368,7 @@ export class WorkflowEngine {
 
   /**
    * Process a workflow action (approve, reject, return, release, authorise,
-   * acknowledge).
+   * acknowledge, override).
    *
    * Validates:
    *   1. Instance is active
@@ -410,6 +416,7 @@ export class WorkflowEngine {
       };
     }
 
+    // Get the current step definition
     const steps = await this.getDefinitionSteps(instance);
     const currentStep = steps.find((s) => s.stepOrder === instance.currentStepOrder);
 
@@ -435,6 +442,10 @@ export class WorkflowEngine {
       };
     }
 
+    // Driver acknowledgement is an operational acceptance of a specific
+    // current trip/allocation, not a generic workflow decision. Keeping it in
+    // this legacy path would bypass the canonical route's manifest, licence,
+    // declaration and atomic-state checks.
     if (currentStep.actionType === 'acknowledge') {
       return {
         ok: false,
@@ -449,6 +460,7 @@ export class WorkflowEngine {
       };
     }
 
+    // Validate: comment required
     if (currentStep.requiresComment && !comment?.trim()) {
       return {
         ok: false,
@@ -459,6 +471,7 @@ export class WorkflowEngine {
       };
     }
 
+    // Validate: permission
     if (currentStep.requiredPermission) {
       const permCheck = await requirePermission(
         session,
@@ -474,7 +487,7 @@ export class WorkflowEngine {
         ok: false,
         error: forbiddenResponse('This workflow step is assigned to another responsible user.'),
       };
-    }
+    } // Validate: separation of duty — conflict-of-interest detection
     if (currentStep.separationDutyRole === 'requester') {
       const [request] = await this.db
         .select({
@@ -488,6 +501,7 @@ export class WorkflowEngine {
         .limit(1);
 
       const isRequester = request && request.requesterUserId === session.user.id;
+      // Also check if the actor is the main traveller/beneficiary
       let isTraveller = false;
       if (request && !isRequester) {
         const [actorEmployee] = await this.db
@@ -507,8 +521,10 @@ export class WorkflowEngine {
       }
 
       if (isRequester || isTraveller) {
+        // CONFLICT DETECTED — attempt auto-reassignment to an alternate officer
         const resolution = await this.resolveAlternateOfficer(instance, currentStep, session);
         if (resolution) {
+          // The step was reassigned — notify the original actor and the replacement
           await this.logAuditEvent(
             {
               entityType: 'workflow_instance',
@@ -544,6 +560,7 @@ export class WorkflowEngine {
           };
         }
 
+        // No alternate found — block with clear message
         return {
           ok: false,
           error: forbiddenResponse(
@@ -605,6 +622,7 @@ export class WorkflowEngine {
       authorityContext = context;
     }
 
+    // Record the action
     try {
       const [actorEmployee] = await this.db
         .select({ id: employees.id })
@@ -688,10 +706,13 @@ export class WorkflowEngine {
       session.tenantId,
     );
 
+    // Fire-and-forget notification + email
     await this.sendActionNotification(instance, currentStep, result, session).catch(() => {
       // Notification is best-effort
     });
 
+    // Handle rejection or return — the workflow stops and the request
+    // is returned to the requester for revision.
     if (result === 'rejected' || result === 'returned') {
       const newStatus = result === 'rejected' ? 'rejected' : 'returned';
       await this.db
@@ -719,6 +740,7 @@ export class WorkflowEngine {
       };
     }
 
+    // Look up the request scope for status mapping
     const [reqRecord] = await this.db
       .select({ scope: transportRequests.scope })
       .from(transportRequests)
@@ -727,10 +749,12 @@ export class WorkflowEngine {
     const scope: 'regional' | 'national' =
       (reqRecord?.scope as 'regional' | 'national') ?? 'regional';
 
+    // Advance to the next step
     const nextStepOrder = currentStep.stepOrder + 1;
     const nextStep = steps.find((s) => s.stepOrder === nextStepOrder);
 
     if (!nextStep) {
+      // Workflow is complete — approve the request
       const completedStatus = workflowCompletedStatus();
       await this.db
         .update(workflowInstances)
@@ -772,6 +796,7 @@ export class WorkflowEngine {
       };
     }
 
+    // Advance to the next step with a descriptive business status
     const businessStatus = workflowStepToStatus(nextStepOrder, nextStep.actionType, scope);
     await this.db
       .update(workflowInstances)
@@ -783,6 +808,7 @@ export class WorkflowEngine {
       })
       .where(eq(workflowInstances.id, instance.id));
 
+    // Chain the reminder + escalation timers for the step we just entered.
     this.scheduleStepTimers(instance.id, nextStep);
 
     await this.db
@@ -820,31 +846,155 @@ export class WorkflowEngine {
   }
 
   // -------------------------------------------------------------------------
-  // Retired emergency override compatibility
+  // Emergency overrides
   // -------------------------------------------------------------------------
 
   /**
-   * Legacy compatibility entry point retained for callers that may still
-   * reference the historical API. Emergency workflow bypass is retired and
-   * cannot be re-enabled through permissions: this method is deliberately
-   * fail-closed before consulting authorization or touching workflow state.
-   * Historical `overridden` actions/instances remain readable elsewhere.
+   * Process an emergency override that bypasses remaining workflow steps.
+   *
+   * Requires:
+   *   - TRIP_AUTHORIZE_EMERGENCY permission
+   *   - A written justification (reason)
+   *   - Evidence (optional but recommended)
+   *   - Post-trip review is automatically flagged
    */
   async processEmergencyOverride(
-    _instanceId: string,
-    _reason: string,
-    _evidence: string | undefined,
-    _session: AuthSession,
+    instanceId: string,
+    reason: string,
+    evidence: string | undefined,
+    session: AuthSession,
   ): Promise<EngineResult> {
+    // Require emergency override permission
+    const permCheck = await requirePermission(
+      session,
+      Permissions.TRIP_AUTHORIZE_EMERGENCY as PermissionCode,
+    );
+    if (permCheck instanceof NextResponse) {
+      return { ok: false, error: permCheck };
+    }
+
+    if (!reason?.trim()) {
+      return {
+        ok: false,
+        error: NextResponse.json(
+          { error: 'A justification is required for emergency override.' },
+          { status: 400 },
+        ),
+      };
+    }
+
+    const [instance] = await this.db
+      .select()
+      .from(workflowInstances)
+      .where(eq(workflowInstances.id, instanceId))
+      .limit(1);
+
+    if (!instance) {
+      return {
+        ok: false,
+        error: NextResponse.json({ error: 'Workflow instance not found' }, { status: 404 }),
+      };
+    }
+
+    const [tenantRequest] = await this.db
+      .select({ tenantId: transportRequests.tenantId })
+      .from(transportRequests)
+      .where(eq(transportRequests.id, instance.requestId))
+      .limit(1);
+    if (!tenantRequest || tenantRequest.tenantId !== session.tenantId) {
+      return {
+        ok: false,
+        error: NextResponse.json({ error: 'Workflow instance not found' }, { status: 404 }),
+      };
+    }
+
+    if (instance.status !== 'active') {
+      return {
+        ok: false,
+        error: NextResponse.json({ error: 'Workflow is not active.' }, { status: 409 }),
+      };
+    }
+
+    // Get remaining steps (from current step onward) to log as bypassed
+    const steps = await this.getDefinitionSteps(instance);
+    const bypassedSteps = steps
+      .filter((s) => s.stepOrder >= instance.currentStepOrder)
+      .map((s) => s.stepOrder);
+
+    // Create the emergency override record
+    await this.db.insert(emergencyOverrides).values({
+      instanceId,
+      authorisedByUserId: session.user.id,
+      reason,
+      evidence: evidence ?? null,
+      bypassedSteps,
+      requiresPostTripReview: true,
+      reviewStatus: 'pending',
+    });
+
+    // Record the override action on the current step
+    await this.db.insert(workflowActions).values({
+      instanceId,
+      stepOrder: instance.currentStepOrder,
+      actionType:
+        steps.find((s) => s.stepOrder === instance.currentStepOrder)?.actionType ?? 'unknown',
+      result: 'overridden',
+      actorUserId: session.user.id,
+      comment: `EMERGENCY OVERRIDE: ${reason}`,
+      metadata: { isEmergency: true, bypassedSteps },
+    });
+
+    // Complete the workflow immediately
+    await this.db
+      .update(workflowInstances)
+      .set({
+        status: 'overridden',
+        currentAssignedUserId: null,
+        currentAssignmentMeta: {},
+        updatedAt: new Date(),
+      })
+      .where(eq(workflowInstances.id, instance.id));
+
+    // Emergency override sets status to a reasonable business status
+    // rather than a generic 'approved_emergency'
+    const nextStepOrder = instance.currentStepOrder;
+    const currentStepAction =
+      steps.find((s) => s.stepOrder === nextStepOrder)?.actionType ?? 'release';
+    const [reqRecord] = await this.db
+      .select({ scope: transportRequests.scope })
+      .from(transportRequests)
+      .where(eq(transportRequests.id, instance.requestId))
+      .limit(1);
+    const scope: 'regional' | 'national' =
+      (reqRecord?.scope as 'regional' | 'national') ?? 'regional';
+    const emergencyStatus = workflowStepToStatus(nextStepOrder, currentStepAction, scope);
+
+    await this.db
+      .update(transportRequests)
+      .set({ status: emergencyStatus, updatedAt: new Date() })
+      .where(eq(transportRequests.id, instance.requestId));
+
+    await this.logAuditEvent(
+      {
+        entityType: 'emergency_override',
+        entityId: instanceId,
+        action: 'workflow.emergency_override',
+        actorUserId: session.user.id,
+        metadata: { reason, bypassedSteps, requiresPostTripReview: true },
+      },
+      session.tenantId,
+    );
+
+    const [updatedInstance] = await this.db
+      .select()
+      .from(workflowInstances)
+      .where(eq(workflowInstances.id, instance.id))
+      .limit(1);
+
     return {
-      ok: false,
-      error: NextResponse.json(
-        {
-          error:
-            'Emergency workflow override is retired. Urgent requests must complete the configured approval and operational safety route.',
-        },
-        { status: 403 },
-      ),
+      ok: true,
+      message: 'Emergency override applied. Workflow completed.',
+      instance: updatedInstance,
     };
   }
 
@@ -995,6 +1145,7 @@ export class WorkflowEngine {
       if (steps.length > 0) return this.resolveStepAssignments(steps, instance);
     }
 
+    // Fall back to built-in defaults — resolve scope from the request
     const [request] = await this.db
       .select({ scope: transportRequests.scope })
       .from(transportRequests)
@@ -1027,10 +1178,17 @@ export class WorkflowEngine {
     if (!request) return steps;
     return Promise.all(
       steps.map(async (step) => {
+        // The acknowledge step must NOT have a pre-assigned user — the
+        // actual assigned driver is resolved dynamically at action time by
+        // looking up the allocation's driverEmployeeId. Null out any stale
+        // assignedUserId that may have been set in the DB definition.
         if (step.actionType === 'acknowledge') {
           return { ...step, assignedUserId: null };
         }
 
+        // Conflict-of-interest reassignment belongs to one request instance,
+        // never to the shared workflow definition. The instance override wins
+        // only for its current step and is cleared when the workflow advances.
         if (step.stepOrder === instance.currentStepOrder && instance.currentAssignedUserId) {
           return {
             ...step,
@@ -1139,7 +1297,10 @@ export class WorkflowEngine {
             const [grant] = await this.db
               .select({ userId: tenantMemberships.userId })
               .from(tenantMemberships)
-              .innerJoin(roleAssignments, eq(roleAssignments.tenantMembershipId, tenantMemberships.id))
+              .innerJoin(
+                roleAssignments,
+                eq(roleAssignments.tenantMembershipId, tenantMemberships.id),
+              )
               .innerJoin(rolePermissions, eq(rolePermissions.roleId, roleAssignments.roleId))
               .where(
                 and(
@@ -1287,6 +1448,7 @@ export class WorkflowEngine {
     method: 'acting_delegation' | 'same_role' | 'tenant_admin';
   } | null> {
     try {
+      // Look up the tenant
       const [tenantRequest] = await this.db
         .select({ tenantId: transportRequests.tenantId })
         .from(transportRequests)
@@ -1295,6 +1457,8 @@ export class WorkflowEngine {
       if (!tenantRequest) return null;
 
       const tenantId = tenantRequest.tenantId;
+
+      // Get the role IDs that grant the required permission
       const permissionCode = currentStep.requiredPermission;
       if (!permissionCode) return null;
 
@@ -1311,6 +1475,7 @@ export class WorkflowEngine {
 
       if (roleRows.length === 0) return null;
 
+      // Get the requester/traveller employee IDs to exclude
       const [requestInfo] = await this.db
         .select({
           requesterUserId: transportRequests.requesterUserId,
@@ -1336,6 +1501,7 @@ export class WorkflowEngine {
               ? 'allocate'
               : 'approve';
 
+        // 1. Try acting delegations first
         const actingColumns = {
           approve: 'can_approve',
           sign: 'can_sign',
@@ -1372,6 +1538,9 @@ export class WorkflowEngine {
             `${actingRow.first_name || ''} ${actingRow.last_name || ''}`.trim() ||
             'Alternate Officer';
 
+          // Persist the alternate on this workflow instance only. Mutating
+          // workflow_steps here would reroute every request sharing the same
+          // definition, which is a tenant-wide integrity violation.
           const [reassignedInstance] = await this.db
             .update(workflowInstances)
             .set({
@@ -1402,6 +1571,7 @@ export class WorkflowEngine {
             .returning({ id: workflowInstances.id });
           if (!reassignedInstance) return null;
 
+          // Notify the alternate
           await createScopedNotifications({
             tenantId,
             recipientUserIds: [reassignedUserId],
@@ -1424,6 +1594,7 @@ export class WorkflowEngine {
           };
         }
 
+        // 2. Try same-role holders (substantive assignments)
         const [sameRole] = await this.db
           .select({
             id: employees.id,
@@ -1530,6 +1701,7 @@ export class WorkflowEngine {
     _session: AuthSession, // eslint-disable-line @typescript-eslint/no-unused-vars
   ) {
     try {
+      // Look up the request for the requester user ID and tenant
       const [request] = await this.db
         .select({
           requesterUserId: transportRequests.requesterUserId,
@@ -1549,7 +1721,7 @@ export class WorkflowEngine {
         released: '🚗 Vehicle Released',
         authorised: '📋 Trip Authorised',
         acknowledged: '👤 Driver Acknowledged',
-        overridden: '⚠️ Historical Override',
+        overridden: '⚠️ Emergency Override',
       };
 
       const title = titleMap[result] || `Workflow: ${result}`;
@@ -1562,6 +1734,8 @@ export class WorkflowEngine {
         officeLabel: currentStep.label,
       });
 
+      // Secure-link requests have no login account; their outcome is delivered
+      // through the tracking link/email rather than an internal notification.
       if (request.requesterUserId) {
         await createScopedNotifications({
           tenantId: request.tenantId,
@@ -1600,6 +1774,10 @@ export class WorkflowEngine {
         }
       }
 
+      // Send email fire-and-forget — never block the approval on an outbound
+      // network call (Resend + React Email template loading can take seconds
+      // on a cold path). In-app notifications above are already persisted,
+      // which is what tests and the UI rely on.
       void (async () => {
         try {
           const { sendNotificationEmail } = await import('@/lib/email');
@@ -1612,13 +1790,14 @@ export class WorkflowEngine {
                 .limit(1)
             : [undefined];
 
+          // Map workflow results to email template types
           const emailTypeMap: Record<string, string> = {
             approved: 'request_approved',
             rejected: 'request_rejected',
             returned: 'request_returned',
             released: 'vehicle_released',
             authorised: 'trip_authorised',
-            overridden: 'historical_override',
+            overridden: 'emergency_override',
           };
           const emailType = emailTypeMap[result] || 'notification';
 
@@ -1655,6 +1834,8 @@ export class WorkflowEngine {
     },
     tenantId: string,
   ) {
+    // Audit logging is fire-and-forget — errors should not block the
+    // workflow action.
     try {
       await this.db.insert(auditEvents).values({
         entityType: params.entityType,
