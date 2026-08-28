@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import Link from 'next/link';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -64,6 +65,39 @@ const OPERATIONAL_GATE_ORDER = [
   'vehicle_documents',
   'vehicle_issued',
 ] as const;
+
+type GateRecoveryAction = {
+  href: string;
+  label: string;
+};
+
+function resolveGateRecoveryAction(gateKey: string, tripId: string): GateRecoveryAction | null {
+  switch (gateKey) {
+    case 'request_approvals':
+    case 'releasing_officer_acted':
+      return { href: '/dashboard/approvals', label: 'Open approvals' };
+    case 'vehicle_allocated':
+      return { href: '/dashboard/allocations', label: 'Open allocations' };
+    case 'driver_allocated':
+    case 'driver_active_employee':
+    case 'driver_licence_valid':
+    case 'driver_licence_class_match':
+    case 'driver_professional_authorisation':
+      return { href: '/dashboard/drivers', label: 'Open drivers' };
+    case 'vehicle_no_blocking_defects':
+    case 'vehicle_documents':
+      return { href: '/dashboard/fleet', label: 'Open fleet' };
+    case 'authority_amendment_acknowledged':
+    case 'driver_acknowledged':
+    case 'trip_authority':
+    case 'authority_validity':
+      return { href: `/dashboard/trips/${tripId}/authority`, label: 'Open Trip Authority' };
+    case 'departure_inspection':
+      return { href: '/dashboard/inspections', label: 'Open inspections' };
+    default:
+      return null;
+  }
+}
 
 function departureStep(data: ReadinessData) {
   return data.driver?.kind === 'external'
@@ -285,6 +319,8 @@ export function ReleaseReadinessCheck({ tripId, status }: ReleaseReadinessCheckP
           <div className="space-y-2">
             {data.gates.map((gate) => {
               const isBlockedOrFailed = gate.status === 'blocking' || gate.status === 'fail';
+              const recoveryAction =
+                gate.status === 'pass' ? null : resolveGateRecoveryAction(gate.key, tripId);
               return (
                 <div
                   key={gate.key}
@@ -325,6 +361,14 @@ export function ReleaseReadinessCheck({ tripId, status }: ReleaseReadinessCheckP
                       )}
                     </div>
                     <p className="mt-0.5 text-xs text-ink-500">{gate.detail}</p>
+                    {recoveryAction && (
+                      <Button variant="secondary" size="sm" asChild className="mt-2 h-7">
+                        <Link href={recoveryAction.href}>
+                          {recoveryAction.label}
+                          <ArrowRight className="h-3.5 w-3.5" />
+                        </Link>
+                      </Button>
+                    )}
                   </div>
                   <Badge
                     variant={
