@@ -21,4 +21,23 @@ describe('operational reset explicit child coverage', () => {
       tables.indexOf('transport_requests'),
     );
   });
+
+  it('collects storage keys for every file-bearing operational row deleted by reset', () => {
+    const storageColumns = Object.fromEntries(
+      OPERATIONAL_DELETE_STEPS
+        .filter((step) => step.fileKeyColumns?.length)
+        .map((step) => [step.table, step.fileKeyColumns]),
+    );
+
+    expect(storageColumns).toMatchObject({
+      generated_documents: ['file_key'],
+      request_attachments: ['file_key'],
+      trip_authority_passengers: ['indemnity_document_key'],
+      trip_progress_entries: ['attachment_key'],
+      trip_expenses: ['receipt_key'],
+      trip_incidents: ['attachment_keys'],
+      fuel_receipts: ['file_key'],
+      inspection_photos: ['file_key'],
+    });
+  });
 });
