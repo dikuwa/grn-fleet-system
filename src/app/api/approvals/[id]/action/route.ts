@@ -232,6 +232,28 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       }
     }
 
+    if (stepActionType === 'release' && actionType === 'approved') {
+      const releaseGate = await evaluateTripReleaseGate({
+        tenantId: session.tenantId,
+        requestId: instance.requestId,
+        stage: 'release',
+      });
+      if (!releaseGate.allowed) {
+        return NextResponse.json(
+          {
+            error: 'Release is blocked by operational readiness requirements.',
+            blockers: releaseGate.blockers,
+            checks: releaseGate.checks,
+            driverKind: releaseGate.driverKind,
+            actionUrl: releaseGate.tripId
+              ? `/dashboard/trips/${releaseGate.tripId}`
+              : `/dashboard/approvals/${id}/action`,
+          },
+          { status: 409 },
+        );
+      }
+    }
+
     let authorisationDriverKind: 'internal' | 'external' | null = null;
     if (stepActionType === 'authorise' && actionType === 'approved') {
       const releaseGate = await evaluateTripReleaseGate({
