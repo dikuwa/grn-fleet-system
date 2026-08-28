@@ -79,9 +79,10 @@ describe('conditional workflow route resolver', () => {
     expect(result).toEqual({ status: 'no_match' });
   });
 
-  it('derives programme origin before requester type for legacy callers', () => {
-    expect(normaliseRequestOrigin('external', true)).toBe('programme');
-    expect(normaliseRequestOrigin('external', false)).toBe('external');
+  it('preserves a valid frozen request origin regardless of programme links', () => {
+    expect(normaliseRequestOrigin('external', true)).toBe('external');
+    expect(normaliseRequestOrigin('internal', true)).toBe('internal');
+    expect(normaliseRequestOrigin('programme', false)).toBe('programme');
   });
 
   it('detects equal-precedence overlaps before publication', () => {
