@@ -1,15 +1,22 @@
 /**
- * Recovery utility: apply pending forward-only drizzle migrations.
+ * Recovery utility: apply pending forward-only SQL migrations.
  *
  * This database's drizzle.__drizzle_migrations ledger uses the legacy
  * (id, hash, created_at) format, which newer drizzle-kit versions refuse to
  * write to ("INSERT has more target columns than expressions"). This script
- * applies any journaled migration whose sha256(file) hash is not yet in the
- * ledger, then records it in the same legacy format — the exact state a
- * successful `pnpm db:migrate` would have produced.
+ * applies every numbered SQL migration whose sha256(file) hash is not yet in
+ * the ledger, then records it in the same legacy format — the exact state a
+ * successful migration run would have produced.
  *
- * Only forward/additive migrations run (0034-0041 all use IF NOT EXISTS /
- * WHERE NOT EXISTS guards). Nothing is dropped or truncated.
+ * The Drizzle journal remains the preferred ordering source, but older repo
+ * work has occasionally added a numbered forward migration without adding a
+ * journal entry. Numbered SQL files missing from the journal are therefore
+ * appended in filename order instead of being silently skipped. This keeps
+ * production prebuild and local recovery behavior aligned with the actual
+ * migration directory.
+ *
+ * Nothing is dropped or truncated by this runner; migrations themselves are
+ * responsible for being forward-safe/idempotent.
  *
  * Usage (from repo root):
  *   node scripts/apply-pending-migrations.mjs [env-file]   # default .env.local
@@ -57,9 +64,39 @@ const sql = postgres(DATABASE_URL, { max: 2 });
 
 const journal = JSON.parse(fs.readFileSync(path.join(ROOT, 'src/db/migrations/meta/_journal.json'), 'utf8'));
 const MIGRATIONS_DIR = path.join(ROOT, 'src/db/migrations');
+const NUMBERED_MIGRATION = /^\d{4}_.+\.sql$/;
 
 function sha256(file) {
   return crypto.createHash('sha256').update(fs.readFileSync(file, 'utf8')).digest('hex');
+}
+
+function migrationEntries() {
+  const journalEntries = journal.entries.map((entry) => ({
+    tag: entry.tag,
+    when: entry.when,
+  }));
+  const journalTags = new Set(journalEntries.map((entry) => entry.tag));
+  const unjournaled = fs
+    .readdirSync(MIGRATIONS_DIR)
+    .filter((name) => NUMBERED_MIGRATION.test(name))
+    .map((name) => name.replace(/\.sql$/, ''))
+    .filter((tag) => !journalTags.has(tag))
+    .sort()
+    .map((tag, index) => ({
+      tag,
+      // created_at is ledger metadata only. Give unjournaled forward files a
+      // stable monotonic value after the latest journaled migration.
+      when: Math.max(0, ...journalEntries.map((entry) => Number(entry.when) || 0)) + index + 1,
+    }));
+
+  if (unjournaled.length > 0) {
+    console.warn(
+      `Migration journal is missing: ${unjournaled.map((entry) => entry.tag).join(', ')}. ` +
+        'Applying those numbered forward migrations in filename order.',
+    );
+  }
+
+  return [...journalEntries, ...unjournaled];
 }
 
 try {
@@ -69,15 +106,21 @@ try {
   let nextId = maxRow.m + 1;
 
   const toRun = [];
-  for (const entry of journal.entries) {
+  for (const entry of migrationEntries()) {
     const file = path.join(MIGRATIONS_DIR, `${entry.tag}.sql`);
-    if (!fs.existsSync(file)) { console.log(`skip (missing file): ${entry.tag}`); continue; }
+    if (!fs.existsSync(file)) {
+      console.log(`skip (missing file): ${entry.tag}`);
+      continue;
+    }
     const hash = sha256(file);
     if (!applied.has(hash)) toRun.push({ tag: entry.tag, file, hash, when: entry.when });
   }
 
   console.log(`Pending migrations to apply: ${toRun.map((m) => m.tag).join(', ') || '(none)'}`);
-  if (toRun.length === 0) { await sql.end(); process.exit(0); }
+  if (toRun.length === 0) {
+    await sql.end();
+    process.exit(0);
+  }
 
   for (const m of toRun) {
     const statement = fs.readFileSync(m.file, 'utf8');

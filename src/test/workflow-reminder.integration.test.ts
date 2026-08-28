@@ -103,8 +103,18 @@ describe('Workflow reminder/escalation recipient chain (live)', () => {
 
   async function createAllocationFixture(requestId: string, driverEmployeeId: string) {
     const { vehicleAllocations, trips } = await import('@/db/schema/trips');
+    const { transportRequests } = await import('@/db/schema/requests');
     const { vehicles } = await import('@/db/schema/fleet');
     const { eq, and, lt, gt, inArray } = await import('drizzle-orm');
+
+    // An operational allocation may only be created once the request has
+    // legitimately reached an allocatable workflow state. Keep this reminder
+    // fixture aligned with the same database invariant used by Transport Review
+    // instead of bypassing lifecycle state with a direct allocation insert.
+    await db
+      .update(transportRequests)
+      .set({ status: 'transport_review' })
+      .where(and(eq(transportRequests.id, requestId), eq(transportRequests.tenantId, TENANT_A)));
 
     const [vehicle] = await db
       .select({ id: vehicles.id })
