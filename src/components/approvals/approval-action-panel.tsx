@@ -37,6 +37,7 @@ export function ApprovalActionPanel({
   const primary = getApprovalPrimaryAction(actionType);
   const isAcknowledgement = actionType === 'acknowledge';
   const isFinanceReview = actionType === 'finance_review';
+  const isTransportReview = actionType === 'transport_review';
   const [selected, setSelected] = useState<DecisionResult | null>(null);
   const [comment, setComment] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -44,14 +45,19 @@ export function ApprovalActionPanel({
   const [financeOutcome, setFinanceOutcome] = useState('');
   const [budgetReference, setBudgetReference] = useState('');
   const [approvedAmount, setApprovedAmount] = useState('');
+  const operationalNoteRequired = isTransportReview && selected === 'approved';
   const commentRequired = selected
-    ? isApprovalCommentRequired(selected, stepRequiresComment)
+    ? isApprovalCommentRequired(selected, stepRequiresComment) || operationalNoteRequired
     : stepRequiresComment;
 
   const handleAction = useCallback(async () => {
     if (!selected) return;
     if (isApprovalCommentRequired(selected, stepRequiresComment) && !comment.trim()) {
       setError('A reason is required for this decision.');
+      return;
+    }
+    if (isTransportReview && selected === 'approved' && comment.trim().length < 3) {
+      setError('Add an operational release note before completing Transport Review.');
       return;
     }
     if (
@@ -102,7 +108,7 @@ export function ApprovalActionPanel({
       toast({ title: isAcknowledgement ? 'Acknowledgement failed' : 'Action failed', description: message, variant: 'error' });
       setIsSubmitting(false);
     }
-  }, [approvedAmount, budgetReference, comment, financeOutcome, instanceId, isAcknowledgement, isFinanceReview, primary.past, router, selected, stepRequiresComment, toast]);
+  }, [approvedAmount, budgetReference, comment, financeOutcome, instanceId, isAcknowledgement, isFinanceReview, isTransportReview, primary.past, router, selected, stepRequiresComment, toast]);
 
   const decisionOptions: Array<{
     value: DecisionResult;
@@ -244,23 +250,40 @@ export function ApprovalActionPanel({
         )}
 
         <div className="space-y-1.5">
-          <Label htmlFor="approval-comment" required={commentRequired}>{isAcknowledgement ? 'Acknowledgement note' : 'Decision comment'}</Label>
+          <Label htmlFor="approval-comment" required={commentRequired}>
+            {operationalNoteRequired
+              ? 'Operational release note'
+              : isAcknowledgement
+                ? 'Acknowledgement note'
+                : 'Decision comment'}
+          </Label>
           <Textarea
             id="approval-comment"
-            placeholder={commentRequired ? 'Explain the reason for this decision…' : isAcknowledgement ? 'Add an optional acknowledgement note…' : 'Add an optional decision note…'}
+            placeholder={
+              operationalNoteRequired
+                ? 'Record the operational handover: assignment, schedule checks, corrections made, and any instruction for the next stage…'
+                : commentRequired
+                  ? 'Explain the reason for this decision…'
+                  : isAcknowledgement
+                    ? 'Add an optional acknowledgement note…'
+                    : 'Add an optional decision note…'
+            }
             value={comment}
             onChange={(event) => setComment(event.target.value)}
             rows={5}
+            maxLength={2000}
             aria-required={commentRequired}
             aria-describedby="approval-comment-help"
             disabled={isSubmitting}
           />
           <p id="approval-comment-help" className="text-ink-500 text-xs">
-            {commentRequired
-              ? 'A comment is required and will be recorded in the audit history.'
-              : isAcknowledgement
-                ? 'The note is optional and will be recorded with your acknowledgement.'
-                : 'Comments are optional and are recorded in the workflow history.'}
+            {operationalNoteRequired
+              ? 'Required before Transport Review can advance. This note is stored in the workflow history and audit record for downstream release and authorisation.'
+              : commentRequired
+                ? 'A comment is required and will be recorded in the audit history.'
+                : isAcknowledgement
+                  ? 'The note is optional and will be recorded with your acknowledgement.'
+                  : 'Comments are optional and are recorded in the workflow history.'}
           </p>
         </div>
 
@@ -299,7 +322,7 @@ export function ApprovalActionPanel({
             disabled={
               !selected ||
               isSubmitting ||
-              (commentRequired && !comment.trim()) ||
+              (commentRequired && comment.trim().length < (operationalNoteRequired ? 3 : 1)) ||
               (isFinanceReview &&
                 selected === 'approved' &&
                 (!financeOutcome || budgetReference.trim().length < 3))
