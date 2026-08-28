@@ -32,7 +32,10 @@ async function approve(api: APIRequestContext, workflowId: string) {
   let lastResponse: Awaited<ReturnType<APIRequestContext['post']>> | null = null;
   for (let attempt = 0; attempt < 3; attempt += 1) {
     const response = await api.post(`/api/approvals/${workflowId}/action`, {
-      data: { actionType: 'approved' },
+      data: {
+        actionType: 'approved',
+        comment: 'Production closure E2E operational handover and workflow approval.',
+      },
     });
     lastResponse = response;
     if (response.status() !== 409) {
