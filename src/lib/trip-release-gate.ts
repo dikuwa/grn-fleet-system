@@ -20,7 +20,7 @@ import {
 import { workflowActions, workflowInstances, workflowSteps } from '@/db/schema/workflows';
 import { namibiaLicenceClassCovers } from '@/lib/namibia-licence';
 
-export type TripReleaseGateStage = 'authorisation' | 'issue';
+export type TripReleaseGateStage = 'release' | 'authorisation' | 'issue';
 export type TripReleaseBlockerCode =
   | 'trip_not_found'
   | 'workflow_not_ready'
@@ -77,9 +77,9 @@ const successfulWorkflowResults = new Set([
  *
  * Organisational routing decides whether a request progresses through its
  * configured approval chain. This service re-checks whether the current trip,
- * vehicle and driver evidence are operationally safe enough to authorise or
- * physically issue. It deliberately supports both employee drivers and the
- * isolated external-driver assignment model used by assisted external intake.
+ * vehicle and driver evidence are operationally safe enough to release,
+ * authorise or physically issue. It deliberately supports both employee drivers
+ * and the isolated external-driver assignment model used by assisted external intake.
  */
 export async function evaluateTripReleaseGate(input: {
   tenantId: string;
@@ -150,7 +150,7 @@ export async function evaluateTripReleaseGate(input: {
     });
   }
 
-  // Re-check schedule eligibility at the point of authorisation/issue. Allocation
+  // Re-check schedule eligibility at each operational release boundary. Allocation
   // creation already checks this, but another confirmed/released allocation can
   // be introduced later and must not silently invalidate the safety decision.
   const [vehicleConflict] = await db
