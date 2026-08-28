@@ -33,7 +33,7 @@ describe('tenant reset execution handoff boundary', () => {
   });
 
   it('the reset engine independently enforces actor tenant and immutable safety checks', () => {
-    const service = source('src/lib/data-protection/reset-service.ts');
+    const service = source('src/lib/data-protection/reset-service-core.ts');
     expect(service).toContain('resetRequest.tenantId !== input.actorTenantId');
     expect(service).toContain("throw new Error('Reset request not found')");
     expect(service).toContain("resetRequest.status !== 'approved'");
@@ -44,7 +44,7 @@ describe('tenant reset execution handoff boundary', () => {
   });
 
   it('uses a transaction-local governed-reset boundary without weakening ordinary trip immutability', () => {
-    const service = source('src/lib/data-protection/reset-service.ts');
+    const service = source('src/lib/data-protection/reset-service-core.ts');
     const migration = source('src/db/migrations/0091_governed_reset_financial_boundary.sql');
 
     expect(service).toContain("set_config('govfleet.governed_reset', 'on', true)");
@@ -55,7 +55,7 @@ describe('tenant reset execution handoff boundary', () => {
   });
 
   it('keeps reviewed impact separate from the rows actually removed', () => {
-    const service = source('src/lib/data-protection/reset-service.ts');
+    const service = source('src/lib/data-protection/reset-service-core.ts');
     expect(service).toContain('dryRunSummary: freshPreview.dryRunSummary');
     expect(service).toContain('totalRemoved,');
     expect(service).not.toContain(
