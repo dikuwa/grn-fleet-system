@@ -7,7 +7,7 @@
  *
  * Each workflow definition is versioned per tenant and trip scope (regional
  * vs national). The engine validates permissions, separation of duty,
- * handles emergency overrides, and records every action in the audit log.
+ * and records every action in the audit log.
  *
  * Usage (API route handler):
  *   const engine = new WorkflowEngine({ db, session });
@@ -22,7 +22,6 @@ import {
   workflowSteps,
   workflowInstances,
   workflowActions,
-  emergencyOverrides,
   transportRequests,
   auditEvents,
   vehicleAllocations,
@@ -368,7 +367,7 @@ export class WorkflowEngine {
 
   /**
    * Process a workflow action (approve, reject, return, release, authorise,
-   * acknowledge, override).
+   * acknowledge).
    *
    * Validates:
    *   1. Instance is active
@@ -846,155 +845,29 @@ export class WorkflowEngine {
   }
 
   // -------------------------------------------------------------------------
-  // Emergency overrides
+  // Retired emergency override compatibility
   // -------------------------------------------------------------------------
 
   /**
-   * Process an emergency override that bypasses remaining workflow steps.
-   *
-   * Requires:
-   *   - TRIP_AUTHORIZE_EMERGENCY permission
-   *   - A written justification (reason)
-   *   - Evidence (optional but recommended)
-   *   - Post-trip review is automatically flagged
+   * Legacy compatibility entry point retained for historical callers. Emergency
+   * workflow bypass is retired and cannot be re-enabled by permission changes.
+   * This method fails closed before consulting authorization or touching state.
    */
   async processEmergencyOverride(
-    instanceId: string,
-    reason: string,
-    evidence: string | undefined,
-    session: AuthSession,
+    _instanceId: string,
+    _reason: string,
+    _evidence: string | undefined,
+    _session: AuthSession,
   ): Promise<EngineResult> {
-    // Require emergency override permission
-    const permCheck = await requirePermission(
-      session,
-      Permissions.TRIP_AUTHORIZE_EMERGENCY as PermissionCode,
-    );
-    if (permCheck instanceof NextResponse) {
-      return { ok: false, error: permCheck };
-    }
-
-    if (!reason?.trim()) {
-      return {
-        ok: false,
-        error: NextResponse.json(
-          { error: 'A justification is required for emergency override.' },
-          { status: 400 },
-        ),
-      };
-    }
-
-    const [instance] = await this.db
-      .select()
-      .from(workflowInstances)
-      .where(eq(workflowInstances.id, instanceId))
-      .limit(1);
-
-    if (!instance) {
-      return {
-        ok: false,
-        error: NextResponse.json({ error: 'Workflow instance not found' }, { status: 404 }),
-      };
-    }
-
-    const [tenantRequest] = await this.db
-      .select({ tenantId: transportRequests.tenantId })
-      .from(transportRequests)
-      .where(eq(transportRequests.id, instance.requestId))
-      .limit(1);
-    if (!tenantRequest || tenantRequest.tenantId !== session.tenantId) {
-      return {
-        ok: false,
-        error: NextResponse.json({ error: 'Workflow instance not found' }, { status: 404 }),
-      };
-    }
-
-    if (instance.status !== 'active') {
-      return {
-        ok: false,
-        error: NextResponse.json({ error: 'Workflow is not active.' }, { status: 409 }),
-      };
-    }
-
-    // Get remaining steps (from current step onward) to log as bypassed
-    const steps = await this.getDefinitionSteps(instance);
-    const bypassedSteps = steps
-      .filter((s) => s.stepOrder >= instance.currentStepOrder)
-      .map((s) => s.stepOrder);
-
-    // Create the emergency override record
-    await this.db.insert(emergencyOverrides).values({
-      instanceId,
-      authorisedByUserId: session.user.id,
-      reason,
-      evidence: evidence ?? null,
-      bypassedSteps,
-      requiresPostTripReview: true,
-      reviewStatus: 'pending',
-    });
-
-    // Record the override action on the current step
-    await this.db.insert(workflowActions).values({
-      instanceId,
-      stepOrder: instance.currentStepOrder,
-      actionType:
-        steps.find((s) => s.stepOrder === instance.currentStepOrder)?.actionType ?? 'unknown',
-      result: 'overridden',
-      actorUserId: session.user.id,
-      comment: `EMERGENCY OVERRIDE: ${reason}`,
-      metadata: { isEmergency: true, bypassedSteps },
-    });
-
-    // Complete the workflow immediately
-    await this.db
-      .update(workflowInstances)
-      .set({
-        status: 'overridden',
-        currentAssignedUserId: null,
-        currentAssignmentMeta: {},
-        updatedAt: new Date(),
-      })
-      .where(eq(workflowInstances.id, instance.id));
-
-    // Emergency override sets status to a reasonable business status
-    // rather than a generic 'approved_emergency'
-    const nextStepOrder = instance.currentStepOrder;
-    const currentStepAction =
-      steps.find((s) => s.stepOrder === nextStepOrder)?.actionType ?? 'release';
-    const [reqRecord] = await this.db
-      .select({ scope: transportRequests.scope })
-      .from(transportRequests)
-      .where(eq(transportRequests.id, instance.requestId))
-      .limit(1);
-    const scope: 'regional' | 'national' =
-      (reqRecord?.scope as 'regional' | 'national') ?? 'regional';
-    const emergencyStatus = workflowStepToStatus(nextStepOrder, currentStepAction, scope);
-
-    await this.db
-      .update(transportRequests)
-      .set({ status: emergencyStatus, updatedAt: new Date() })
-      .where(eq(transportRequests.id, instance.requestId));
-
-    await this.logAuditEvent(
-      {
-        entityType: 'emergency_override',
-        entityId: instanceId,
-        action: 'workflow.emergency_override',
-        actorUserId: session.user.id,
-        metadata: { reason, bypassedSteps, requiresPostTripReview: true },
-      },
-      session.tenantId,
-    );
-
-    const [updatedInstance] = await this.db
-      .select()
-      .from(workflowInstances)
-      .where(eq(workflowInstances.id, instance.id))
-      .limit(1);
-
     return {
-      ok: true,
-      message: 'Emergency override applied. Workflow completed.',
-      instance: updatedInstance,
+      ok: false,
+      error: NextResponse.json(
+        {
+          error:
+            'Emergency workflow override is retired. Urgent requests must complete the configured approval and operational safety route.',
+        },
+        { status: 403 },
+      ),
     };
   }
 
