@@ -96,8 +96,13 @@ jobs:
           secretAccessKey: process.env.R2_SECRET_ACCESS_KEY } });
           await client.send(new CreateBucketCommand({ Bucket: process.env.R2_BUCKET_NAME }));"
 
-      - name: Run migrations
+      - name: Run journaled migrations
         run: pnpm db:migrate
+        env:
+          DATABASE_URL: ${{ env.DATABASE_URL }}
+
+      - name: Apply numbered forward migrations missing from journal metadata
+        run: node scripts/apply-pending-migrations.mjs
         env:
           DATABASE_URL: ${{ env.DATABASE_URL }}
 
