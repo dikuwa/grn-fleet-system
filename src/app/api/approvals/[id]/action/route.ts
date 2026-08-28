@@ -117,6 +117,19 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         { status: 409 },
       );
     }
+    if (
+      stepActionType === 'transport_review' &&
+      actionType === 'approved' &&
+      String(comment || '').trim().length < 3
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            'An operational release note is required before Transport Review can advance. Record the assignment, schedule checks, corrections made, and any instruction for the next stage.',
+        },
+        { status: 422 },
+      );
+    }
     let decisionMetadata: Record<string, unknown> | undefined;
     if (stepActionType === 'finance_review' && actionType === 'approved') {
       const outcome = String(financeEvidence?.outcome || '');
