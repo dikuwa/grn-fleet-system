@@ -7,11 +7,13 @@ const cleanupSource = readFileSync(new URL('./reset-storage-cleanup.ts', import.
 describe('governed tenant reset storage cleanup boundary', () => {
   it('collects reset-owned file keys before executing the database reset', () => {
     const collectIndex = wrapperSource.indexOf('collectAdvancedResetStorageKeys');
-    const executeIndex = wrapperSource.indexOf('executeApprovedTenantOperationalResetCore(input)');
+    const executeIndex = wrapperSource.lastIndexOf('executeApprovedTenantOperationalResetCore(input)');
 
     expect(collectIndex).toBeGreaterThan(-1);
     expect(executeIndex).toBeGreaterThan(collectIndex);
-    expect(wrapperSource).toContain("advancedPlan.resetSpec.categories.includes('operations') ? plan.fileKeys : []");
+    expect(wrapperSource).toContain(
+      "advancedPlan.resetSpec.categories.includes('operations') ? plan.fileKeys : []",
+    );
   });
 
   it('only removes storage after the core database mutation succeeds', () => {
@@ -25,7 +27,9 @@ describe('governed tenant reset storage cleanup boundary', () => {
   });
 
   it('preserves failed or unavailable storage objects for operator follow-up', () => {
-    expect(cleanupSource).toContain('if (!isStorageConfigured()) return { removed: [], preserved: uniqueKeys };');
+    expect(cleanupSource).toContain(
+      'if (!isStorageConfigured()) return { removed: [], preserved: uniqueKeys };',
+    );
     expect(cleanupSource).toContain('preserved.push(key);');
     expect(wrapperSource).toContain('storageFilesPreserved: storage.preserved.length');
   });
