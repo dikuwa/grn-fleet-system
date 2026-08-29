@@ -41,6 +41,29 @@ describe('Transport Review correction contract', () => {
     expect(routeSource).toContain('.update(vehicleAllocations)');
   });
 
+  it('uses half-open overlap checks so adjacent allocations remain valid', () => {
+    expect(routeSource).toContain('lt(vehicleAllocations.startAt, nextEnd)');
+    expect(routeSource).toContain('gt(vehicleAllocations.endAt, nextStart)');
+    expect(routeSource).toContain('ne(vehicleAllocations.id, allocation.id)');
+  });
+
+  it('derives the corrected allocation window from every submitted activity', () => {
+    expect(routeSource).toContain('activity.startDate < min ? activity.startDate : min');
+    expect(routeSource).toContain('activity.endDate > max ? activity.endDate : max');
+    expect(routeSource).toContain('const scheduleChanged = activities.some');
+  });
+
+  it('persists a schedule correction through allocation, revision, response, and audit metadata', () => {
+    expect(routeSource).toContain('if (scheduleChanged && allocation && nextStart && nextEnd)');
+    expect(routeSource).toContain('startAt: nextStart');
+    expect(routeSource).toContain('endAt: nextEnd');
+    expect(routeSource).toContain('version: allocation.version + 1');
+    expect(routeSource).toContain('eq(vehicleAllocations.version, allocation.version)');
+    expect(routeSource).toContain('scheduleChanged,\n        },\n        reason,');
+    expect(routeSource).toContain("action: 'request.transport_review_corrected'");
+    expect(routeSource).toContain('return NextResponse.json({ success: true, changed: true, ...result })');
+  });
+
   it('locks corrections once downstream operational authority exists', () => {
     expect(routeSource).toContain('tripAuthorities');
     expect(routeSource).toContain('Request details are locked once an operational trip or Trip Authority exists.');
