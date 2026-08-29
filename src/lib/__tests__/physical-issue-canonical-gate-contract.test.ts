@@ -14,6 +14,12 @@ function expectCanonicalIssueGate(source: string) {
   expect(source).toContain('checks: issueGate.checks');
   expect(source).toContain('driverKind: issueGate.driverKind');
   expect(source).toContain('actionUrl: `/dashboard/trips/${id}`');
+
+  const permissionIndex = source.indexOf('await requirePermission(');
+  const gateIndex = source.indexOf('await evaluateTripReleaseGate({');
+  expect(permissionIndex).toBeGreaterThan(-1);
+  expect(gateIndex).toBeGreaterThan(permissionIndex);
+  expect(source).not.toContain('request.json(');
 }
 
 describe('physical issue canonical readiness gate contract', () => {
