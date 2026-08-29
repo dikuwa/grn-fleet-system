@@ -508,7 +508,11 @@ export async function evaluateTripReleaseGate(input: {
     }
 
     const [departureInspection] = await db
-      .select({ id: vehicleInspections.id })
+      .select({
+        id: vehicleInspections.id,
+        status: vehicleInspections.status,
+        overallPass: vehicleInspections.overallPass,
+      })
       .from(vehicleInspections)
       .where(
         and(
@@ -516,17 +520,18 @@ export async function evaluateTripReleaseGate(input: {
           eq(vehicleInspections.tripId, trip.id),
           eq(vehicleInspections.vehicleId, trip.vehicleId),
           eq(vehicleInspections.type, 'departure'),
-          eq(vehicleInspections.status, 'completed'),
-          eq(vehicleInspections.overallPass, true),
         ),
       )
       .orderBy(desc(vehicleInspections.createdAt), desc(vehicleInspections.id))
       .limit(1);
-    checks.departureInspectionPassed = Boolean(departureInspection);
-    if (!departureInspection) {
+    const departureInspectionPassed = Boolean(
+      departureInspection?.status === 'completed' && departureInspection.overallPass === true,
+    );
+    checks.departureInspectionPassed = departureInspectionPassed;
+    if (!departureInspectionPassed) {
       blockers.push({
         code: 'departure_inspection_missing',
-        message: 'A completed passing pre-departure inspection for the allocated vehicle is required before issue.',
+        message: 'The latest pre-departure inspection for the allocated vehicle must be completed and passing before issue.',
       });
     }
   }
