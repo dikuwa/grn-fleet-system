@@ -67,18 +67,20 @@ describe('Transport Review correction contract', () => {
     expect(routeSource).toContain('scheduleChanged: result.scheduleChanged');
   });
 
-  it('locks corrections at acknowledgement, authority, physical-issue, or departure boundaries', () => {
+  it('locks corrections at acknowledgement, external acceptance, authority, physical-issue, or departure boundaries', () => {
     expect(routeSource).toContain('tripAuthorities');
     expect(routeSource).toContain("trip.status !== 'pending'");
     expect(routeSource).toContain('trip.issuedAt');
     expect(routeSource).toContain('trip.driverAcknowledgedAt');
+    expect(routeSource).toContain("eq(externalDriverAssignments.state, 'accepted')");
+    expect(routeSource).toContain('externalAcceptanceLocked');
     expect(routeSource).toContain("authority.status !== 'draft'");
     expect(routeSource).toContain('authority.issuedAt');
     expect(routeSource).toContain('authority.authorisedAt');
     expect(routeSource).toContain('authority.acceptedAt');
-    expect(routeSource).toContain('if (tripLocked || authorityLocked)');
+    expect(routeSource).toContain('if (tripLocked || authorityLocked || externalAcceptanceLocked)');
     expect(routeSource).toContain(
-      'Request details are locked after driver acknowledgement, authority authorisation, physical issue, or trip departure.',
+      'Request details are locked after driver acknowledgement or external driver acceptance, authority authorisation, physical issue, or trip departure.',
     );
   });
 
