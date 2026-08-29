@@ -35,4 +35,15 @@ describe('relief-driver handover overlap response contract', () => {
     expect(handoverRoute).toContain("String(error).includes('atomic_driver_handover_initiate_failed')");
     expect(handoverRoute).toContain('{ status: 409 }');
   });
+
+  it('keeps friendly handover overlap checks aligned with the database live-state and time-window rule', () => {
+    expect(handoverRoute).toContain(
+      "const LIVE_ALLOCATION_STATES = ['provisional', 'confirmed', 'issued'] as const;",
+    );
+    expect(handoverRoute).toContain('startAt: vehicleAllocations.startAt');
+    expect(handoverRoute).toContain('endAt: vehicleAllocations.endAt');
+    expect(handoverRoute).toContain('lt(vehicleAllocations.startAt, context.endAt)');
+    expect(handoverRoute).toContain('gt(vehicleAllocations.endAt, context.startAt)');
+    expect(handoverRoute).toContain('another overlapping live allocation');
+  });
 });
