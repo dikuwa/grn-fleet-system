@@ -25,6 +25,7 @@ import {
 } from '@/lib/auth-helpers';
 import { getApprovalDetail } from '@/lib/approval-detail';
 import { recordAuditEvent } from '@/lib/audit-event';
+import { onTripIssued } from '@/lib/document-generator';
 import { calculateDriverCompliance } from '@/lib/employee-lifecycle';
 import { namibiaLicenceClassCovers } from '@/lib/namibia-licence';
 import { Permissions } from '@/lib/permissions';
@@ -303,6 +304,7 @@ export async function PATCH(
           tx
             .select({
               id: trips.id,
+              status: trips.status,
               issuedAt: trips.issuedAt,
               driverAcknowledgedAt: trips.driverAcknowledgedAt,
             })
@@ -311,15 +313,37 @@ export async function PATCH(
             .limit(1)
             .then((rows) => rows[0] ?? null),
           tx
-            .select({ id: tripAuthorities.id })
+            .select({
+              id: tripAuthorities.id,
+              status: tripAuthorities.status,
+              issuedAt: tripAuthorities.issuedAt,
+              authorisedAt: tripAuthorities.authorisedAt,
+              acceptedAt: tripAuthorities.acceptedAt,
+            })
             .from(tripAuthorities)
-            .where(and(eq(tripAuthorities.allocationId, allocation.id), eq(tripAuthorities.tenantId, session.tenantId)))
+            .where(
+              and(
+                eq(tripAuthorities.allocationId, allocation.id),
+                eq(tripAuthorities.tenantId, session.tenantId),
+              ),
+            )
             .limit(1)
             .then((rows) => rows[0] ?? null),
         ]);
-        if (trip || authority) {
+        const tripLocked = Boolean(
+          trip &&
+            (trip.status !== 'pending' || trip.issuedAt || trip.driverAcknowledgedAt),
+        );
+        const authorityLocked = Boolean(
+          authority &&
+            (authority.status !== 'draft' ||
+              authority.issuedAt ||
+              authority.authorisedAt ||
+              authority.acceptedAt),
+        );
+        if (tripLocked || authorityLocked) {
           throw new TransportReviewCorrectionError(
-            'Request details are locked once an operational trip or Trip Authority exists.',
+            'Request details are locked after driver acknowledgement, authority authorisation, physical issue, or trip departure.',
             409,
           );
         }
@@ -634,8 +658,20 @@ export async function PATCH(
         revision: updatedRequest.revision,
         version: updatedRequest.version,
         scheduleChanged,
+        allocationId: allocation?.id ?? null,
       };
     });
+
+    if (result.allocationId) {
+      try {
+        await onTripIssued(result.allocationId, session.tenantId, session.user.id);
+      } catch (documentError) {
+        console.warn(
+          '[transport-review-correction] Could not refresh draft Trip Authority after correction:',
+          documentError,
+        );
+      }
+    }
 
     try {
       await recordAuditEvent({
@@ -676,7 +712,13 @@ export async function PATCH(
       console.warn('[transport-review-correction] Post-commit audit write failed:', auditError);
     }
 
-    return NextResponse.json({ success: true, changed: true, ...result });
+    return NextResponse.json({
+      success: true,
+      changed: true,
+      revision: result.revision,
+      version: result.version,
+      scheduleChanged: result.scheduleChanged,
+    });
   } catch (error) {
     if (error instanceof TransportReviewCorrectionError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
