@@ -29,6 +29,17 @@ describe('Transport Review pending-trip correction boundary', () => {
     expect(block).not.toContain('if (trip || authority)');
   });
 
+  it('locks after internal acknowledgement or accepted external-driver evidence', () => {
+    const block = lifecycleLockBlock();
+
+    expect(block).toContain('driverAcknowledgedAt: trips.driverAcknowledgedAt');
+    expect(block).toContain("eq(externalDriverAssignments.state, 'accepted')");
+    expect(block).toContain('acceptedAt: externalDriverAssignments.acceptedAt');
+    expect(block).toContain('const externalAcceptanceLocked = Boolean(');
+    expect(block).toContain("acceptedExternalAssignment?.state === 'accepted'");
+    expect(block).toContain('acceptedExternalAssignment.acceptedAt');
+  });
+
   it('keeps authorised, issued, accepted, or non-draft authority state locked', () => {
     const block = lifecycleLockBlock();
 
@@ -37,7 +48,7 @@ describe('Transport Review pending-trip correction boundary', () => {
     expect(block).toContain('authority.issuedAt');
     expect(block).toContain('authority.authorisedAt');
     expect(block).toContain('authority.acceptedAt');
-    expect(block).toContain('if (tripLocked || authorityLocked)');
+    expect(block).toContain('if (tripLocked || authorityLocked || externalAcceptanceLocked)');
   });
 
   it('refreshes the mutable draft Trip Authority after committed corrections', () => {
