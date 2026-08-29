@@ -23,6 +23,7 @@ import { namibiaLicenceClassCovers } from '@/lib/namibia-licence';
 export type TripReleaseGateStage = 'release' | 'authorisation' | 'issue';
 export type TripReleaseBlockerCode =
   | 'trip_not_found'
+  | 'trip_not_issuable'
   | 'workflow_not_ready'
   | 'transport_review_incomplete'
   | 'allocation_not_confirmed'
@@ -94,12 +95,15 @@ export async function evaluateTripReleaseGate(input: {
     .select({
       id: trips.id,
       requestId: trips.requestId,
+      status: trips.status,
+      issuedAt: trips.issuedAt,
       vehicleId: trips.vehicleId,
       allocationId: trips.allocationId,
       driverAcknowledgedAt: trips.driverAcknowledgedAt,
       driverAcknowledgedByEmployeeId: trips.driverAcknowledgedByEmployeeId,
       requestStatus: transportRequests.status,
       requestAssignedDriverEmployeeId: transportRequests.assignedDriverEmployeeId,
+      requestAssignedDriverExternalPartyId: transportRequests.assignedDriverExternalPartyId,
       workflowInstanceId: transportRequests.workflowInstanceId,
       driverEmployeeId: vehicleAllocations.driverEmployeeId,
       allocationState: vehicleAllocations.state,
@@ -274,6 +278,7 @@ export async function evaluateTripReleaseGate(input: {
   const [externalDriver] = !trip.driverEmployeeId
     ? await db
         .select({
+          externalPartyId: externalDriverAssignments.externalPartyId,
           assignmentState: externalDriverAssignments.state,
           acceptedAt: externalDriverAssignments.acceptedAt,
           partyStatus: externalParties.status,
@@ -447,6 +452,16 @@ export async function evaluateTripReleaseGate(input: {
   }
 
   if (input.stage === 'issue') {
+    checks.tripPendingAndUnissued = trip.status === 'pending' && !trip.issuedAt;
+    if (!checks.tripPendingAndUnissued) {
+      blockers.push({
+        code: 'trip_not_issuable',
+        message: trip.issuedAt
+          ? 'This vehicle has already been physically issued for the current trip.'
+          : `Physical vehicle issue requires a pending trip (${trip.status}).`,
+      });
+    }
+
     checks.requestAuthorised = trip.requestStatus === 'authorised';
     if (!checks.requestAuthorised) {
       blockers.push({ code: 'request_not_authorised', message: 'Final organisational authorisation is required before issue.' });
@@ -492,7 +507,12 @@ export async function evaluateTripReleaseGate(input: {
 
     const acknowledged =
       driverKind === 'external'
-        ? externalDriver?.assignmentState === 'accepted' && Boolean(externalDriver.acceptedAt)
+        ? Boolean(
+            externalDriver?.assignmentState === 'accepted' &&
+              externalDriver.acceptedAt &&
+              externalDriver.externalPartyId &&
+              trip.requestAssignedDriverExternalPartyId === externalDriver.externalPartyId,
+          )
         : Boolean(
             trip.driverEmployeeId &&
               trip.requestAssignedDriverEmployeeId === trip.driverEmployeeId &&
