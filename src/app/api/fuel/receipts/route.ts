@@ -13,7 +13,7 @@ import { auditEvents } from '@/db/schema/audit';
 import { vehicles } from '@/db/schema/fleet';
 import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { buildKey, isStorageConfigured, uploadFile } from '@/lib/storage';
+import { buildKey, deleteFile, isStorageConfigured, uploadFile } from '@/lib/storage';
 import { parseFuelReceiptText, receiptValidationFlags, type ReceiptFields } from '@/lib/receipt-ocr';
 import { enrichFuelReceiptFields } from '@/lib/receipt-ocr-enrichment';
 import { AI_OCR_CONFIDENCE, extractReceiptWithAi, isAiFeatureEnabled } from '@/lib/ai';
@@ -62,6 +62,19 @@ async function fuelAccess(session: Parameters<typeof requirePermission>[0]) {
   return { isDriver, isManager, denied: !isDriver && !isManager ? driverResult : null };
 }
 
+function receiptClosureConflict(error: unknown) {
+  const record = error as {
+    code?: string;
+    message?: string;
+    cause?: { code?: string; message?: string };
+  };
+  const code = record?.code ?? record?.cause?.code;
+  const message = [record?.message, record?.cause?.message, String(error)]
+    .filter((value): value is string => Boolean(value))
+    .join(' ');
+  return code === '23514' && message.includes('closed_trip_receipt_immutable');
+}
+
 export async function POST(request: NextRequest) {
   try {
     const auth = await requireRequestAuth(request);
@@ -101,6 +114,7 @@ export async function POST(request: NextRequest) {
     const [context] = await db
       .select({
         transaction: fuelTransactions,
+        tripStatus: trips.status,
         tripStart: trips.startedAt,
         tripEnd: trips.returnedAt,
         registration: vehicles.licenceNumber,
@@ -113,6 +127,12 @@ export async function POST(request: NextRequest) {
       .where(and(eq(fuelTransactions.id, transactionId), scope))
       .limit(1);
     if (!context) return NextResponse.json({ error: 'Fuel transaction not found' }, { status: 404 });
+    if (context.transaction.tripId && context.tripStatus === 'closed') {
+      return NextResponse.json(
+        { error: 'This trip is already closed. Fuel receipt evidence is immutable.' },
+        { status: 409 },
+      );
+    }
 
     const original = Buffer.from(await file.arrayBuffer());
     const checksum = createHash('sha256').update(original).digest('hex');
@@ -216,50 +236,57 @@ export async function POST(request: NextRequest) {
     }
 
     const receiptId = randomUUID();
-    await runAtomicMutations((executor) => {
-      const mutations = [
-        executor.insert(fuelReceipts).values({
-          id: receiptId,
-          tenantId: session.tenantId,
-          transactionId,
-          fileKey: key,
-          originalFileName: file.name,
-          mimeType: file.type,
-          fileSize: file.size,
-          checksum,
-          ocrStatus,
-          rawOcrResponse,
-          extractionData: { ...extractionData, validationFlags: flags },
-          fieldConfidence,
-          extractionConfidence: extractionConfidence.toFixed(3),
-        }),
-        executor.insert(auditEvents).values({
-          tenantId: session.tenantId,
-          tenantSequence: Date.now(),
-          eventType: 'fuel_receipt_ocr_completed',
-          actorUserId: session.user.id,
-          action: 'upload_and_extract',
-          entityType: 'fuel_receipt',
-          entityId: receiptId,
-          summary: `Fuel receipt uploaded; OCR status ${ocrStatus}`,
-          after: { transactionId, checksum, flags, extractionConfidence },
-          sourceChannel: 'web',
-        }),
-      ];
-      if (flags.length > 0) {
-        mutations.push(
-          executor
-            .update(fuelTransactions)
-            .set({
-              anomalyState: 'flagged',
-              anomalyNotes: flags.join(', '),
-              updatedAt: new Date(),
-            })
-            .where(eq(fuelTransactions.id, transactionId)),
-        );
-      }
-      return mutations;
-    });
+    try {
+      await runAtomicMutations((executor) => {
+        const mutations = [
+          executor.insert(fuelReceipts).values({
+            id: receiptId,
+            tenantId: session.tenantId,
+            transactionId,
+            fileKey: key,
+            originalFileName: file.name,
+            mimeType: file.type,
+            fileSize: file.size,
+            checksum,
+            ocrStatus,
+            rawOcrResponse,
+            extractionData: { ...extractionData, validationFlags: flags },
+            fieldConfidence,
+            extractionConfidence: extractionConfidence.toFixed(3),
+          }),
+          executor.insert(auditEvents).values({
+            tenantId: session.tenantId,
+            tenantSequence: Date.now(),
+            eventType: 'fuel_receipt_ocr_completed',
+            actorUserId: session.user.id,
+            action: 'upload_and_extract',
+            entityType: 'fuel_receipt',
+            entityId: receiptId,
+            summary: `Fuel receipt uploaded; OCR status ${ocrStatus}`,
+            after: { transactionId, checksum, flags, extractionConfidence },
+            sourceChannel: 'web',
+          }),
+        ];
+        if (flags.length > 0) {
+          mutations.push(
+            executor
+              .update(fuelTransactions)
+              .set({
+                anomalyState: 'flagged',
+                anomalyNotes: flags.join(', '),
+                updatedAt: new Date(),
+              })
+              .where(eq(fuelTransactions.id, transactionId)),
+          );
+        }
+        return mutations;
+      });
+    } catch (error) {
+      await deleteFile(key).catch((cleanupError) => {
+        console.error('[fuel/receipts] failed to remove uncommitted receipt object:', cleanupError);
+      });
+      throw error;
+    }
 
     const [receipt] = await db
       .select()
@@ -280,6 +307,12 @@ export async function POST(request: NextRequest) {
       { status: 201 },
     );
   } catch (error) {
+    if (receiptClosureConflict(error)) {
+      return NextResponse.json(
+        { error: 'This trip is already closed. Fuel receipt evidence is immutable.' },
+        { status: 409 },
+      );
+    }
     if ((error as { code?: string })?.code === '23505') {
       return NextResponse.json({ error: 'This receipt image was already uploaded' }, { status: 409 });
     }
@@ -334,13 +367,25 @@ export async function PATCH(request: NextRequest) {
           }),
         );
     const [record] = await db
-      .select({ receipt: fuelReceipts, transactionId: fuelTransactions.id })
+      .select({
+        receipt: fuelReceipts,
+        transactionId: fuelTransactions.id,
+        tripId: fuelTransactions.tripId,
+        tripStatus: trips.status,
+      })
       .from(fuelReceipts)
       .innerJoin(fuelTransactions, eq(fuelTransactions.id, fuelReceipts.transactionId))
       .innerJoin(vehicles, eq(vehicles.id, fuelTransactions.vehicleId))
+      .leftJoin(trips, eq(trips.id, fuelTransactions.tripId))
       .where(and(eq(fuelReceipts.id, receiptId), eq(fuelReceipts.tenantId, session.tenantId), scope))
       .limit(1);
     if (!record) return NextResponse.json({ error: 'Receipt not found' }, { status: 404 });
+    if (record.tripId && record.tripStatus === 'closed') {
+      return NextResponse.json(
+        { error: 'This trip is already closed. Fuel receipt evidence is immutable.' },
+        { status: 409 },
+      );
+    }
 
     if (isTerminalReceiptReviewStatus(record.receipt.ocrStatus)) {
       return NextResponse.json(
@@ -496,6 +541,12 @@ export async function PATCH(request: NextRequest) {
 
     return NextResponse.json({ success: true });
   } catch (error) {
+    if (receiptClosureConflict(error)) {
+      return NextResponse.json(
+        { error: 'This trip is already closed. Fuel receipt evidence is immutable.' },
+        { status: 409 },
+      );
+    }
     if ((error as { code?: string })?.code === '23514') {
       return NextResponse.json(
         { error: 'This receipt review was already completed. Refresh to view the latest state.' },
