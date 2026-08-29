@@ -5,8 +5,14 @@ const handoverRoute = readFileSync('src/app/api/trips/[id]/driver-handover/route
 const migration = readFileSync('src/db/migrations/0102_driver_handover_overlap_response.sql', 'utf8');
 
 describe('relief-driver handover overlap response contract', () => {
-  it('keeps the central allocation concurrency guard as the race boundary', () => {
+  it('keeps the latest allocation lifecycle guard as the race boundary', () => {
     expect(migration).toContain('guard_vehicle_allocation_concurrency');
+    expect(migration).toContain('enters_live_reservation');
+    expect(migration).toContain('FROM transport_requests');
+    expect(migration).toContain('FOR UPDATE');
+    expect(migration).toContain("'transport_review'");
+    expect(migration).toContain("'release_pending'");
+    expect(migration).toContain("pg_advisory_xact_lock(hashtextextended('allocation-request:'");
     expect(migration).toContain("pg_advisory_xact_lock(hashtextextended('allocation-driver:'");
     expect(migration).toContain('driver_employee_id = NEW.driver_employee_id');
     expect(migration).toContain('start_at < NEW.end_at');
