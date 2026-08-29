@@ -28,7 +28,7 @@ import { createScopedNotifications, resolveActiveRoleRecipients } from '@/lib/no
 import { SystemRoles, WorkspaceIds } from '@/lib/workspaces';
 
 const ACTIVE_HANDOVER_STATUSES = ['in_progress', 'return_due'] as const;
-const LIVE_ALLOCATION_STATES = ['provisional', 'confirmed'] as const;
+const LIVE_ALLOCATION_STATES = ['provisional', 'confirmed', 'issued'] as const;
 
 function maskLicence(value: string) {
   const clean = value.trim();
@@ -481,6 +481,8 @@ async function acknowledgeHandover(session: AuthSession, tripId: string, note?: 
       allocationVersion: vehicleAllocations.version,
       allocationVehicleId: vehicleAllocations.vehicleId,
       currentDriverEmployeeId: vehicleAllocations.driverEmployeeId,
+      startAt: vehicleAllocations.startAt,
+      endAt: vehicleAllocations.endAt,
       authorityId: tripAuthorities.id,
       validUntil: tripAuthorities.validUntil,
       takeoverOdometer: tripAuthorisedDrivers.takeoverOdometer,
@@ -573,10 +575,12 @@ async function acknowledgeHandover(session: AuthSession, tripId: string, note?: 
       eq(vehicleAllocations.driverEmployeeId, employee.id),
       ne(vehicleAllocations.id, context.allocationId),
       inArray(vehicleAllocations.state, [...LIVE_ALLOCATION_STATES]),
+      lt(vehicleAllocations.startAt, context.endAt),
+      gt(vehicleAllocations.endAt, context.startAt),
     ))
     .limit(1);
   if (driverConflict) {
-    return NextResponse.json({ error: 'You now have another live allocation. Transport Administration must review the handover.' }, { status: 409 });
+    return NextResponse.json({ error: 'You now have another overlapping live allocation. Transport Administration must review the handover.' }, { status: 409 });
   }
 
   const now = new Date();
