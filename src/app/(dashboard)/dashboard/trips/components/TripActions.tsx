@@ -56,6 +56,12 @@ interface ReadinessResponse {
   gates?: Array<{ key: string; status: GateStatus; label?: string; detail?: string }>;
 }
 
+interface IssueFailureResponse {
+  error?: string;
+  blockers?: Array<{ code?: string; message?: string }>;
+  actionUrl?: string;
+}
+
 export function TripActions({
   tripId,
   allocationId,
@@ -73,6 +79,7 @@ export function TripActions({
   const { toast } = useToast();
   const [isWorking, setIsWorking] = useState(false);
   const [error, setError] = useState('');
+  const [issueRecoveryUrl, setIssueRecoveryUrl] = useState<string | null>(null);
   const [replaceDialogOpen, setReplaceDialogOpen] = useState(false);
   const [handoverDialogOpen, setHandoverDialogOpen] = useState(false);
   const [externalStartDialogOpen, setExternalStartDialogOpen] = useState(false);
@@ -136,6 +143,7 @@ export function TripActions({
 
   const handleReplaceSuccess = useCallback(() => {
     setDepartureInspectionStatus(null);
+    setIssueRecoveryUrl(null);
     void refreshReadiness();
     router.refresh();
   }, [refreshReadiness, router]);
@@ -157,12 +165,14 @@ export function TripActions({
   }, [router]);
 
   const handleDepartureInspection = useCallback(() => {
+    setIssueRecoveryUrl(null);
     router.push(`/dashboard/inspections/new?type=departure&tripId=${tripId}&vehicleId=${vehicleId}`);
   }, [tripId, vehicleId, router]);
 
   const handleIssueVehicle = useCallback(async () => {
     setIsWorking(true);
     setError('');
+    setIssueRecoveryUrl(null);
     try {
       const readinessResponse = await fetch(`/api/trips/${tripId}/readiness`, { cache: 'no-store' });
       const readiness = (await readinessResponse.json().catch(() => ({}))) as ReadinessResponse & { error?: string };
@@ -217,9 +227,21 @@ export function TripActions({
         }),
       });
       if (!res.ok) {
-        const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.error || 'Failed to issue vehicle');
+        const errData = (await res.json().catch(() => ({}))) as IssueFailureResponse;
+        const recoveryUrl =
+          typeof errData.actionUrl === 'string' && errData.actionUrl.startsWith('/dashboard/')
+            ? errData.actionUrl
+            : null;
+        const blockerMessage = errData.blockers?.find(
+          (blocker) => typeof blocker.message === 'string' && blocker.message.trim().length > 0,
+        )?.message;
+        setIssueRecoveryUrl(recoveryUrl);
+        if (res.status === 409) {
+          await refreshReadiness();
+        }
+        throw new Error(blockerMessage || errData.error || 'Failed to issue vehicle');
       }
+      setIssueRecoveryUrl(null);
       setVehicleIssued(true);
       toast({
         title: 'Vehicle issued',
@@ -444,7 +466,17 @@ export function TripActions({
           </span>
         )}
         {error && !cancelDialogOpen && (
-          <p className="text-status-error-text mt-1 w-full text-xs">{error}</p>
+          <div className="mt-1 flex w-full flex-wrap items-center gap-2">
+            <p className="text-status-error-text text-xs" role="alert">{error}</p>
+            {issueRecoveryUrl && (
+              <Link
+                href={issueRecoveryUrl}
+                className="text-brand-700 hover:text-brand-800 focus-visible:ring-brand-500 rounded-[6px] text-xs font-medium underline underline-offset-2 focus-visible:outline-none focus-visible:ring-2"
+              >
+                Open blocking record
+              </Link>
+            )}
+          </div>
         )}
         {replacementDialog}
         {externalStartDialog}
