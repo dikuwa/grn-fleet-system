@@ -61,12 +61,25 @@ describe('Transport Review correction contract', () => {
     expect(routeSource).toContain('eq(vehicleAllocations.version, allocation.version)');
     expect(routeSource).toContain('scheduleChanged,\n        },\n        reason,');
     expect(routeSource).toContain("action: 'request.transport_review_corrected'");
-    expect(routeSource).toContain('return NextResponse.json({ success: true, changed: true, ...result })');
+    expect(routeSource).toContain('success: true');
+    expect(routeSource).toContain('changed: true');
+    expect(routeSource).toContain('revision: result.revision');
+    expect(routeSource).toContain('scheduleChanged: result.scheduleChanged');
   });
 
-  it('locks corrections once downstream operational authority exists', () => {
+  it('locks corrections at acknowledgement, authority, physical-issue, or departure boundaries', () => {
     expect(routeSource).toContain('tripAuthorities');
-    expect(routeSource).toContain('Request details are locked once an operational trip or Trip Authority exists.');
+    expect(routeSource).toContain("trip.status !== 'pending'");
+    expect(routeSource).toContain('trip.issuedAt');
+    expect(routeSource).toContain('trip.driverAcknowledgedAt');
+    expect(routeSource).toContain("authority.status !== 'draft'");
+    expect(routeSource).toContain('authority.issuedAt');
+    expect(routeSource).toContain('authority.authorisedAt');
+    expect(routeSource).toContain('authority.acceptedAt');
+    expect(routeSource).toContain('if (tripLocked || authorityLocked)');
+    expect(routeSource).toContain(
+      'Request details are locked after driver acknowledgement, authority authorisation, physical issue, or trip departure.',
+    );
   });
 
   it('requires a human-readable note from the Transport Review UI', () => {
