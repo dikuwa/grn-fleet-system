@@ -49,6 +49,7 @@ describe('Transport Review pending-trip correction boundary', () => {
 
     expect(documentGenerator).toContain('A pending draft is mutable working state');
     expect(documentGenerator).toContain("existing?.status === 'draft'");
-    expect(documentGenerator).toContain('UPDATE generated_documents');
+    expect(documentGenerator).toContain('.update(generatedDocuments)');
+    expect(documentGenerator).toContain("eq(generatedDocuments.status, 'draft')");
   });
 });
