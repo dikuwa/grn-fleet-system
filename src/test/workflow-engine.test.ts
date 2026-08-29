@@ -263,97 +263,33 @@ describe('WorkflowEngine — Action processing', () => {
 });
 
 describe('WorkflowEngine — Emergency override', () => {
-  it('returns error when reason is missing', async () => {
+  it.each([
+    ['missing reason', 'wf-instance-1', ''],
+    ['unknown instance', 'nonexistent', 'Urgent flood response'],
+    ['inactive-instance shaped input', 'wf-instance-1', 'Urgent'],
+    ['whitespace reason', 'wf-inst-1', '   '],
+  ])('fails closed before legacy validation: %s', async (_caseName, instanceId, reason) => {
     const { WorkflowEngine } = await import('@/lib/workflow-engine');
     const mockDb = createMockDb();
-
-    // Permission mock returns ok
-    const auth = await import('@/lib/auth-helpers');
-    vi.spyOn(auth, 'requirePermission').mockResolvedValue(undefined as unknown as never);
-
-    const engine = new WorkflowEngine({ db: mockDb as unknown as WorkflowEngineDb });
-    const result = await engine.processEmergencyOverride(
-      'wf-instance-1',
-      '',
-      undefined,
-      MOCK_SESSION,
-    );
-
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error.status).toBe(400);
-    }
-  });
-
-  it('returns error when workflow instance is not found', async () => {
-    const { WorkflowEngine } = await import('@/lib/workflow-engine');
-    const mockDb = createMockDb();
-    mockDb.limit = vi.fn().mockResolvedValue([]);
 
     const auth = await import('@/lib/auth-helpers');
     vi.spyOn(auth, 'requirePermission').mockResolvedValue(undefined as unknown as never);
 
     const engine = new WorkflowEngine({ db: mockDb as unknown as WorkflowEngineDb });
     const result = await engine.processEmergencyOverride(
-      'nonexistent',
-      'Urgent flood response',
+      instanceId,
+      reason,
       undefined,
       MOCK_SESSION,
     );
 
     expect(result.ok).toBe(false);
     if (!result.ok) {
-      expect(result.error.status).toBe(404);
+      expect(result.error.status).toBe(403);
     }
-  });
-
-  it('returns error when workflow is not active', async () => {
-    const { WorkflowEngine } = await import('@/lib/workflow-engine');
-    const mockDb = createMockDb();
-    mockDb.limit = vi.fn()
-      .mockResolvedValueOnce([{ ...MOCK_WORKFLOW_INSTANCE_SELECT, status: 'completed', id: 'wf-instance-1' }])
-      .mockResolvedValueOnce([{ tenantId: 'tenant-1' }]);
-
-    const auth = await import('@/lib/auth-helpers');
-    vi.spyOn(auth, 'requirePermission').mockResolvedValue(undefined as unknown as never);
-
-    const engine = new WorkflowEngine({ db: mockDb as unknown as WorkflowEngineDb });
-    const result = await engine.processEmergencyOverride(
-      'wf-instance-1',
-      'Urgent',
-      undefined,
-      MOCK_SESSION,
-    );
-
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error.status).toBe(409);
-    }
-  });
-
-  // Permission-based tests removed: the chained mock pattern cannot
-  // reliably test the requirePermission path without a more sophisticated
-  // mock DB that handles standalone .select().from().where() calls.
-  // See the CRO/Director role audit tests for static permission verification.
-
-  it('validates emergency override reason format', async () => {
-    const { WorkflowEngine } = await import('@/lib/workflow-engine');
-    const mockDb = createMockDb();
-
-    const engine = new WorkflowEngine({ db: mockDb as unknown as WorkflowEngineDb });
-
-    // Reason that is only whitespace
-    const result = await engine.processEmergencyOverride(
-      'wf-inst-1',
-      '   ',
-      undefined,
-      MOCK_SESSION,
-    );
-
-    expect(result.ok).toBe(false);
-    if (!result.ok) {
-      expect(result.error.status).toBe(400);
-    }
+    expect(mockDb.select).not.toHaveBeenCalled();
+    expect(mockDb.insert).not.toHaveBeenCalled();
+    expect(mockDb.update).not.toHaveBeenCalled();
   });
 });
 
