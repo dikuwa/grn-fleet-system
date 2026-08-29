@@ -300,7 +300,7 @@ export async function PATCH(
       }
 
       if (allocation) {
-        const [trip, authority] = await Promise.all([
+        const [trip, authority, acceptedExternalAssignment] = await Promise.all([
           tx
             .select({
               id: trips.id,
@@ -329,6 +329,23 @@ export async function PATCH(
             )
             .limit(1)
             .then((rows) => rows[0] ?? null),
+          tx
+            .select({
+              id: externalDriverAssignments.id,
+              state: externalDriverAssignments.state,
+              acceptedAt: externalDriverAssignments.acceptedAt,
+            })
+            .from(externalDriverAssignments)
+            .where(
+              and(
+                eq(externalDriverAssignments.allocationId, allocation.id),
+                eq(externalDriverAssignments.tenantId, session.tenantId),
+                eq(externalDriverAssignments.state, 'accepted'),
+              ),
+            )
+            .orderBy(desc(externalDriverAssignments.updatedAt))
+            .limit(1)
+            .then((rows) => rows[0] ?? null),
         ]);
         const tripLocked = Boolean(
           trip &&
@@ -341,9 +358,12 @@ export async function PATCH(
               authority.authorisedAt ||
               authority.acceptedAt),
         );
-        if (tripLocked || authorityLocked) {
+        const externalAcceptanceLocked = Boolean(
+          acceptedExternalAssignment?.state === 'accepted' && acceptedExternalAssignment.acceptedAt,
+        );
+        if (tripLocked || authorityLocked || externalAcceptanceLocked) {
           throw new TransportReviewCorrectionError(
-            'Request details are locked after driver acknowledgement, authority authorisation, physical issue, or trip departure.',
+            'Request details are locked after driver acknowledgement or external driver acceptance, authority authorisation, physical issue, or trip departure.',
             409,
           );
         }
