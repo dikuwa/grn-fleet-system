@@ -10,6 +10,7 @@ import { parseFuelReceiptText, receiptValidationFlags, type ReceiptFields } from
 import { enrichFuelReceiptFields } from '@/lib/receipt-ocr-enrichment';
 import { AI_OCR_CONFIDENCE, extractReceiptWithAi, isAiFeatureEnabled } from '@/lib/ai';
 import { ALLOWED_IMAGE_TYPES, UPLOAD_MAX_SIZE_BYTES } from '@/lib/constants';
+import { recognizeWithTesseract } from '@/lib/tesseract-ocr';
 
 export const runtime = 'nodejs';
 export const maxDuration = 60;
@@ -85,23 +86,17 @@ export async function POST(request: NextRequest) {
           .png()
           .toBuffer();
 
-        const { createWorker } = await import('tesseract.js');
-        const worker = await createWorker('eng');
-        try {
-          const recognition = await worker.recognize(processed);
-          const parsed = parseFuelReceiptText(recognition.data.text, recognition.data.confidence);
-          const enriched = enrichFuelReceiptFields(recognition.data.text, parsed.fields);
-          extractionData = { ...enriched };
-          fieldConfidence = parsed.confidence;
-          extractionConfidence = Math.max(0, Math.min(1, recognition.data.confidence / 100));
-          if (
-            extractionConfidence < 0.65 ||
-            Object.values(parsed.confidence).some((confidence) => confidence < 0.6)
-          ) {
-            ocrStatus = 'awaiting_verification';
-          }
-        } finally {
-          await worker.terminate();
+        const recognition = await recognizeWithTesseract(processed);
+        const parsed = parseFuelReceiptText(recognition.data.text, recognition.data.confidence);
+        const enriched = enrichFuelReceiptFields(recognition.data.text, parsed.fields);
+        extractionData = { ...enriched };
+        fieldConfidence = parsed.confidence;
+        extractionConfidence = Math.max(0, Math.min(1, recognition.data.confidence / 100));
+        if (
+          extractionConfidence < 0.65 ||
+          Object.values(parsed.confidence).some((confidence) => confidence < 0.6)
+        ) {
+          ocrStatus = 'awaiting_verification';
         }
       } catch (ocrError) {
         ocrStatus = 'ocr_failed';
