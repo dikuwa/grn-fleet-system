@@ -403,12 +403,23 @@ export async function createIncident(input: CreateIncidentInput): Promise<Create
     .where(and(eq(tripIncidents.id, incidentId), eq(tripIncidents.tenantId, input.tenantId)))
     .limit(1);
   if (!incident) throw new Error('Incident was committed but could not be reloaded');
+
+  // The incident INSERT participates in the same trip-row lock as final closure.
+  // Refresh the trip status after that serialization point so closure-first races
+  // regenerate the official completion document with the accepted late incident.
+  const [liveTrip] = await db
+    .select({ status: trips.status })
+    .from(trips)
+    .where(and(eq(trips.id, input.tripId), eq(trips.tenantId, input.tenantId)))
+    .limit(1);
+  if (!liveTrip) throw new Error('Trip disappeared after incident commit');
+
   await deliverIncidentSideEffects(
     input,
     incident,
     officialNumber,
     maintenanceAssigneeUserId,
-    trip.status,
+    liveTrip.status,
     requiresVehicleRestriction,
   );
   return { incident, officialNumber };
