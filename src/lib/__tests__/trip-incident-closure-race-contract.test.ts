@@ -26,6 +26,15 @@ describe('late offline incident vs final closure contract', () => {
     expect(incidentService).toContain("documentType: 'trip_completion'");
   });
 
+  it('refreshes serialized trip state before post-incident document side effects', () => {
+    expect(incidentService).toContain('const [liveTrip] = await db');
+    expect(incidentService).toContain('.select({ status: trips.status })');
+    expect(incidentService).toContain('eq(trips.id, input.tripId)');
+    expect(incidentService).toContain('eq(trips.tenantId, input.tenantId)');
+    expect(incidentService).toContain('liveTrip.status');
+    expect(incidentService).not.toContain('maintenanceAssigneeUserId,\n    trip.status,\n    requiresVehicleRestriction');
+  });
+
   it('prevents stale closure-review state from clearing reconciliation after closure', () => {
     expect(migration).toContain('preserve_closed_trip_return_reconciliation');
     expect(migration).toContain("lateIncidentRequiresReconciliation");
