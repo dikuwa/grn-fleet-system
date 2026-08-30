@@ -54,14 +54,26 @@ const BUDGETS = {
   '/dashboard/fleet': 6,
   '/dashboard/drivers': 7,
   '/dashboard/admin/users': 7,
+  '/dashboard/programmes': 7,
 };
+const PROGRAMME_DETAIL_BUDGET = 7;
 
 async function main() {
   const cookieJar = await signIn();
-  const pages = Object.keys(BUDGETS);
+  const pages = Object.keys(BUDGETS).map((page) => ({ page, budget: BUDGETS[page] }));
+  const programmeDetailPath = await resolveProgrammeDetailPath(cookieJar);
+  if (programmeDetailPath) {
+    pages.push({ page: programmeDetailPath, budget: PROGRAMME_DETAIL_BUDGET });
+  } else if (BUDGET_MODE) {
+    console.error('Perf regression guard requires at least one visible seeded programme for the programme-detail benchmark.');
+    process.exit(1);
+  } else {
+    console.warn('No visible programme found; skipping programme-detail benchmark.');
+  }
+
   const results = [];
 
-  for (const page of pages) {
+  for (const { page, budget } of pages) {
     // Warm the page first (untimed): in CI the bench runs against `next dev`,
     // which compiles pages on demand. We want to budget the render, not the
     // one-off dev compile.
@@ -73,29 +85,28 @@ async function main() {
     }
     durations.sort((a, b) => a - b);
     const best = durations[0];
-    results.push({ page, best, runs: durations, before: BEFORE[page] });
+    results.push({ page, budget, best, runs: durations, before: BEFORE[page] });
   }
 
   console.log('\nPage render benchmark (RSC navigation, seconds)');
-  console.log('─'.repeat(72));
+  console.log('─'.repeat(88));
   console.log(
-    'page'.padEnd(28) +
+    'page'.padEnd(44) +
       'before'.padStart(8) +
       'after'.padStart(8) +
       'Δ'.padStart(8) +
       'budget'.padStart(8) +
       'status'.padStart(10),
   );
-  console.log('─'.repeat(72));
+  console.log('─'.repeat(88));
 
   let failed = false;
-  for (const { page, best, before } of results) {
-    const budget = BUDGETS[page];
+  for (const { page, budget, best, before } of results) {
     const delta = before !== undefined ? best - before : NaN;
     const ok = best <= budget;
     if (!ok) failed = true;
     console.log(
-      page.padEnd(28) +
+      page.padEnd(44) +
         (before !== undefined ? before.toFixed(1) : '—').padStart(8) +
         best.toFixed(1).padStart(8) +
         (Number.isFinite(delta) ? `${delta >= 0 ? '+' : ''}${delta.toFixed(1)}` : '—').padStart(8) +
@@ -103,7 +114,7 @@ async function main() {
         (ok ? '  ok'.padStart(10) : '  OVER'.padStart(10)),
     );
   }
-  console.log('─'.repeat(72));
+  console.log('─'.repeat(88));
 
   if (BUDGET_MODE) {
     if (failed) {
@@ -138,6 +149,19 @@ async function signIn() {
   return cookie;
 }
 
+async function resolveProgrammeDetailPath(cookie) {
+  const res = await fetch(`${BASE}/api/programmes?limit=1`, {
+    headers: { Cookie: cookie },
+    cache: 'no-store',
+  });
+  if (!res.ok) {
+    throw new Error(`Programme benchmark discovery failed (${res.status}).`);
+  }
+  const json = await res.json();
+  const id = json?.data?.[0]?.id;
+  return id ? `/dashboard/programmes/${id}` : null;
+}
+
 async function timeRender(path, cookie) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), TIMEOUT_MS);
@@ -154,6 +178,9 @@ async function timeRender(path, cookie) {
       },
       signal: controller.signal,
     });
+    if (!res.ok) {
+      throw new Error(`Page benchmark request failed for ${path} (${res.status}).`);
+    }
     // fetch() resolves on response headers; the render cost is in the body.
     // Consume it so we time the full RSC render, matching the curl time_total
     // used for the before-baseline.
@@ -182,4 +209,3 @@ main().catch((err) => {
   console.error('bench-pages failed:', err instanceof Error ? err.message : err);
   process.exit(1);
 });
-
