@@ -2,7 +2,6 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 
 const source = readFileSync('src/scripts/rotate-qa-credentials.ts', 'utf8');
-const pkg = readFileSync('package.json', 'utf8');
 
 describe('QA credential rotation guardrails', () => {
   it('is allowlisted to the seeded QA identities', () => {
@@ -25,8 +24,8 @@ describe('QA credential rotation guardrails', () => {
     expect(source).toContain('db.transaction');
   });
 
-  it('exposes separate dry-run and execute package commands', () => {
-    expect(pkg).toContain('qa:credentials:dry-run');
-    expect(pkg).toContain('qa:credentials:rotate');
+  it('never prints the replacement password', () => {
+    expect(source).toContain('Password value was not logged.');
+    expect(source).not.toContain('console.log(password)');
   });
 });
