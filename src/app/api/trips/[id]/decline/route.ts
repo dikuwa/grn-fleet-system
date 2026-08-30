@@ -57,6 +57,7 @@ export async function POST(
         issuedAt: trips.issuedAt,
         driverAcknowledgedAt: trips.driverAcknowledgedAt,
         allocationId: vehicleAllocations.id,
+        allocationVersion: vehicleAllocations.version,
         allocationState: vehicleAllocations.state,
         driverEmployeeId: vehicleAllocations.driverEmployeeId,
         requestId: transportRequests.id,
@@ -112,7 +113,47 @@ export async function POST(
     };
 
     await db.execute(sql`
-      WITH authority_claim AS (
+      WITH allocation_claim AS (
+        UPDATE vehicle_allocations va
+        SET version = version + 1,
+            updated_at = ${now}
+        WHERE va.id = ${context.allocationId}::uuid
+          AND va.request_id = ${context.requestId}::uuid
+          AND va.state = 'confirmed'
+          AND va.version = ${context.allocationVersion}
+          AND va.driver_employee_id = ${employee.id}::uuid
+          AND EXISTS (
+            SELECT 1
+            FROM trips t
+            WHERE t.id = ${id}::uuid
+              AND t.tenant_id = ${session.tenantId}::uuid
+              AND t.request_id = va.request_id
+              AND t.allocation_id = va.id
+              AND t.status = 'pending'
+              AND t.issued_at IS NULL
+              AND t.driver_acknowledged_at IS NULL
+          )
+          AND EXISTS (
+            SELECT 1
+            FROM transport_requests tr
+            WHERE tr.id = va.request_id
+              AND tr.tenant_id = ${session.tenantId}::uuid
+              AND tr.status = 'driver_acknowledgement_pending'
+              AND tr.assigned_driver_employee_id = ${employee.id}::uuid
+          )
+          AND EXISTS (
+            SELECT 1
+            FROM trip_authorities ta
+            WHERE ta.id = ${context.authorityId}::uuid
+              AND ta.trip_id = ${id}::uuid
+              AND ta.allocation_id = va.id
+              AND ta.tenant_id = ${session.tenantId}::uuid
+              AND ta.status = 'awaiting_driver_acceptance'
+              AND NOT (COALESCE(ta.data, '{}'::jsonb) ? 'driverDecline')
+          )
+        RETURNING va.id
+      ),
+      authority_claim AS (
         UPDATE trip_authorities ta
         SET data = COALESCE(ta.data, '{}'::jsonb) || jsonb_build_object(
               'driverDecline', ${JSON.stringify(declineSnapshot)}::jsonb
@@ -121,23 +162,8 @@ export async function POST(
         WHERE ta.id = ${context.authorityId}::uuid
           AND ta.tenant_id = ${session.tenantId}::uuid
           AND ta.status = 'awaiting_driver_acceptance'
-          AND EXISTS (
-            SELECT 1
-            FROM trips t
-            INNER JOIN vehicle_allocations va ON va.id = t.allocation_id
-            INNER JOIN transport_requests tr ON tr.id = t.request_id
-            WHERE t.id = ${id}::uuid
-              AND t.tenant_id = ${session.tenantId}::uuid
-              AND t.status = 'pending'
-              AND t.issued_at IS NULL
-              AND t.driver_acknowledged_at IS NULL
-              AND va.id = ${context.allocationId}::uuid
-              AND va.state = 'confirmed'
-              AND va.driver_employee_id = ${employee.id}::uuid
-              AND tr.tenant_id = ${session.tenantId}::uuid
-              AND tr.status = 'driver_acknowledgement_pending'
-              AND tr.assigned_driver_employee_id = ${employee.id}::uuid
-          )
+          AND NOT (COALESCE(ta.data, '{}'::jsonb) ? 'driverDecline')
+          AND EXISTS (SELECT 1 FROM allocation_claim)
         RETURNING ta.id
       ),
       audit_inserted AS (
@@ -158,11 +184,13 @@ export async function POST(
           ${reason},
           jsonb_build_object(
             'allocationId', ${context.allocationId}::text,
+            'allocationVersion', ${context.allocationVersion},
             'driverEmployeeId', ${employee.id}::text,
             'authorityId', ${context.authorityId}::text
           ),
           jsonb_build_object(
             'allocationId', ${context.allocationId}::text,
+            'allocationVersion', ${context.allocationVersion + 1},
             'driverEmployeeId', ${employee.id}::text,
             'authorityId', ${context.authorityId}::text,
             'driverDeclined', true,
@@ -173,10 +201,12 @@ export async function POST(
         RETURNING id
       )
       SELECT CAST(CASE
-        WHEN (SELECT count(*) FROM authority_claim) = 1
+        WHEN (SELECT count(*) FROM allocation_claim) = 1
+         AND (SELECT count(*) FROM authority_claim) = 1
          AND (SELECT count(*) FROM audit_inserted) = 1
         THEN '1'
         ELSE 'atomic_driver_decline_failed_'
+          || (SELECT count(*) FROM allocation_claim)::text
           || (SELECT count(*) FROM authority_claim)::text
           || (SELECT count(*) FROM audit_inserted)::text
       END AS integer) AS committed
