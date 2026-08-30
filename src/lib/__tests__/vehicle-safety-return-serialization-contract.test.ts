@@ -17,13 +17,14 @@ describe('vehicle safety evidence vs return-to-service serialization', () => {
     expect(migration).toContain("status = 'maintenance'");
   });
 
-  it('uses the same vehicle-row boundary for safety incidents', () => {
+  it('uses the same vehicle-row boundary for explicit safety incidents only', () => {
     expect(migration).toContain('lock_vehicle_for_safety_incident');
     expect(migration).toContain('FOR UPDATE OF v');
-    expect(migration).toContain("NEW.vehicle_damage = true");
-    expect(migration).toContain("NEW.vehicle_safe = false");
+    expect(migration).toContain('NEW.vehicle_damage IS TRUE');
+    expect(migration).toContain('NEW.vehicle_safe IS FALSE');
     expect(migration).toContain("NEW.severity = 'critical'");
     expect(migration).toContain("NEW.technical_clearance_status = 'cleared'");
+    expect(migration).toContain('Unknown\n  -- vehicle condition (NULL) is intentionally non-blocking');
   });
 
   it('rechecks all live blockers after the availability update has claimed the vehicle row', () => {
@@ -33,6 +34,8 @@ describe('vehicle safety evidence vs return-to-service serialization', () => {
     expect(migration).toContain("NEW.status IS DISTINCT FROM 'available'");
     expect(migration).toContain("d.is_blocking = true");
     expect(migration).toContain("t.status IN ('pending', 'in_progress', 'return_due', 'return_inspection', 'closure_review')");
+    expect(migration).toContain('ti.vehicle_damage IS TRUE');
+    expect(migration).toContain('ti.vehicle_safe IS FALSE');
     expect(migration).toContain("ti.technical_clearance_status <> 'cleared'");
     expect(migration).toContain('RETURN NULL');
   });
