@@ -13,6 +13,7 @@ describe('programme detail runtime performance guard', () => {
 
   it('times the client data endpoint used by the programme detail page', () => {
     expect(detailPage).toContain('fetch(`/api/programmes/${id}`)');
-    expect(benchmark).toContain('timeApiRequest(`/api/programmes/${programmeId}`');
+    expect(benchmark).toContain('const target = `/api/programmes/${programmeId}`');
+    expect(benchmark).toContain('timeApiRequest(target, cookieJar)');
   });
 });
