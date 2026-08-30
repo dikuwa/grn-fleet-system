@@ -51,20 +51,18 @@ async function main() {
     results.push({ target: page, budget, best: durations[0], before: BEFORE[page] });
   }
 
-  const programmeId = await resolveProgrammeDetailPath(cookieJar);
-  if (!programmeId) {
-    if (BUDGET_MODE) {
-      console.error('Perf regression guard requires at least one visible seeded programme.');
-      process.exit(1);
-    }
-  } else {
-    const target = `/api/programmes/${programmeId}`;
-    await timeApiRequest(target, cookieJar).catch(() => {});
-    const durations = [];
-    for (let run = 0; run < RUNS; run++) durations.push(await timeApiRequest(target, cookieJar));
-    durations.sort((a, b) => a - b);
-    results.push({ target: 'programme detail API', budget: PROGRAMME_DETAIL_API_BUDGET, best: durations[0], before: undefined });
-  }
+  const programmeId = await ensureProgrammeDetailFixture(cookieJar);
+  const target = `/api/programmes/${programmeId}`;
+  await timeApiRequest(target, cookieJar).catch(() => {});
+  const durations = [];
+  for (let run = 0; run < RUNS; run++) durations.push(await timeApiRequest(target, cookieJar));
+  durations.sort((a, b) => a - b);
+  results.push({
+    target: 'programme detail API',
+    budget: PROGRAMME_DETAIL_API_BUDGET,
+    best: durations[0],
+    before: undefined,
+  });
 
   console.log('\nRuntime benchmark (seconds)');
   console.log('─'.repeat(88));
@@ -72,12 +70,12 @@ async function main() {
   console.log('─'.repeat(88));
 
   let failed = false;
-  for (const { target, budget, best, before } of results) {
+  for (const { target: resultTarget, budget, best, before } of results) {
     const delta = before !== undefined ? best - before : NaN;
     const ok = best <= budget;
     if (!ok) failed = true;
     console.log(
-      target.padEnd(44) +
+      resultTarget.padEnd(44) +
         (before !== undefined ? before.toFixed(1) : '—').padStart(8) +
         best.toFixed(1).padStart(8) +
         (Number.isFinite(delta) ? `${delta >= 0 ? '+' : ''}${delta.toFixed(1)}` : '—').padStart(8) +
@@ -107,14 +105,38 @@ async function signIn() {
   return cookie;
 }
 
-async function resolveProgrammeDetailPath(cookie) {
-  const res = await fetch(`${BASE}/api/programmes?limit=1`, {
+async function ensureProgrammeDetailFixture(cookie) {
+  const existing = await fetch(`${BASE}/api/programmes?limit=1`, {
     headers: { Cookie: cookie },
     cache: 'no-store',
   });
-  if (!res.ok) throw new Error(`Programme benchmark discovery failed (${res.status}).`);
-  const json = await res.json();
-  return json?.data?.[0]?.id ?? null;
+  if (!existing.ok) throw new Error(`Programme benchmark discovery failed (${existing.status}).`);
+  const existingJson = await existing.json();
+  const existingId = existingJson?.data?.[0]?.id;
+  if (existingId) return existingId;
+
+  // Fresh CI databases do not currently guarantee a programme fixture. Create
+  // the smallest authenticated draft needed for this benchmark rather than
+  // making runtime validation depend on unrelated demo-seed contents.
+  const created = await fetch(`${BASE}/api/programmes`, {
+    method: 'POST',
+    headers: {
+      Cookie: cookie,
+      'Content-Type': 'application/json',
+    },
+    body: JSON.stringify({
+      title: 'CI Programme Detail Performance Fixture',
+      purpose: 'Disposable runtime benchmark fixture',
+    }),
+  });
+  if (!created.ok) {
+    const body = await created.text();
+    throw new Error(`Programme benchmark fixture creation failed (${created.status}): ${body.slice(0, 300)}`);
+  }
+  const createdJson = await created.json();
+  const createdId = createdJson?.data?.id ?? createdJson?.data?.programme?.id ?? createdJson?.id;
+  if (!createdId) throw new Error('Programme benchmark fixture creation returned no programme id.');
+  return createdId;
 }
 
 async function timeApiRequest(path, cookie) {
