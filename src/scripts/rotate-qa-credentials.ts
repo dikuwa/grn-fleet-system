@@ -1,7 +1,7 @@
 import bcrypt from 'bcryptjs';
 import { and, eq, inArray } from 'drizzle-orm';
 import { getDb } from '@/db';
-import { account, user } from '@/db/schema';
+import { account, session, user } from '@/db/schema';
 
 const QA_EMAILS = [
   'admin@kavangoeast.gov.na',
@@ -73,6 +73,7 @@ async function main() {
 
   const passwordHash = await bcrypt.hash(password, 12);
   const rotatedAt = new Date();
+  const qaUserIds = qaUsers.map((row) => row.id);
 
   await db.transaction(async (tx) => {
     for (const qaAccount of qaAccounts) {
@@ -81,9 +82,11 @@ async function main() {
         .set({ password: passwordHash, updatedAt: rotatedAt })
         .where(and(eq(account.id, qaAccount.id), eq(account.providerId, 'email')));
     }
+
+    await tx.delete(session).where(inArray(session.userId, qaUserIds));
   });
 
-  console.log(`✅ Rotated ${qaAccounts.length} QA email/password accounts.`);
+  console.log(`✅ Rotated ${qaAccounts.length} QA email/password accounts and revoked their active sessions.`);
   console.log('Password value was not logged.');
 }
 
