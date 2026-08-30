@@ -23,7 +23,7 @@
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
     "db:seed": "tsx src/seed/seed-minimal-test-data.ts",
-    "db:seed:demo": "tsx src/seed/index.ts",
+    "db:seed:demo": "node scripts/run-demo-seed.mjs",
     "db:seed-e2e": "tsx src/seed/seed-e2e.ts",
     "db:studio": "drizzle-kit studio",
     "seed:minimal-test-data": "tsx src/seed/seed-minimal-test-data.ts",

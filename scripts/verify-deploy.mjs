@@ -6,8 +6,8 @@
  *   1. Resolve the git HEAD commit (or the commit given via --sha).
  *   2. Poll the GitHub deployment status API until a deployment for that
  *      commit reaches state "success"/"ready" (or times out).
- *   3. Health-check the live app: landing responds and the sign-in endpoint
- *      returns a valid session.
+ *   3. Health-check the live app and auth handler.
+ *   4. Optionally verify a real sign-in when explicit credentials are supplied.
  *
  * Usage:
  *   node scripts/verify-deploy.mjs                 # use local HEAD
@@ -18,8 +18,8 @@
  *   GITHUB_TOKEN      optional — required only for private repos (rate limits)
  *   REPO              default "dikuwa/grn-fleet-system"
  *   LIVE_URL          default "https://grn-fleet-system.vercel.app"
- *   LOGIN_EMAIL       default "requester@kavangoeast.test"
- *   LOGIN_PASSWORD    default "changeme"
+ *   LOGIN_EMAIL       optional credential health-check account
+ *   LOGIN_PASSWORD    optional credential health-check password; never defaulted
  *
  * Exit codes: 0 = deployed + healthy, 1 = not deployed / unhealthy.
  */
@@ -27,8 +27,8 @@ import { execSync } from 'node:child_process';
 
 const REPO = process.env.REPO || 'dikuwa/grn-fleet-system';
 const LIVE_URL = (process.env.LIVE_URL || 'https://grn-fleet-system.vercel.app').replace(/\/$/, '');
-const LOGIN_EMAIL = process.env.LOGIN_EMAIL || 'requester@kavangoeast.test';
-const LOGIN_PASSWORD = process.env.LOGIN_PASSWORD || 'changeme';
+const LOGIN_EMAIL = process.env.LOGIN_EMAIL?.trim() || '';
+const LOGIN_PASSWORD = process.env.LOGIN_PASSWORD || '';
 const AUTH_HEADER = process.env.GITHUB_TOKEN
   ? { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` }
   : {};
@@ -49,13 +49,15 @@ function shaFromArgs() {
 }
 
 async function ghJson(url, signal) {
-  const res = await fetch(url, { headers: { Accept: 'application/vnd.github+json', ...AUTH_HEADER }, signal });
+  const res = await fetch(url, {
+    headers: { Accept: 'application/vnd.github+json', ...AUTH_HEADER },
+    signal,
+  });
   if (!res.ok) throw new Error(`GitHub ${url} -> HTTP ${res.status}`);
   return res.json();
 }
 
 async function findDeploymentForCommit(sha) {
-  // List deployments for the commit, newest first.
   const deployments = await ghJson(
     `https://api.github.com/repos/${REPO}/deployments?sha=${sha}&per_page=10`,
   );
@@ -74,9 +76,27 @@ async function deploymentState(deploymentId) {
 }
 
 async function healthCheck() {
-  const landing = await fetch(LIVE_URL, { redirect: 'manual', signal: AbortSignal.timeout(20_000) });
+  const landing = await fetch(LIVE_URL, {
+    redirect: 'manual',
+    signal: AbortSignal.timeout(20_000),
+  });
   const landingOk = [200, 307, 308].includes(landing.status);
-  console.log(`  Landing: HTTP ${landing.status}${landingOk ? ' ✓' : ' (redirect is expected)'}`);
+  console.log(`  Landing: HTTP ${landing.status}${landingOk ? ' ✓' : ' ✗'}`);
+  if (!landingOk) return false;
+
+  const session = await fetch(`${LIVE_URL}/api/auth/get-session`, {
+    method: 'GET',
+    headers: { Accept: 'application/json' },
+    signal: AbortSignal.timeout(20_000),
+  });
+  const authHandlerOk = session.status === 200;
+  console.log(`  Auth handler: HTTP ${session.status} ${authHandlerOk ? '✓' : '✗'}`);
+  if (!authHandlerOk) return false;
+
+  if (!LOGIN_EMAIL || !LOGIN_PASSWORD) {
+    console.log('  Credential sign-in: skipped (explicit LOGIN_EMAIL/LOGIN_PASSWORD not configured)');
+    return true;
+  }
 
   const login = await fetch(`${LIVE_URL}/api/auth/sign-in`, {
     method: 'POST',
@@ -87,7 +107,7 @@ async function healthCheck() {
   const body = await login.json().catch(() => ({}));
   const token = body.token || body.session?.token;
   const loginOk = login.status === 200 && Boolean(token);
-  console.log(`  Login: HTTP ${login.status} ${loginOk ? '✓' : '✗'}`);
+  console.log(`  Credential sign-in: HTTP ${login.status} ${loginOk ? '✓' : '✗'}`);
   return loginOk;
 }
 
@@ -126,12 +146,14 @@ async function main() {
   }
 
   if (!deployed) {
-    fail(`No successful deployment for ${sha.slice(0, 12)} within ${timeoutSeconds}s (last state: ${lastState}).`);
+    fail(
+      `No successful deployment for ${sha.slice(0, 12)} within ${timeoutSeconds}s (last state: ${lastState}).`,
+    );
   }
 
   console.log('Deployment confirmed. Running live health check…');
   if (!(await healthCheck())) {
-    fail('Live health check failed (login did not return a session token).');
+    fail('Live health check failed.');
   }
 
   console.log(`✅ ${sha.slice(0, 12)} is deployed (${lastState}) and the live app is healthy.`);
