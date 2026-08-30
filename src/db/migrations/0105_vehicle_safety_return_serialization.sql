@@ -60,9 +60,12 @@ DECLARE
   v_vehicle_id uuid;
   v_status text;
 BEGIN
+  -- Only actual vehicle-safety evidence participates in this boundary. Unknown
+  -- vehicle condition (NULL) is intentionally non-blocking unless damage or
+  -- critical severity independently requires restriction.
   IF NOT (
-    NEW.vehicle_damage = true
-    OR NEW.vehicle_safe = false
+    NEW.vehicle_damage IS TRUE
+    OR NEW.vehicle_safe IS FALSE
     OR NEW.severity = 'critical'
   ) OR NEW.technical_clearance_status = 'cleared' THEN
     RETURN NEW;
@@ -146,8 +149,8 @@ BEGIN
     WHERE incident_trip.vehicle_id = NEW.id
       AND ti.tenant_id = v_tenant_id
       AND (
-        ti.vehicle_damage = true
-        OR ti.vehicle_safe = false
+        ti.vehicle_damage IS TRUE
+        OR ti.vehicle_safe IS FALSE
         OR ti.severity = 'critical'
       )
       AND ti.technical_clearance_status <> 'cleared'
