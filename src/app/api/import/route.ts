@@ -8,6 +8,7 @@ import { Permissions } from '@/lib/permissions';
 import { allocateEmployeeNumber } from '@/lib/employee-number';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { normaliseEmployeeStatus } from '@/lib/employee-status';
+import { staffImportSizeError } from '@/lib/staff-import-limits';
 
 interface ImportRowData {
   employee_number?: string;
@@ -36,7 +37,6 @@ interface PreparedRow {
   isDriver: boolean;
   errors: string[];
 }
-
 
 function normaliseLookup(value: string) {
   return value.trim().toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]+/g, ' ').trim();
@@ -68,7 +68,8 @@ export async function POST(request: NextRequest) {
     };
     const rows = body.rows ?? [];
     if (rows.length === 0) return NextResponse.json({ error: 'No rows to import.' }, { status: 400 });
-    if (rows.length > 10_000) return NextResponse.json({ error: 'Imports are limited to 10,000 rows.' }, { status: 400 });
+    const sizeError = staffImportSizeError(rows.length);
+    if (sizeError) return NextResponse.json({ error: sizeError }, { status: 413 });
 
     const db = getDb();
     const tenantId = auth.session.tenantId;
@@ -140,6 +141,10 @@ export async function POST(request: NextRequest) {
       }, { status: 422 });
     }
 
+    // This remains an all-or-nothing interactive transaction with row-by-row
+    // employee/assignment/import evidence writes. The explicit batch boundary
+    // above prevents the synchronous serverless request from advertising a
+    // workload that has not been proven safe at multi-thousand-row scale.
     const result = await db.transaction(async (tx) => {
       const [batch] = await tx.insert(importBatches).values({
         tenantId,
