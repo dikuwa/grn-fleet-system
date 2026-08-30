@@ -24,6 +24,11 @@ describe('QA credential rotation guardrails', () => {
     expect(source).toContain('db.transaction');
   });
 
+  it('revokes existing QA sessions in the same transaction', () => {
+    expect(source).toContain('tx.delete(session)');
+    expect(source).toContain('inArray(session.userId, qaUserIds)');
+  });
+
   it('never prints the replacement password', () => {
     expect(source).toContain('Password value was not logged.');
     expect(source).not.toContain('console.log(password)');
