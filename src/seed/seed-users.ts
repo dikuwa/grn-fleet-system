@@ -19,12 +19,23 @@ import { v4 as uuid } from 'uuid';
 
 const TENANT_ID = '00000000-0000-0000-0000-000000000001';
 
+function resolveSeedPassword() {
+  const configured = process.env.SEED_ADMIN_PASSWORD;
+  const productionContext = process.env.NODE_ENV === 'production' || process.env.VERCEL_ENV === 'production';
+
+  if (productionContext && !configured) {
+    throw new Error('SEED_ADMIN_PASSWORD must be explicitly configured in production.');
+  }
+
+  return configured || 'changeme';
+}
+
 async function seedUsers() {
   const db = getDb();
   console.log('👤 Seeding admin login account...');
 
   const adminEmail = process.env.SEED_ADMIN_EMAIL || 'admin@kavangoeast.gov.na';
-  const adminPassword = process.env.SEED_ADMIN_PASSWORD || 'changeme';
+  const adminPassword = resolveSeedPassword();
 
   // Verify tenant exists
   const [tenant] = await db
@@ -101,7 +112,7 @@ async function seedUsers() {
 
   console.log('✅ Admin user created!');
   console.log(`   Email:    ${adminEmail}`);
-  console.log(`   Password: ${adminPassword}`);
+  console.log('   Password: [configured]');
   console.log(`   User ID:  ${userRecord.id}`);
 }
 
