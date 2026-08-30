@@ -36,6 +36,13 @@ async function selectTheme(page: import('@playwright/test').Page, name: 'Dark' |
   await option.click();
 }
 
+async function expectDarkTheme(page: import('@playwright/test').Page, label: string) {
+  await expect(page.locator('html'), `${label} should retain dark theme`).toHaveClass(/dark/);
+  expect(await page.evaluate(() => localStorage.getItem('govfleet-theme')), `${label} stored theme`).toBe(
+    'dark',
+  );
+}
+
 test.describe.serial('Every seeded role — responsive, theme, notification and document matrix', () => {
   test.setTimeout(180_000);
 
@@ -60,27 +67,25 @@ test.describe.serial('Every seeded role — responsive, theme, notification and 
       await expect(page.getByRole('button', { name: /open account menu/i }).first()).toBeVisible();
 
       // Exercise the real theme selector for every role rather than merely
-      // asserting that the trigger exists.
+      // asserting that the trigger exists. Keep dark mode active while visiting
+      // personal routes so route transitions cannot silently fall back to light.
       await selectTheme(page, 'Dark');
-      await expect(page.locator('html')).toHaveClass(/dark/);
-      expect(await page.evaluate(() => localStorage.getItem('govfleet-theme'))).toBe('dark');
-
-      await selectTheme(page, 'Light');
-      await expect(page.locator('html')).not.toHaveClass(/dark/);
-      expect(await page.evaluate(() => localStorage.getItem('govfleet-theme'))).toBe('light');
+      await expectDarkTheme(page, `${account.email} dashboard`);
 
       // Notifications are a personal route for every workspace. Verify the
-      // actual page rather than only the navigation link.
+      // actual page in dark mode rather than only the navigation link.
       const notifications = await page.goto('/dashboard/notifications', {
         waitUntil: 'domcontentloaded',
         timeout: 60_000,
       });
       expect(notifications?.status(), `${account.email} notifications response`).toBe(200);
       await expect(page).toHaveURL(/\/dashboard\/notifications/);
+      await expectDarkTheme(page, `${account.email} notifications`);
 
       // Documents intentionally belong only to PERSONAL, DRIVER,
       // TRANSPORT_ADMIN and AUDIT workspaces. Verify both sides of that matrix
-      // so broadening the route later cannot silently leak document access.
+      // while dark mode is active so restricted-route handling cannot reset the
+      // user's persisted theme either.
       const documents = await page.goto('/dashboard/documents', {
         waitUntil: 'domcontentloaded',
         timeout: 60_000,
@@ -88,6 +93,7 @@ test.describe.serial('Every seeded role — responsive, theme, notification and 
       if (account.documents) {
         expect(documents?.status(), `${account.email} documents response`).toBe(200);
         await expect(page).toHaveURL(/\/dashboard\/documents/);
+        await expectDarkTheme(page, `${account.email} documents`);
       } else {
         const status = documents?.status() ?? 0;
         const stillOnDocuments = /\/dashboard\/documents(?:\/|$)/.test(page.url());
@@ -95,9 +101,17 @@ test.describe.serial('Every seeded role — responsive, theme, notification and 
           status === 403 || status === 404 || !stillOnDocuments,
           `${account.email} must not gain Documents workspace access`,
         ).toBe(true);
+        await expectDarkTheme(page, `${account.email} restricted documents navigation`);
       }
 
+      // Return to the role dashboard and prove the opposite theme transition
+      // still works after cross-route navigation.
       await page.goto('/dashboard', { waitUntil: 'domcontentloaded', timeout: 60_000 });
+      await expectDarkTheme(page, `${account.email} dashboard return`);
+      await selectTheme(page, 'Light');
+      await expect(page.locator('html')).not.toHaveClass(/dark/);
+      expect(await page.evaluate(() => localStorage.getItem('govfleet-theme'))).toBe('light');
+
       const dimensions = await page.evaluate(() => ({
         content: document.documentElement.scrollWidth,
         viewport: window.innerWidth,
