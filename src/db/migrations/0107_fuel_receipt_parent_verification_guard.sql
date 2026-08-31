@@ -19,6 +19,7 @@ LANGUAGE plpgsql
 AS $$
 DECLARE
   v_transaction_id uuid;
+  v_transaction_ids uuid[];
   v_total integer;
   v_pending integer;
   v_rejected integer;
@@ -26,18 +27,19 @@ DECLARE
   v_current_state text;
   v_current_notes text;
 BEGIN
-  -- UPDATE can theoretically re-parent a receipt. Recompute OLD first, then NEW.
-  -- The API does not currently expose re-parenting, but handling it here keeps
-  -- the database boundary correct if that changes later.
+  -- Avoid referencing an undefined OLD/NEW record for INSERT/DELETE triggers.
+  -- UPDATE may theoretically re-parent a receipt, so both parents are included.
+  IF TG_OP = 'INSERT' THEN
+    v_transaction_ids := ARRAY[NEW.transaction_id];
+  ELSIF TG_OP = 'DELETE' THEN
+    v_transaction_ids := ARRAY[OLD.transaction_id];
+  ELSE
+    v_transaction_ids := ARRAY[OLD.transaction_id, NEW.transaction_id];
+  END IF;
+
   FOR v_transaction_id IN
     SELECT DISTINCT transaction_id
-    FROM (
-      SELECT OLD.transaction_id AS transaction_id
-      WHERE TG_OP IN ('UPDATE', 'DELETE')
-      UNION ALL
-      SELECT NEW.transaction_id AS transaction_id
-      WHERE TG_OP IN ('INSERT', 'UPDATE')
-    ) affected
+    FROM unnest(v_transaction_ids) AS affected(transaction_id)
     WHERE transaction_id IS NOT NULL
     ORDER BY transaction_id
   LOOP
