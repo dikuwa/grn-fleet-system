@@ -32,9 +32,11 @@ BEGIN
   FOR v_transaction_id IN
     SELECT DISTINCT transaction_id
     FROM (
-      SELECT CASE WHEN TG_OP IN ('UPDATE', 'DELETE') THEN OLD.transaction_id END AS transaction_id
+      SELECT OLD.transaction_id AS transaction_id
+      WHERE TG_OP IN ('UPDATE', 'DELETE')
       UNION ALL
-      SELECT CASE WHEN TG_OP IN ('INSERT', 'UPDATE') THEN NEW.transaction_id END AS transaction_id
+      SELECT NEW.transaction_id AS transaction_id
+      WHERE TG_OP IN ('INSERT', 'UPDATE')
     ) affected
     WHERE transaction_id IS NOT NULL
     ORDER BY transaction_id
