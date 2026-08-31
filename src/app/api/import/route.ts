@@ -9,6 +9,8 @@ import { allocateEmployeeNumber } from '@/lib/employee-number';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { normaliseEmployeeStatus } from '@/lib/employee-status';
 
+const MAX_STAFF_IMPORT_ROWS = 500;
+
 interface ImportRowData {
   employee_number?: string;
   title?: string;
@@ -36,7 +38,6 @@ interface PreparedRow {
   isDriver: boolean;
   errors: string[];
 }
-
 
 function normaliseLookup(value: string) {
   return value.trim().toLowerCase().replace(/&/g, 'and').replace(/[^a-z0-9]+/g, ' ').trim();
@@ -68,7 +69,13 @@ export async function POST(request: NextRequest) {
     };
     const rows = body.rows ?? [];
     if (rows.length === 0) return NextResponse.json({ error: 'No rows to import.' }, { status: 400 });
-    if (rows.length > 10_000) return NextResponse.json({ error: 'Imports are limited to 10,000 rows.' }, { status: 400 });
+    if (rows.length > MAX_STAFF_IMPORT_ROWS) {
+      return NextResponse.json({
+        error: `Staff imports are limited to ${MAX_STAFF_IMPORT_ROWS} rows per batch. Split larger files into smaller batches and retry.`,
+        maxRows: MAX_STAFF_IMPORT_ROWS,
+        receivedRows: rows.length,
+      }, { status: 413 });
+    }
 
     const db = getDb();
     const tenantId = auth.session.tenantId;
