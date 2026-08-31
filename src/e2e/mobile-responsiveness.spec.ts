@@ -93,8 +93,8 @@ test('invite dialog and employee search stay inside a 320px viewport', async ({ 
   await page.waitForTimeout(300);
   await page.getByRole('button', { name: /invite user/i }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
-  await page.getByRole('combobox', { name: /search by name/i }).click();
-  await expect(page.getByRole('searchbox', { name: /search by name/i })).toBeVisible();
+  await page.getByRole('combobox', { name: 'Search active staff' }).click();
+  await expect(page.getByRole('searchbox', { name: 'Search active staff' })).toBeVisible();
   await expectNoPageOverflow(page);
   await context.close();
   await api.dispose();
