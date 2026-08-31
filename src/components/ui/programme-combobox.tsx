@@ -14,6 +14,10 @@ export interface ProgrammeSearchOption {
   venue: string | null;
 }
 
+type ProgrammeSearchApiRow = ProgrammeSearchOption & {
+  departmentName?: string | null;
+};
+
 interface ProgrammeComboboxProps {
   value: string;
   selectedOption?: ProgrammeSearchOption | null;
@@ -49,9 +53,11 @@ export function ProgrammeCombobox({
         cache: 'no-store',
       });
       const json = await response.json();
+      if (response.status === 404) return null;
       if (!response.ok) throw new Error(json.error || 'Unable to load the selected programme');
       const programme = json.data?.programme;
-      if (!programme) return null;
+      const canCreateTransportRequest = json.data?.capabilities?.createTransportRequest === true;
+      if (!programme || !canCreateTransportRequest) return null;
       return {
         id: programme.id,
         reference: programme.reference,
@@ -61,6 +67,12 @@ export function ProgrammeCombobox({
       };
     },
   });
+
+  useEffect(() => {
+    if (value && !selectedOption && selectedQuery.isSuccess && selectedQuery.data === null) {
+      onSelect(null);
+    }
+  }, [onSelect, selectedOption, selectedQuery.data, selectedQuery.isSuccess, value]);
 
   const query = useQuery<ProgrammeSearchOption[]>({
     queryKey: ['programme-search', debouncedSearch],
@@ -75,7 +87,13 @@ export function ProgrammeCombobox({
       });
       const json = await response.json();
       if (!response.ok) throw new Error(json.error || 'Unable to search programmes');
-      return json.data as ProgrammeSearchOption[];
+      return ((json.data || []) as ProgrammeSearchApiRow[]).map((programme) => ({
+        id: programme.id,
+        reference: programme.reference,
+        title: programme.title,
+        department: programme.departmentName || programme.department || null,
+        venue: programme.venue || null,
+      }));
     },
   });
 
