@@ -557,6 +557,50 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           }),
         );
       }
+
+      mutations.push(
+        tx.execute(sql`
+          SELECT CAST(CASE
+            WHEN EXISTS (
+              SELECT 1 FROM trip_closures tc
+              WHERE tc.id = ${closureId}::uuid
+                AND tc.trip_id = ${id}::uuid
+            )
+            AND EXISTS (
+              SELECT 1 FROM trips t
+              WHERE t.id = ${id}::uuid
+                AND t.tenant_id = ${tenantId}::uuid
+                AND t.status = 'closed'
+            )
+            AND EXISTS (
+              SELECT 1 FROM transport_requests tr
+              WHERE tr.id = ${trip.requestId}::uuid
+                AND tr.tenant_id = ${tenantId}::uuid
+                AND tr.status = 'closed'
+            )
+            AND EXISTS (
+              SELECT 1 FROM vehicle_allocations va
+              WHERE va.id = ${trip.allocationId}::uuid
+                AND va.state = 'released'
+            )
+            AND EXISTS (
+              SELECT 1 FROM trip_authorities ta
+              WHERE ta.id = ${authority.id}::uuid
+                AND ta.tenant_id = ${tenantId}::uuid
+                AND ta.status = 'closed'
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM external_driver_assignments eda
+              WHERE eda.tenant_id = ${tenantId}::uuid
+                AND eda.trip_id = ${id}::uuid
+                AND eda.allocation_id = ${trip.allocationId}::uuid
+                AND eda.state = 'accepted'
+            )
+            THEN '1'
+            ELSE 'trip_closure_transition_conflict'
+          END AS integer) AS guard
+        `),
+      );
       return mutations;
     });
 
@@ -606,7 +650,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
         { status: 409 },
       );
     }
-    if (message.includes('trip_closure_lifecycle_conflict')) {
+    if (
+      message.includes('trip_closure_lifecycle_conflict') ||
+      message.includes('trip_closure_transition_conflict')
+    ) {
       return NextResponse.json(
         {
           error:
