@@ -549,7 +549,24 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       { status: result.idempotent ? 200 : 201 },
     );
   } catch (error) {
-    const message = error instanceof Error ? error.message : String(error || '');
+    const errorRecord = error && typeof error === 'object'
+      ? (error as { code?: unknown; message?: unknown; cause?: unknown })
+      : null;
+    const causeRecord = errorRecord?.cause && typeof errorRecord.cause === 'object'
+      ? (errorRecord.cause as { code?: unknown; message?: unknown })
+      : null;
+    const message = [
+      typeof errorRecord?.message === 'string' ? errorRecord.message : '',
+      typeof causeRecord?.message === 'string' ? causeRecord.message : '',
+      String(error || ''),
+    ]
+      .filter(Boolean)
+      .join(' ');
+    const code = typeof errorRecord?.code === 'string'
+      ? errorRecord.code
+      : typeof causeRecord?.code === 'string'
+        ? causeRecord.code
+        : null;
     if (
       message.includes('trip_progress_lifecycle_conflict') ||
       message.includes('trip_expense_lifecycle_conflict')
@@ -559,7 +576,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         { status: 409 },
       );
     }
-    if ((error as { code?: string })?.code === '23505') {
+    if (code === '23505') {
       return NextResponse.json({ error: 'This offline update was already submitted' }, { status: 409 });
     }
     console.error('[trips/operations] POST failed:', error);
