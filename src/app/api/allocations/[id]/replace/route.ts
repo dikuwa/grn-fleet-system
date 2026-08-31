@@ -91,6 +91,20 @@ export async function POST(
     if (error instanceof VehicleReplaceError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
+
+    const dbError = error as { code?: string; message?: string; detail?: string; cause?: unknown };
+    const diagnostic = [dbError.message, dbError.detail, String(dbError.cause ?? ''), String(error)]
+      .filter(Boolean)
+      .join(' ');
+    if (dbError.code === '23P01' || diagnostic.includes('allocation_vehicle_overlap')) {
+      return NextResponse.json(
+        {
+          error: 'The replacement vehicle was allocated elsewhere while this replacement was being saved. Refresh and choose another available vehicle.',
+        },
+        { status: 409 },
+      );
+    }
+
     console.error('[Allocation Replace] POST failed:', error);
     return NextResponse.json({ error: 'Failed to replace vehicle' }, { status: 500 });
   }
