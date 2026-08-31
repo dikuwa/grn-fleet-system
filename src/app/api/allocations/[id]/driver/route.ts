@@ -304,7 +304,16 @@ export async function PATCH(
         `);
       }
     } catch (mutationError) {
-      if (String(mutationError).includes('atomic_driver_reassignment_failed')) {
+      const mutationErrorText = String(mutationError);
+      const mutationErrorCode =
+        typeof mutationError === 'object' && mutationError !== null && 'code' in mutationError
+          ? String((mutationError as { code?: unknown }).code || '')
+          : '';
+      if (
+        mutationErrorText.includes('atomic_driver_reassignment_failed') ||
+        mutationErrorCode === '23P01' ||
+        mutationErrorText.includes('allocation_driver_overlap')
+      ) {
         return NextResponse.json(
           { error: 'The trip or driver assignment changed while reassignment was being saved. Refresh and review the current state.' },
           { status: 409 },
