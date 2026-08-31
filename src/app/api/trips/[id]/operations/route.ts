@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
-import { and, asc, desc, eq, gt, isNotNull, lt } from 'drizzle-orm';
+import { and, asc, desc, eq, gt, isNotNull, lt, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import {
   tripAuthorities,
@@ -265,9 +265,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           ? null
           : Number(body.odometerReading);
 
-      // Validate by occurrence-time neighbours rather than latest server arrival.
-      // This allows a legitimate older offline event to sync after a newer event
-      // without accepting an impossible rollback/overshoot in journey chronology.
       const [[previous], [next]] = await Promise.all([
         db
           .select({ value: tripProgressEntries.odometerReading })
@@ -318,6 +315,18 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       const deviation = entryType === 'route_deviation';
       await runAtomicMutations((executor) => {
         const mutations = [
+          executor.execute(sql`
+            SELECT CAST(CASE
+              WHEN EXISTS (
+                SELECT 1 FROM trips
+                WHERE id = ${id}::uuid
+                  AND tenant_id = ${session.tenantId}::uuid
+                  AND status IN ('in_progress', 'return_due')
+              )
+              THEN '1'
+              ELSE 'trip_progress_lifecycle_conflict'
+            END AS integer) AS guard
+          `),
           executor.insert(tripProgressEntries).values({
             id: entryId,
             tenantId: session.tenantId,
@@ -401,6 +410,18 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
       const expenseId = randomUUID();
       await runAtomicMutations((executor) => [
+        executor.execute(sql`
+          SELECT CAST(CASE
+            WHEN EXISTS (
+              SELECT 1 FROM trips
+              WHERE id = ${id}::uuid
+                AND tenant_id = ${session.tenantId}::uuid
+                AND status IN ('in_progress', 'return_due', 'closure_review')
+            )
+            THEN '1'
+            ELSE 'trip_expense_lifecycle_conflict'
+          END AS integer) AS guard
+        `),
         executor.insert(tripExpenses).values({
           id: expenseId,
           tenantId: session.tenantId,
@@ -528,7 +549,34 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       { status: result.idempotent ? 200 : 201 },
     );
   } catch (error) {
-    if ((error as { code?: string })?.code === '23505') {
+    const errorRecord = error && typeof error === 'object'
+      ? (error as { code?: unknown; message?: unknown; cause?: unknown })
+      : null;
+    const causeRecord = errorRecord?.cause && typeof errorRecord.cause === 'object'
+      ? (errorRecord.cause as { code?: unknown; message?: unknown })
+      : null;
+    const message = [
+      typeof errorRecord?.message === 'string' ? errorRecord.message : '',
+      typeof causeRecord?.message === 'string' ? causeRecord.message : '',
+      String(error || ''),
+    ]
+      .filter(Boolean)
+      .join(' ');
+    const code = typeof errorRecord?.code === 'string'
+      ? errorRecord.code
+      : typeof causeRecord?.code === 'string'
+        ? causeRecord.code
+        : null;
+    if (
+      message.includes('trip_progress_lifecycle_conflict') ||
+      message.includes('trip_expense_lifecycle_conflict')
+    ) {
+      return NextResponse.json(
+        { error: 'The trip lifecycle changed while this operation was being saved. Refresh and review the latest trip state.' },
+        { status: 409 },
+      );
+    }
+    if (code === '23505') {
       return NextResponse.json({ error: 'This offline update was already submitted' }, { status: 409 });
     }
     console.error('[trips/operations] POST failed:', error);

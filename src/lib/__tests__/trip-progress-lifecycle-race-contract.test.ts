@@ -22,7 +22,9 @@ describe('trip progress lifecycle race guard', () => {
 
   it('uses the operations endpoint conflict path so a lost active-state race returns 409', () => {
     expect(migration).toContain("ERRCODE = '23505'");
-    expect(operationsRoute).toContain("(error as { code?: string })?.code === '23505'");
+    expect(operationsRoute).toContain("const code = typeof errorRecord?.code === 'string'");
+    expect(operationsRoute).toContain("message.includes('trip_progress_lifecycle_conflict')");
+    expect(operationsRoute).toContain("if (code === '23505')");
     expect(operationsRoute).toContain("{ status: 409 }");
   });
 

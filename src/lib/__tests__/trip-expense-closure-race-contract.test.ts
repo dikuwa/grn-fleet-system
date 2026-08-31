@@ -21,9 +21,11 @@ describe('trip expense closure race guard', () => {
     expect(migration).toContain('BEFORE INSERT ON trip_expenses');
   });
 
-  it('uses the existing operations conflict response when closure wins the race', () => {
+  it('uses the operations conflict response when closure wins the race', () => {
     expect(migration).toContain("ERRCODE = '23505'");
-    expect(operationsRoute).toContain("(error as { code?: string })?.code === '23505'");
+    expect(operationsRoute).toContain("const code = typeof errorRecord?.code === 'string'");
+    expect(operationsRoute).toContain("message.includes('trip_expense_lifecycle_conflict')");
+    expect(operationsRoute).toContain("if (code === '23505')");
     expect(operationsRoute).toContain("{ status: 409 }");
   });
 
