@@ -37,12 +37,7 @@ export async function GET(request: NextRequest) {
     const status = (searchParams.get('status') || '').trim();
     const selectable = searchParams.get('selectable') === '1';
     const page = Math.max(1, Number(searchParams.get('page')) || 1);
-    const requestedLimit = Math.min(100, Math.max(1, Number(searchParams.get('limit')) || 25));
-    // The current request wizard historically asks for only 50 selectable
-    // programmes and then filters locally. Honour normal pagination for the
-    // management register, but return a larger bounded set for selector mode
-    // so tenants with 100+ valid programmes do not silently lose choices.
-    const limit = selectable ? 500 : requestedLimit;
+    const limit = Math.min(100, Math.max(1, Number(searchParams.get('limit')) || 25));
     const offset = (page - 1) * limit;
 
     const db = getDb();
