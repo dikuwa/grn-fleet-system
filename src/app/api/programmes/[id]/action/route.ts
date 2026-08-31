@@ -155,37 +155,40 @@ export async function POST(
       }
     }
 
-    const now = new Date();
+    // These timestamps are interpolated into an untyped raw SQL fragment below.
+    // Normalize them first so the postgres.js driver never receives a raw Date
+    // object on this path (which is not a column-bound Drizzle parameter).
+    const nowIso = new Date().toISOString();
     let nextStatus: string;
     let transitionSet: SQL;
     switch (action) {
       case 'submit':
         nextStatus = 'submitted';
-        transitionSet = sql`status = 'submitted', submitted_at = ${now}, review_notes = NULL, rejection_reason = NULL, updated_at = ${now}`;
+        transitionSet = sql`status = 'submitted', submitted_at = ${nowIso}::timestamptz, review_notes = NULL, rejection_reason = NULL, updated_at = ${nowIso}::timestamptz`;
         break;
       case 'request_changes':
         nextStatus = 'changes_requested';
-        transitionSet = sql`status = 'changes_requested', review_notes = ${note}, reviewed_by_user_id = ${userId}, reviewed_at = ${now}, updated_at = ${now}`;
+        transitionSet = sql`status = 'changes_requested', review_notes = ${note}, reviewed_by_user_id = ${userId}, reviewed_at = ${nowIso}::timestamptz, updated_at = ${nowIso}::timestamptz`;
         break;
       case 'approve':
         nextStatus = 'approved';
-        transitionSet = sql`status = 'approved', approved_by_user_id = ${userId}, approved_at = ${now}, review_notes = ${note || programme.reviewNotes}, updated_at = ${now}`;
+        transitionSet = sql`status = 'approved', approved_by_user_id = ${userId}, approved_at = ${nowIso}::timestamptz, review_notes = ${note || programme.reviewNotes}, updated_at = ${nowIso}::timestamptz`;
         break;
       case 'reject':
         nextStatus = 'rejected';
-        transitionSet = sql`status = 'rejected', rejection_reason = ${note}, reviewed_by_user_id = ${userId}, reviewed_at = ${now}, updated_at = ${now}`;
+        transitionSet = sql`status = 'rejected', rejection_reason = ${note}, reviewed_by_user_id = ${userId}, reviewed_at = ${nowIso}::timestamptz, updated_at = ${nowIso}::timestamptz`;
         break;
       case 'publish':
         nextStatus = 'published';
-        transitionSet = sql`status = 'published', published_by_user_id = ${userId}, published_at = ${now}, approved_by_user_id = COALESCE(approved_by_user_id, ${userId}), approved_at = COALESCE(approved_at, ${now}), updated_at = ${now}`;
+        transitionSet = sql`status = 'published', published_by_user_id = ${userId}, published_at = ${nowIso}::timestamptz, approved_by_user_id = COALESCE(approved_by_user_id, ${userId}), approved_at = COALESCE(approved_at, ${nowIso}::timestamptz), updated_at = ${nowIso}::timestamptz`;
         break;
       case 'archive':
         nextStatus = 'archived';
-        transitionSet = sql`status = 'archived', archived_at = ${now}, updated_at = ${now}`;
+        transitionSet = sql`status = 'archived', archived_at = ${nowIso}::timestamptz, updated_at = ${nowIso}::timestamptz`;
         break;
       case 'complete':
         nextStatus = 'completed';
-        transitionSet = sql`status = 'completed', completed_at = ${now}, updated_at = ${now}`;
+        transitionSet = sql`status = 'completed', completed_at = ${nowIso}::timestamptz, updated_at = ${nowIso}::timestamptz`;
         break;
       default:
         return NextResponse.json({ error: 'Invalid programme action' }, { status: 400 });

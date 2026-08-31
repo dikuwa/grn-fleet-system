@@ -164,11 +164,14 @@ jobs:
           src/e2e/request-return-cancellation-closure.spec.ts
           src/e2e/cross-tenant-isolation.spec.ts
           src/e2e/all-role-ui-smoke.spec.ts
+          src/e2e/role-route-matrix.spec.ts
+          src/e2e/mobile-responsiveness.spec.ts
           src/e2e/document-native-print.spec.ts
           src/e2e/revised-authority-closure.spec.ts
           src/e2e/clean-trip-closure.spec.ts
           src/e2e/external-driver-lifecycle-closure.spec.ts
           src/e2e/driver-licence-upload-review.smoke.spec.ts
+          src/e2e/programme-selector-scale.spec.ts
           --project=chromium --workers=1
         env:
           CI: ''
