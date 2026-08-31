@@ -162,6 +162,21 @@ export function ProgrammeCombobox({
           </div>
 
           <div id={listboxId} role="listbox" className="max-h-72 scrollbar-thin overflow-y-auto p-1">
+            <button
+              type="button"
+              role="option"
+              aria-selected={!value}
+              onClick={() => {
+                onSelect(null);
+                setOpen(false);
+              }}
+              className="focus-ring hover:bg-muted flex w-full items-center gap-3 rounded-[7px] px-3 py-2.5 text-left"
+            >
+              <X className="text-ink-400 h-4 w-4 shrink-0" aria-hidden="true" />
+              <span className="text-ink-700 flex-1 text-sm">No programme link</span>
+              {!value && <Check className="text-brand-700 h-4 w-4 shrink-0" aria-hidden="true" />}
+            </button>
+            <div className="border-border my-1 border-t" aria-hidden="true" />
             {query.isLoading || query.isFetching ? (
               <div className="text-ink-500 flex items-center justify-center gap-2 px-3 py-6 text-sm">
                 <Loader2 className="h-4 w-4 animate-spin" /> Searching…
