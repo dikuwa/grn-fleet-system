@@ -23,6 +23,7 @@ import Link from 'next/link';
 import { formatDate } from '@/lib/utils';
 import { useToast } from '@/lib/use-toast';
 import { EmployeeCombobox, type EmployeeSearchOption } from '@/components/ui/employee-combobox';
+import { ProgrammeCombobox } from '@/components/ui/programme-combobox';
 import { EmployeeMultiSelect } from '@/components/ui/employee-multi-select';
 import { DatePicker } from '@/components/ui/date-picker';
 import { StyledSelect } from '@/components/ui/styled-select';
@@ -169,47 +170,17 @@ function generateReference(): string {
 // ---------------------------------------------------------------------------
 
 function ProgrammeSelector({ value, onChange }: { value: string; onChange: (id: string) => void }) {
-  const [options, setOptions] = useState<{ id: string; reference: string; title: string }[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [loadError, setLoadError] = useState<string | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetch('/api/programmes?selectable=1&limit=50')
-      .then((res) => (res.ok ? res.json() : Promise.reject(new Error('Failed to load'))))
-      .then((json) => {
-        if (!cancelled) setOptions(json.data || []);
-      })
-      .catch(() => {
-        if (!cancelled) setLoadError('Programmes are unavailable.');
-      })
-      .finally(() => {
-        if (!cancelled) setLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
   return (
     <div>
       <label className="text-ink-500 mb-1 block text-xs font-medium">
         Link to an approved Programme (optional)
       </label>
-      <StyledSelect value={value} onChange={(e) => onChange(e.target.value)} disabled={loading}>
-        <option value="">No programme link</option>
-        {options.map((p) => (
-          <option key={p.id} value={p.id}>
-            {p.reference} — {p.title}
-          </option>
-        ))}
-      </StyledSelect>
+      <ProgrammeCombobox
+        value={value}
+        onSelect={(programme) => onChange(programme?.id || '')}
+      />
       <p className="text-ink-500 mt-1 text-xs">
-        {loading
-          ? 'Loading approved programmes…'
-          : loadError
-            ? loadError
-            : 'Only approved or published, non-archived programmes can be linked.'}
+        Search current approved or published programmes by reference, title, department, or venue.
       </p>
     </div>
   );
