@@ -1,0 +1,75 @@
+name: Apply programme selector patch
+
+on:
+  push:
+    branches:
+      - fix/searchable-programme-selector-v2
+    paths:
+      - .github/workflows/apply-programme-selector-patch.yml
+
+permissions:
+  contents: write
+
+jobs:
+  patch-request-wizard:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/searchable-programme-selector-v2
+          fetch-depth: 0
+      - name: Wire searchable Programme selector
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          path = Path('src/app/(dashboard)/dashboard/requests/new/page.tsx')
+          text = path.read_text()
+
+          employee_import = "import { EmployeeCombobox, type EmployeeSearchOption } from '@/components/ui/employee-combobox';\n"
+          programme_import = "import { ProgrammeCombobox } from '@/components/ui/programme-combobox';\n"
+          if programme_import not in text:
+              if employee_import not in text:
+                  raise SystemExit('Employee combobox import anchor not found')
+              text = text.replace(employee_import, employee_import + programme_import, 1)
+
+          start = text.find('function ProgrammeSelector(')
+          end = text.find('\nfunction BasicInfoStep(', start)
+          if start < 0 or end < 0:
+              raise SystemExit('ProgrammeSelector block anchors not found')
+
+          replacement = '''function ProgrammeSelector({ value, onChange }: { value: string; onChange: (id: string) => void }) {
+            return (
+              <div>
+                <label className="text-ink-500 mb-1 block text-xs font-medium">
+                  Link to an approved Programme (optional)
+                </label>
+                <ProgrammeCombobox
+                  value={value}
+                  onSelect={(programme) => onChange(programme?.id || '')}
+                />
+                <p className="text-ink-500 mt-1 text-xs">
+                  Search current approved or published programmes by reference, title, department, or venue.
+                </p>
+              </div>
+            );
+          }
+          '''
+          text = text[:start] + replacement + text[end:]
+
+          if "fetch('/api/programmes?selectable=1&limit=50')" in text:
+              raise SystemExit('Legacy bounded Programme preload still present')
+          if '<ProgrammeCombobox' not in text:
+              raise SystemExit('Programme combobox wiring missing')
+
+          path.write_text(text)
+          PY
+      - name: Commit request wizard wiring
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add 'src/app/(dashboard)/dashboard/requests/new/page.tsx'
+          git diff --cached --check
+          git commit -m "feat: wire searchable programme selector"
+          git push origin HEAD:fix/searchable-programme-selector-v2
