@@ -53,11 +53,14 @@ describe('trip operation lifecycle race contract', () => {
     expect(routeSource).toContain("status IN ('in_progress', 'return_due', 'closure_review')");
   });
 
-  it('maps authoritative lifecycle races to a refreshable 409 before generic duplicate handling', () => {
+  it('unwraps nested database errors and maps lifecycle races before generic duplicates', () => {
+    expect(routeSource).toContain('errorRecord?.cause');
+    expect(routeSource).toContain('causeRecord?.message');
+    expect(routeSource).toContain('causeRecord?.code');
     expect(routeSource).toContain("message.includes('trip_progress_lifecycle_conflict')");
     expect(routeSource).toContain("message.includes('trip_expense_lifecycle_conflict')");
     expect(routeSource.indexOf("message.includes('trip_progress_lifecycle_conflict')")).toBeLessThan(
-      routeSource.indexOf("(error as { code?: string })?.code === '23505'"),
+      routeSource.indexOf("if (code === '23505')"),
     );
     expect(routeSource).toContain('The trip lifecycle changed while this operation was being saved. Refresh and review the latest trip state.');
     expect(routeSource).toContain('{ status: 409 }');
