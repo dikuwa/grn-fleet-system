@@ -24,6 +24,7 @@ import { employees } from '@/db/schema/people';
 import { vehicles } from '@/db/schema/fleet';
 import { auditEvents } from '@/db/schema/audit';
 import { notifications } from '@/db/schema/notifications';
+import { programmes } from '@/db/schema/programmes';
 import { eq } from 'drizzle-orm';
 
 const BASE = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
@@ -147,6 +148,62 @@ test.describe.serial('Cross-tenant security isolation', () => {
         .delete(transportRequests)
         .where(eq(transportRequests.id, isolationRequest.id));
       await db.delete(employees).where(eq(employees.id, isolationEmployee.id));
+    }
+  });
+
+  test('tenant A cannot list, read, or hydrate a tenant B programme', async ({ browser }) => {
+    const db = getDb();
+    const marker = `ZRC-ISOLATION-PROGRAMME-${Date.now()}`;
+    const now = new Date();
+    const [isolationProgramme] = await db
+      .insert(programmes)
+      .values({
+        tenantId: ISOLATION_TENANT_ID as never,
+        reference: `ISO/PGM/${Date.now()}`,
+        title: marker,
+        purpose: 'Cross-tenant programme isolation fixture',
+        status: 'published',
+        createdByUserId: 'zrc-probe-user',
+        startDate: new Date(now.getTime() + 30 * 86_400_000),
+        endDate: new Date(now.getTime() + 32 * 86_400_000),
+        approvedAt: now,
+        publishedAt: now,
+      })
+      .returning({ id: programmes.id });
+
+    try {
+      const requester = await login(accounts.requester);
+
+      const list = await requester.get(
+        `/api/programmes?selectable=1&q=${encodeURIComponent(marker)}&limit=20`,
+      );
+      expect(list.status()).toBe(200);
+      const listBody = JSON.stringify(await list.json());
+      expect(listBody).not.toContain(marker);
+      expect(listBody).not.toContain(isolationProgramme.id);
+
+      const directRead = await requester.get(`/api/programmes/${isolationProgramme.id}`);
+      expect([403, 404]).toContain(directRead.status());
+
+      const context = await browser.newContext({ storageState: await requester.storageState() });
+      const page = await context.newPage();
+      const hydrationResponse = page.waitForResponse((response) =>
+        response.url().includes(`/api/programmes/${isolationProgramme.id}`),
+      );
+      await page.goto(`/dashboard/requests/new?programmeId=${isolationProgramme.id}`, {
+        waitUntil: 'domcontentloaded',
+      });
+      const selectedProgrammeRead = await hydrationResponse;
+      expect([403, 404]).toContain(selectedProgrammeRead.status());
+      await expect(page.getByText(marker)).toHaveCount(0);
+      await expect(
+        page.getByRole('combobox', { name: 'Search approved programmes' }),
+      ).not.toContainText(marker);
+
+      await context.close();
+      await requester.dispose();
+    } finally {
+      await db.delete(programmes).where(eq(programmes.id, isolationProgramme.id));
     }
   });
 
