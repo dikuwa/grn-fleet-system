@@ -14,6 +14,10 @@ const expenseGuardSource = readFileSync(
   resolve(process.cwd(), 'src/db/migrations/0099_trip_expense_active_lifecycle_guard.sql'),
   'utf8',
 );
+const progressOdometerGuardSource = readFileSync(
+  resolve(process.cwd(), 'src/db/migrations/0106_trip_progress_odometer_sequence_guard.sql'),
+  'utf8',
+);
 
 describe('trip operation lifecycle race contract', () => {
   it('keeps journey progress serialized with trip and authority lifecycle transitions', () => {
@@ -29,6 +33,17 @@ describe('trip operation lifecycle race contract', () => {
       "v_trip_status NOT IN ('in_progress', 'return_due', 'closure_review')",
     );
     expect(expenseGuardSource).toContain('trip_expense_lifecycle_conflict');
+  });
+
+  it('serializes chronological progress odometer evidence per trip', () => {
+    expect(progressOdometerGuardSource).toContain('FOR UPDATE OF t, ta');
+    expect(progressOdometerGuardSource).toContain('MAX(tpe.odometer_reading)');
+    expect(progressOdometerGuardSource).toContain('MIN(tpe.odometer_reading)');
+    expect(progressOdometerGuardSource).toContain('tpe.occurred_at <= NEW.occurred_at');
+    expect(progressOdometerGuardSource).toContain('tpe.occurred_at >= NEW.occurred_at');
+    expect(progressOdometerGuardSource).toContain('NEW.odometer_reading < v_previous_max');
+    expect(progressOdometerGuardSource).toContain('NEW.odometer_reading > v_next_min');
+    expect(progressOdometerGuardSource).toContain('trip_progress_lifecycle_conflict');
   });
 
   it('retains defensive in-batch lifecycle checks before inserting operations', () => {
