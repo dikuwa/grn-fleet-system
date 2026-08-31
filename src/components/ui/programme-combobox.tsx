@@ -39,6 +39,29 @@ export function ProgrammeCombobox({
     return () => window.clearTimeout(timer);
   }, [search]);
 
+  const selectedQuery = useQuery<ProgrammeSearchOption | null>({
+    queryKey: ['programme-selected', value],
+    enabled: Boolean(value && !selectedOption),
+    staleTime: 30_000,
+    queryFn: async ({ signal }) => {
+      const response = await fetch(`/api/programmes/${encodeURIComponent(value)}`, {
+        signal,
+        cache: 'no-store',
+      });
+      const json = await response.json();
+      if (!response.ok) throw new Error(json.error || 'Unable to load the selected programme');
+      const programme = json.data?.programme;
+      if (!programme) return null;
+      return {
+        id: programme.id,
+        reference: programme.reference,
+        title: programme.title,
+        department: programme.departmentName || programme.department || null,
+        venue: programme.venue || null,
+      };
+    },
+  });
+
   const query = useQuery<ProgrammeSearchOption[]>({
     queryKey: ['programme-search', debouncedSearch],
     enabled: open,
@@ -56,12 +79,13 @@ export function ProgrammeCombobox({
     },
   });
 
+  const resolvedSelectedOption = selectedOption ?? selectedQuery.data ?? null;
   const options = useMemo(() => {
-    if (!selectedOption || query.data?.some((option) => option.id === selectedOption.id)) {
+    if (!resolvedSelectedOption || query.data?.some((option) => option.id === resolvedSelectedOption.id)) {
       return query.data || [];
     }
-    return [selectedOption, ...(query.data || [])];
-  }, [query.data, selectedOption]);
+    return [resolvedSelectedOption, ...(query.data || [])];
+  }, [query.data, resolvedSelectedOption]);
 
   return (
     <Popover.Root
@@ -86,10 +110,17 @@ export function ProgrammeCombobox({
             aria-label="Search approved programmes"
           >
             <FileText className="text-ink-400 h-4 w-4 shrink-0" aria-hidden="true" />
-            <span className={cn('min-w-0 flex-1 truncate', !selectedOption && 'text-ink-500')}>
-              {selectedOption
-                ? `${selectedOption.reference} — ${selectedOption.title}`
-                : 'Search approved programmes…'}
+            <span
+              className={cn(
+                'min-w-0 flex-1 truncate',
+                !resolvedSelectedOption && 'text-ink-500',
+              )}
+            >
+              {resolvedSelectedOption
+                ? `${resolvedSelectedOption.reference} — ${resolvedSelectedOption.title}`
+                : selectedQuery.isFetching
+                  ? 'Loading selected programme…'
+                  : 'Search approved programmes…'}
             </span>
             <ChevronDown className="text-ink-400 h-4 w-4 shrink-0" aria-hidden="true" />
           </button>
