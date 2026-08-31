@@ -22,12 +22,15 @@ describe('searchable programme selector contract', () => {
     expect(selector).toContain("limit: '20'");
     expect(selector).toContain("params.set('q', debouncedSearch)");
     expect(selector).toContain("queryKey: ['programme-search', debouncedSearch]");
+    expect(selector).toContain('No programme link');
   });
 
-  it('hydrates a selected programme that is outside the latest search window', () => {
+  it('hydrates only an eligible selected programme outside the latest search window', () => {
     expect(selector).toContain("queryKey: ['programme-selected', value]");
     expect(selector).toContain('/api/programmes/${encodeURIComponent(value)}');
-    expect(selector).toContain('resolvedSelectedOption');
+    expect(selector).toContain('capabilities?.createTransportRequest === true');
+    expect(selector).toContain('selectedQuery.data === null');
+    expect(selector).toContain('onSelect(null)');
   });
 
   it('preserves canonical selectable eligibility while respecting requested pagination', () => {
@@ -37,5 +40,11 @@ describe('searchable programme selector contract', () => {
     expect(programmeRoute).toContain("programmes.status} IN ('approved', 'published')");
     expect(programmeRoute).toContain('programmeEndDateCurrentSql(programmes.endDate)');
     expect(programmeRoute).not.toContain('selectable ? 500');
+  });
+
+  it('searches and displays canonical department names', () => {
+    expect(programmeRoute).toContain('ilike(departments.name, `%${q}%`)');
+    expect(programmeRoute).toContain('department: row.departmentName || row.department');
+    expect(selector).toContain('programme.departmentName || programme.department || null');
   });
 });
