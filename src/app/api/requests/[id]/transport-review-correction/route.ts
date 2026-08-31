@@ -743,6 +743,34 @@ export async function PATCH(
     if (error instanceof TransportReviewCorrectionError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
+
+    const dbErrorCode =
+      typeof error === 'object' && error !== null && 'code' in error
+        ? String((error as { code?: unknown }).code || '')
+        : '';
+    const dbErrorDiagnostic = [
+      typeof error === 'object' && error !== null && 'message' in error
+        ? String((error as { message?: unknown }).message || '')
+        : '',
+      typeof error === 'object' && error !== null && 'detail' in error
+        ? String((error as { detail?: unknown }).detail || '')
+        : '',
+      String(error),
+    ].join(' ');
+    if (
+      dbErrorCode === '23P01' &&
+      (dbErrorDiagnostic.includes('allocation_vehicle_overlap') ||
+        dbErrorDiagnostic.includes('allocation_driver_overlap'))
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            'The allocation schedule changed while this correction was being saved. Refresh and review the current assignments.',
+        },
+        { status: 409 },
+      );
+    }
+
     console.error('[transport-review-correction] PATCH failed:', error);
     return NextResponse.json({ error: 'Failed to save Transport Review corrections.' }, { status: 500 });
   }
