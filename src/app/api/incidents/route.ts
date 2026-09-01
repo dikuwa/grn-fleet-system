@@ -300,7 +300,20 @@ export async function POST(req: NextRequest) {
       { status: result.idempotent ? 200 : 201 },
     );
   } catch (error) {
-    if ((error as { code?: string })?.code === '23505') {
+    const databaseError = error as { code?: string; message?: string };
+    if (
+      databaseError.code === '23514' &&
+      databaseError.message?.includes('trip_progress_lifecycle_conflict')
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            'The incident could not be recorded because the trip or its uploaded evidence changed. Refresh the trip and retry with newly uploaded evidence.',
+        },
+        { status: 409 },
+      );
+    }
+    if (databaseError.code === '23505') {
       return NextResponse.json(
         {
           error:
