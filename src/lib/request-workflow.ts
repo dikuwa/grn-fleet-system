@@ -95,7 +95,7 @@ async function retirePreOperationsStateForResubmission(input: {
             FROM trips t
             WHERE t.request_id = tr.id
               AND t.tenant_id = ${input.tenantId}::uuid
-              AND (t.issued_at IS NOT NULL OR t.status <> 'pending')
+              AND (t.issued_at IS NOT NULL OR t.status NOT IN ('pending', 'cancelled'))
           )
       ),
       allocation_cancel AS (
