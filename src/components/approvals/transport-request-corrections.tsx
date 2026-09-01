@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { CalendarClock, CheckCircle2, Loader2, PencilLine } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -69,13 +69,19 @@ export function TransportRequestCorrections({
   const [reason, setReason] = useState('');
   const [error, setError] = useState('');
   const [draftActivities, setDraftActivities] = useState<ActivityDraft[]>(() => buildActivityDrafts(activities));
+  const serverSnapshot = useMemo(
+    () => JSON.stringify({ initialPurpose, initialSpecialRequirements, activities }),
+    [activities, initialPurpose, initialSpecialRequirements],
+  );
+  const lastSyncedServerSnapshot = useRef(serverSnapshot);
 
   useEffect(() => {
-    if (isOpen || saving) return;
+    if (serverSnapshot === lastSyncedServerSnapshot.current || isOpen || saving) return;
     setPurpose(initialPurpose ?? '');
     setSpecialRequirements(initialSpecialRequirements ?? '');
     setDraftActivities(buildActivityDrafts(activities));
-  }, [activities, initialPurpose, initialSpecialRequirements, isOpen, saving]);
+    lastSyncedServerSnapshot.current = serverSnapshot;
+  }, [activities, initialPurpose, initialSpecialRequirements, isOpen, saving, serverSnapshot]);
 
   const hasInvalidSchedule = useMemo(
     () =>
