@@ -19,6 +19,7 @@ import {
   trips,
   vehicleAllocations,
 } from '@/db/schema/trips';
+import { uploadInspectionEvidence } from '@/e2e/helpers/inspection-evidence';
 
 const BASE = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 const PASSWORD = process.env.SEED_ADMIN_PASSWORD || 'changeme';
@@ -31,7 +32,7 @@ async function login(email: string) {
   return api;
 }
 
-async function liveChecklist(type: 'departure' | 'return') {
+async function liveChecklist(api: APIRequestContext, type: 'departure' | 'return') {
   const db = getDb();
   const [template] = await db
     .select({ id: inspectionTemplates.id })
@@ -52,17 +53,14 @@ async function liveChecklist(type: 'departure' | 'return') {
     .where(eq(inspectionTemplateItems.templateId, template.id))
     .orderBy(inspectionTemplateItems.sortOrder);
   expect(items.length, `${type} checklist`).toBeGreaterThan(0);
+  const photoKeys = await Promise.all(
+    items
+      .filter((item) => item.requiresPhoto)
+      .map((_item, index) => uploadInspectionEvidence(api, `external-${type}-${index}`)),
+  );
   return {
     checklist: items.map((item) => ({ label: item.label, result: 'pass', comment: null })),
-    // Production inspection evidence is tenant-scoped. This lifecycle test is
-    // not an upload test, but its fixture keys must still obey the same storage
-    // namespace contract enforced by completeOfficialInspection().
-    photoKeys: items
-      .filter((item) => item.requiresPhoto)
-      .map(
-        (_item, index) =>
-          `tenant/${TENANT_ID}/inspections/e2e/external-${type}-${Date.now()}-${index}.jpg`,
-      ),
+    photoKeys,
   };
 }
 
@@ -73,7 +71,7 @@ async function inspect(
   vehicleId: string,
   odometerReading: number,
 ) {
-  const evidence = await liveChecklist(type);
+  const evidence = await liveChecklist(api, type);
   return api.post('/api/inspections', {
     data: {
       vehicleId,

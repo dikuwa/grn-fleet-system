@@ -196,6 +196,15 @@ export async function POST(request: NextRequest) {
         { status: 409 },
       );
     }
+    if (code === '23514' && message.includes('inspection_evidence_claim_conflict')) {
+      return NextResponse.json(
+        {
+          error:
+            'One or more inspection photos are no longer valid for this submission. Re-upload the affected evidence and submit the inspection again.',
+        },
+        { status: 409 },
+      );
+    }
     if (code === '23514' && message.includes('vehicle_odometer_regression')) {
       return NextResponse.json(
         {

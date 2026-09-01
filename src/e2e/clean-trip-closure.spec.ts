@@ -16,6 +16,7 @@ import {
   vehicleAllocations,
 } from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
+import { uploadInspectionEvidence } from '@/e2e/helpers/inspection-evidence';
 
 const BASE = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 const PASSWORD = process.env.SEED_ADMIN_PASSWORD || 'changeme';
@@ -52,7 +53,7 @@ async function approve(api: APIRequestContext, workflowId: string) {
   expect(lastResponse?.status(), lastResponse ? await lastResponse.text() : 'approval did not run').toBe(200);
 }
 
-async function liveChecklist(type: 'departure' | 'return') {
+async function liveChecklist(api: APIRequestContext, type: 'departure' | 'return') {
   const db = getDb();
   const [template] = await db
     .select({ id: inspectionTemplates.id })
@@ -76,14 +77,14 @@ async function liveChecklist(type: 'departure' | 'return') {
     .where(eq(inspectionTemplateItems.templateId, template.id))
     .orderBy(inspectionTemplateItems.sortOrder);
   expect(items.length, `${type} checklist items`).toBeGreaterThan(0);
+  const photoKeys = await Promise.all(
+    items
+      .filter((item) => item.requiresPhoto)
+      .map((_item, index) => uploadInspectionEvidence(api, `clean-${type}-${index}`)),
+  );
   return {
     checklist: items.map((item) => ({ label: item.label, result: 'pass', comment: null })),
-    photoKeys: items
-      .filter((item) => item.requiresPhoto)
-      .map(
-        (_item, index) =>
-          `tenant/${TENANT_ID}/inspections/e2e/clean-${type}-${Date.now()}-${index}.jpg`,
-      ),
+    photoKeys,
   };
 }
 
@@ -209,7 +210,7 @@ test('a clean returned trip closes atomically and restores the vehicle to availa
   });
   expect(acknowledge.status(), await acknowledge.text()).toBe(200);
 
-  const departureEvidence = await liveChecklist('departure');
+  const departureEvidence = await liveChecklist(inspector, 'departure');
   const departure = await inspector.post('/api/inspections', {
     data: {
       vehicleId: vehicle.id,
@@ -280,7 +281,7 @@ test('a clean returned trip closes atomically and restores the vehicle to availa
   });
   expect(returned.status(), await returned.text()).toBe(200);
 
-  const returnEvidence = await liveChecklist('return');
+  const returnEvidence = await liveChecklist(inspector, 'return');
   const returnInspection = await inspector.post('/api/inspections', {
     data: {
       vehicleId: vehicle.id,
