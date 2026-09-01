@@ -59,7 +59,7 @@ describe('Transport Review correction contract', () => {
     expect(routeSource).toContain('endAt: nextEnd');
     expect(routeSource).toContain('version: allocation.version + 1');
     expect(routeSource).toContain('eq(vehicleAllocations.version, allocation.version)');
-    expect(routeSource).toContain('scheduleChanged,\n        },\n        reason,');
+    expect(routeSource).toContain('scheduleChanged,\n          routeChanged,\n        },\n        reason,');
     expect(routeSource).toContain("action: 'request.transport_review_corrected'");
     expect(routeSource).toContain('success: true');
     expect(routeSource).toContain('changed: true');
