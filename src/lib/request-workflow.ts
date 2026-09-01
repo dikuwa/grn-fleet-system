@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { NextResponse } from 'next/server';
-import { and, desc, eq, isNull } from 'drizzle-orm';
+import { and, desc, eq, isNull, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import {
   transportRequests,
@@ -12,6 +12,8 @@ import { Permissions } from '@/lib/permissions';
 import { WorkflowEngine, type EngineResult } from '@/lib/workflow-engine';
 import { runAtomicMutations } from '@/lib/db-atomic';
 import { resolveActionNotifications } from '@/lib/notification-service';
+
+const RESUBMITTABLE_STATUSES = ['returned', 'rejected', 'supervisor_rejected'] as const;
 
 function databaseErrorCode(error: unknown): string | null {
   if (!error || typeof error !== 'object') return null;
@@ -53,6 +55,119 @@ function isConcurrentFallbackPublish(error: unknown) {
     databaseErrorCode(error) === '23505' &&
     databaseErrorText(error).includes('workflow_definitions_one_active_per_route')
   );
+}
+
+/**
+ * A request returned after Transport Review may already have a provisional or
+ * confirmed vehicle/driver allocation. A corrected resubmission must never
+ * carry that operational snapshot into a fresh approval workflow because the
+ * changed schedule, route, passengers or nominated driver may invalidate it.
+ *
+ * This boundary runs only for returned/rejected requests whose previous
+ * workflow link has already been cleared by the resubmit transaction. It
+ * retires pre-operations state atomically and refuses to proceed if a trip was
+ * physically issued or otherwise entered operations.
+ */
+async function retirePreOperationsStateForResubmission(input: {
+  requestId: string;
+  tenantId: string;
+  status: string;
+}) {
+  if (!RESUBMITTABLE_STATUSES.includes(input.status as (typeof RESUBMITTABLE_STATUSES)[number])) {
+    return;
+  }
+
+  const db = getDb();
+  const now = new Date();
+  const cancellationReason = 'Request corrected and resubmitted; prior operational allocation retired.';
+
+  try {
+    await db.execute(sql`
+      WITH request_guard AS (
+        SELECT tr.id
+        FROM transport_requests tr
+        WHERE tr.id = ${input.requestId}::uuid
+          AND tr.tenant_id = ${input.tenantId}::uuid
+          AND tr.status = ${input.status}
+          AND tr.workflow_instance_id IS NULL
+          AND NOT EXISTS (
+            SELECT 1
+            FROM trips t
+            WHERE t.request_id = tr.id
+              AND t.tenant_id = ${input.tenantId}::uuid
+              AND (t.issued_at IS NOT NULL OR t.status <> 'pending')
+          )
+      ),
+      allocation_cancel AS (
+        UPDATE vehicle_allocations va
+        SET state = 'cancelled',
+            override_reason = ${cancellationReason},
+            version = va.version + 1,
+            updated_at = ${now}
+        WHERE va.request_id = ${input.requestId}::uuid
+          AND va.state IN ('provisional', 'confirmed')
+          AND EXISTS (SELECT 1 FROM request_guard)
+        RETURNING va.id
+      ),
+      external_assignment_cancel AS (
+        UPDATE external_driver_assignments eda
+        SET state = 'cancelled',
+            cancelled_at = ${now},
+            cancellation_reason = ${cancellationReason},
+            updated_at = ${now}
+        WHERE eda.tenant_id = ${input.tenantId}::uuid
+          AND eda.request_id = ${input.requestId}::uuid
+          AND eda.state IN ('pending_acceptance', 'accepted')
+          AND EXISTS (SELECT 1 FROM request_guard)
+        RETURNING eda.id
+      ),
+      pending_trip_cancel AS (
+        UPDATE trips t
+        SET status = 'cancelled', updated_at = ${now}
+        WHERE t.request_id = ${input.requestId}::uuid
+          AND t.tenant_id = ${input.tenantId}::uuid
+          AND t.status = 'pending'
+          AND t.issued_at IS NULL
+          AND EXISTS (SELECT 1 FROM request_guard)
+        RETURNING t.id
+      ),
+      authority_cancel AS (
+        UPDATE trip_authorities ta
+        SET status = 'cancelled',
+            cancelled_at = ${now},
+            cancellation_reason = ${cancellationReason},
+            updated_at = ${now}
+        WHERE ta.request_id = ${input.requestId}::uuid
+          AND ta.tenant_id = ${input.tenantId}::uuid
+          AND ta.status NOT IN ('in_progress', 'awaiting_reconciliation', 'completed', 'closed', 'cancelled')
+          AND EXISTS (SELECT 1 FROM request_guard)
+        RETURNING ta.id
+      ),
+      request_reset AS (
+        UPDATE transport_requests tr
+        SET assigned_driver_employee_id = NULL,
+            assigned_driver_external_party_id = NULL,
+            updated_at = ${now}
+        WHERE tr.id = ${input.requestId}::uuid
+          AND tr.tenant_id = ${input.tenantId}::uuid
+          AND EXISTS (SELECT 1 FROM request_guard)
+        RETURNING tr.id
+      )
+      SELECT CAST(CASE
+        WHEN (SELECT count(*) FROM request_guard) = 1
+         AND (SELECT count(*) FROM request_reset) = 1
+        THEN '1'
+        ELSE 'atomic_resubmit_operational_state_failed'
+      END AS integer) AS committed
+    `);
+  } catch (error) {
+    if (String(error).includes('atomic_resubmit_operational_state_failed')) {
+      throw new Error(
+        'This request changed or entered trip operations before resubmission could restart its workflow.',
+      );
+    }
+    throw error;
+  }
 }
 
 /**
@@ -213,6 +328,7 @@ export async function ensureRequestWorkflow(
     .select({
       id: transportRequests.id,
       scope: transportRequests.scope,
+      status: transportRequests.status,
       workflowInstanceId: transportRequests.workflowInstanceId,
     })
     .from(transportRequests)
@@ -262,6 +378,12 @@ export async function ensureRequestWorkflow(
 
   const recoveredBeforeInit = await recoverPersistedInstance();
   if (recoveredBeforeInit) return recoveredBeforeInit;
+
+  await retirePreOperationsStateForResubmission({
+    requestId,
+    tenantId,
+    status: request.status,
+  });
 
   const scope: 'regional' | 'national' = request.scope === 'national' ? 'national' : 'regional';
   await ensureDefaultWorkflowDefinition(tenantId, scope);
