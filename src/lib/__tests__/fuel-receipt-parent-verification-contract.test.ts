@@ -50,10 +50,14 @@ describe('fuel receipt parent verification contract', () => {
     expect(parentGuardSource).toContain('Awaiting verification of ');
   });
 
-  it('handles receipt re-parenting deterministically to avoid cross-parent deadlocks', () => {
-    expect(parentGuardSource).toContain("TG_OP IN ('UPDATE', 'DELETE')");
-    expect(parentGuardSource).toContain("TG_OP IN ('INSERT', 'UPDATE')");
+  it('handles trigger records safely and re-parenting deterministically', () => {
+    expect(parentGuardSource).toContain("IF TG_OP = 'INSERT' THEN");
+    expect(parentGuardSource).toContain("ELSIF TG_OP = 'DELETE' THEN");
+    expect(parentGuardSource).toContain(
+      'v_transaction_ids := ARRAY[OLD.transaction_id, NEW.transaction_id]',
+    );
     expect(parentGuardSource).toContain('SELECT DISTINCT transaction_id');
+    expect(parentGuardSource).toContain('FROM unnest(v_transaction_ids)');
     expect(parentGuardSource).toContain('ORDER BY transaction_id');
   });
 });
