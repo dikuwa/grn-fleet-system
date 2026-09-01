@@ -99,6 +99,13 @@ export default async function ApprovalActionPage({ params }: { params: Promise<{
             endDate: activity.endDate.toISOString(),
             estimatedKilometres: activity.estimatedKilometres,
           }))}
+          routes={detail.routes.map((route) => ({
+            id: route.id,
+            originName: route.originName,
+            destinationName: route.destinationName,
+            totalKilometres: route.totalKilometres,
+            isVerified: route.isVerified,
+          }))}
         />
       )}
 
