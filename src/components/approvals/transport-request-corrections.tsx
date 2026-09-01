@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { CalendarClock, CheckCircle2, Loader2, PencilLine } from 'lucide-react';
+import { CalendarClock, CheckCircle2, Loader2, MapPin, PencilLine } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useToast } from '@/lib/use-toast';
@@ -15,6 +15,14 @@ interface ActivityDraft {
   startDate: string;
   endDate: string;
   estimatedKilometres: string;
+}
+
+interface RouteDraft {
+  id: string;
+  originName: string;
+  destinationName: string;
+  totalKilometres: string;
+  wasVerified: boolean;
 }
 
 interface TransportRequestCorrectionsProps {
@@ -31,6 +39,13 @@ interface TransportRequestCorrectionsProps {
     endDate: string;
     estimatedKilometres: number | null;
   }>;
+  routes: Array<{
+    id: string;
+    originName: string | null;
+    destinationName: string | null;
+    totalKilometres: number;
+    isVerified: boolean;
+  }>;
 }
 
 function toLocalDateTime(value: string) {
@@ -46,6 +61,7 @@ export function TransportRequestCorrections({
   initialSpecialRequirements,
   initialVehicleRequirements,
   activities,
+  routes,
 }: TransportRequestCorrectionsProps) {
   const router = useRouter();
   const { toast } = useToast();
@@ -67,6 +83,15 @@ export function TransportRequestCorrections({
         activity.estimatedKilometres == null ? '' : String(activity.estimatedKilometres),
     })),
   );
+  const [draftRoutes, setDraftRoutes] = useState<RouteDraft[]>(() =>
+    routes.map((route) => ({
+      id: route.id,
+      originName: route.originName ?? '',
+      destinationName: route.destinationName ?? '',
+      totalKilometres: String(route.totalKilometres ?? 0),
+      wasVerified: route.isVerified,
+    })),
+  );
 
   const hasInvalidSchedule = useMemo(
     () =>
@@ -86,8 +111,29 @@ export function TransportRequestCorrections({
     [draftActivities],
   );
 
+  const hasInvalidRoutes = useMemo(
+    () =>
+      draftRoutes.some((route) => {
+        const kilometres = Number(route.totalKilometres);
+        return (
+          !route.originName.trim() ||
+          !route.destinationName.trim() ||
+          !Number.isInteger(kilometres) ||
+          kilometres < 0
+        );
+      }),
+    [draftRoutes],
+  );
+
   const updateActivity = (id: string, field: keyof ActivityDraft, value: string) => {
     setDraftActivities((rows) =>
+      rows.map((row) => (row.id === id ? { ...row, [field]: value } : row)),
+    );
+    setError('');
+  };
+
+  const updateRoute = (id: string, field: 'originName' | 'destinationName' | 'totalKilometres', value: string) => {
+    setDraftRoutes((rows) =>
       rows.map((row) => (row.id === id ? { ...row, [field]: value } : row)),
     );
     setError('');
@@ -110,6 +156,15 @@ export function TransportRequestCorrections({
           activity.estimatedKilometres == null ? '' : String(activity.estimatedKilometres),
       })),
     );
+    setDraftRoutes(
+      routes.map((route) => ({
+        id: route.id,
+        originName: route.originName ?? '',
+        destinationName: route.destinationName ?? '',
+        totalKilometres: String(route.totalKilometres ?? 0),
+        wasVerified: route.isVerified,
+      })),
+    );
   };
 
   const saveCorrections = async () => {
@@ -119,6 +174,10 @@ export function TransportRequestCorrections({
     }
     if (hasInvalidSchedule) {
       setError('Check each activity title, date range and kilometre value before saving.');
+      return;
+    }
+    if (hasInvalidRoutes) {
+      setError('Check each journey origin, destination and kilometre value before saving.');
       return;
     }
 
@@ -144,6 +203,12 @@ export function TransportRequestCorrections({
               ? Number(activity.estimatedKilometres)
               : null,
           })),
+          routes: draftRoutes.map((route) => ({
+            id: route.id,
+            originName: route.originName.trim(),
+            destinationName: route.destinationName.trim(),
+            totalKilometres: Number(route.totalKilometres),
+          })),
         }),
       });
       const data = await response.json().catch(() => ({}));
@@ -153,8 +218,8 @@ export function TransportRequestCorrections({
         title: data.changed ? 'Transport Review corrections saved' : 'No changes to save',
         description: data.changed
           ? data.scheduleChanged
-            ? 'Request details and the live allocation window were updated with an audit revision.'
-            : 'Request details were updated with an audit revision.'
+            ? 'Request details, journey routes and the live allocation window were updated with an audit revision.'
+            : 'Request details and journey routes were updated with an audit revision.'
           : 'The request already matches these details.',
         variant: 'success',
       });
@@ -177,7 +242,7 @@ export function TransportRequestCorrections({
           <div>
             <CardTitle className="flex items-center gap-2">
               <CalendarClock className="text-brand-700 h-5 w-5" aria-hidden="true" />
-              Request Details &amp; Schedule
+              Request Details, Journey &amp; Schedule
             </CardTitle>
             <p className="text-ink-500 mt-1 text-xs leading-5">
               Correct operational details before release. The governed request origin, approval route and requester identity remain locked.
@@ -233,6 +298,69 @@ export function TransportRequestCorrections({
                 className="border-border bg-background text-ink-950 placeholder:text-ink-400 focus:border-ink-400 focus:ring-ink-200 w-full resize-y rounded-[8px] border px-3 py-2 text-sm outline-none transition-colors focus:ring-2"
               />
             </div>
+          </div>
+
+          <div className="space-y-3">
+            <div>
+              <p className="text-ink-950 text-sm font-semibold">Journey routes</p>
+              <p className="text-ink-500 mt-0.5 text-xs">
+                Correct the submitted origin, destination and total distance. Editing a route turns any earlier mapped verification into an explicit Transport Review override recorded with your correction note.
+              </p>
+            </div>
+            {draftRoutes.length === 0 ? (
+              <p className="border-border bg-muted/20 text-ink-500 rounded-[8px] border px-3 py-4 text-sm">
+                This request has no journey route rows to adjust.
+              </p>
+            ) : (
+              draftRoutes.map((route, index) => (
+                <div key={route.id} className="border-border bg-muted/15 space-y-3 rounded-[10px] border p-4">
+                  <div className="flex items-center justify-between gap-3">
+                    <div className="flex items-center gap-2">
+                      <MapPin className="text-ink-400 h-4 w-4" aria-hidden="true" />
+                      <span className="text-ink-700 text-xs font-semibold uppercase tracking-wide">
+                        Journey {index + 1}
+                      </span>
+                    </div>
+                    {route.wasVerified && (
+                      <span className="text-ink-500 text-xs">Mapped when submitted</span>
+                    )}
+                  </div>
+                  <div className="grid gap-3 md:grid-cols-2">
+                    <label className="space-y-1.5 text-xs font-medium text-ink-700">
+                      Origin
+                      <input
+                        type="text"
+                        value={route.originName}
+                        maxLength={500}
+                        onChange={(event) => updateRoute(route.id, 'originName', event.target.value)}
+                        className="border-border bg-background text-ink-950 focus:ring-ink-200 mt-1 w-full rounded-[8px] border px-3 py-2 text-sm font-normal outline-none focus:ring-2"
+                      />
+                    </label>
+                    <label className="space-y-1.5 text-xs font-medium text-ink-700">
+                      Destination
+                      <input
+                        type="text"
+                        value={route.destinationName}
+                        maxLength={500}
+                        onChange={(event) => updateRoute(route.id, 'destinationName', event.target.value)}
+                        className="border-border bg-background text-ink-950 focus:ring-ink-200 mt-1 w-full rounded-[8px] border px-3 py-2 text-sm font-normal outline-none focus:ring-2"
+                      />
+                    </label>
+                    <label className="space-y-1.5 text-xs font-medium text-ink-700 md:col-span-2">
+                      Total kilometres
+                      <input
+                        type="number"
+                        min={0}
+                        step={1}
+                        value={route.totalKilometres}
+                        onChange={(event) => updateRoute(route.id, 'totalKilometres', event.target.value)}
+                        className="border-border bg-background text-ink-950 focus:ring-ink-200 mt-1 w-full rounded-[8px] border px-3 py-2 text-sm font-normal outline-none focus:ring-2"
+                      />
+                    </label>
+                  </div>
+                </div>
+              ))
+            )}
           </div>
 
           <div className="space-y-3">
@@ -348,16 +476,12 @@ export function TransportRequestCorrections({
             <Button
               variant="primary"
               onClick={() => void saveCorrections()}
-              disabled={saving || !reason.trim() || hasInvalidSchedule}
+              disabled={saving || !reason.trim() || hasInvalidSchedule || hasInvalidRoutes}
             >
               {saving && <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />}
               {saving ? 'Saving…' : 'Save Corrections'}
             </Button>
-            <Button
-              variant="secondary"
-              onClick={resetForm}
-              disabled={saving}
-            >
+            <Button variant="secondary" onClick={resetForm} disabled={saving}>
               Reset
             </Button>
           </div>
