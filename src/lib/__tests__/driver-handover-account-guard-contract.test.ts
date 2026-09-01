@@ -5,21 +5,27 @@ const handoverRoute = readFileSync('src/app/api/trips/[id]/driver-handover/route
 const migration = readFileSync('src/db/migrations/0111_relief_driver_account_guard.sql', 'utf8');
 
 describe('relief-driver handover account contract', () => {
-  it('keeps acknowledgement tied to the authenticated employee account', () => {
+  it('keeps acknowledgement tied to the authenticated employee account and Driver workspace', () => {
     expect(handoverRoute).toContain('userId: employees.userId');
     expect(handoverRoute).toContain('eq(employees.userId, session.user.id)');
     expect(handoverRoute).toContain("'/dashboard/driver-mobile'");
-    expect(handoverRoute).toContain("Permissions.DRIVER_LOG_CREATE");
+    expect(handoverRoute).toContain('Permissions.DRIVER_LOG_CREATE');
   });
 
-  it('rejects pending relief assignments without an active linked account at the database boundary', () => {
+  it('rejects pending relief assignments without an acknowledgement-capable account at the database boundary', () => {
     expect(migration).toContain('guard_pending_relief_driver_account');
     expect(migration).toContain("NEW.driver_type = 'relief'");
     expect(migration).toContain('NEW.acknowledged_at IS NULL');
     expect(migration).toContain("e.employment_status = 'active'");
+    expect(migration).toContain('e.is_driver = true');
     expect(migration).toContain('e.user_id IS NOT NULL');
+    expect(migration).toContain('INNER JOIN tenant_memberships tm');
+    expect(migration).toContain("tm.status = 'active'");
+    expect(migration).toContain('INNER JOIN role_assignments ra');
+    expect(migration).toContain("r.name = 'Assigned Driver'");
+    expect(migration).toContain("rp.permission_code = 'driver:log-create'");
     expect(migration).toContain(
-      "RAISE EXCEPTION 'atomic_driver_handover_initiate_failed relief_driver_account_required'",
+      "RAISE EXCEPTION 'atomic_driver_handover_initiate_failed relief_driver_acknowledgement_account_required'",
     );
   });
 
