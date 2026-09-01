@@ -121,6 +121,15 @@ async function retirePreOperationsStateForResubmission(input: {
           AND EXISTS (SELECT 1 FROM request_guard)
         RETURNING eda.id
       ),
+      external_request_driver_reset AS (
+        UPDATE external_request_drivers erd
+        SET is_confirmed = false,
+            driver_type = 'nominated'
+        WHERE erd.request_id = ${input.requestId}::uuid
+          AND EXISTS (SELECT 1 FROM external_assignment_cancel)
+          AND EXISTS (SELECT 1 FROM request_guard)
+        RETURNING erd.id
+      ),
       pending_trip_cancel AS (
         UPDATE trips t
         SET status = 'cancelled', updated_at = ${now}
@@ -142,6 +151,19 @@ async function retirePreOperationsStateForResubmission(input: {
           AND ta.status NOT IN ('in_progress', 'awaiting_reconciliation', 'completed', 'closed', 'cancelled')
           AND EXISTS (SELECT 1 FROM request_guard)
         RETURNING ta.id
+      ),
+      generated_authority_cancel AS (
+        UPDATE generated_documents gd
+        SET status = 'cancelled',
+            reason = ${cancellationReason},
+            updated_at = ${now}
+        WHERE gd.tenant_id = ${input.tenantId}::uuid
+          AND gd.entity_type = 'vehicle_allocation'
+          AND gd.entity_id IN (SELECT id FROM allocation_cancel)
+          AND gd.document_type = 'trip_authority'
+          AND gd.status IN ('draft', 'issued')
+          AND EXISTS (SELECT 1 FROM request_guard)
+        RETURNING gd.id
       ),
       request_reset AS (
         UPDATE transport_requests tr
