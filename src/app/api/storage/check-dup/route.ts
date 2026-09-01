@@ -2,13 +2,12 @@
  * POST /api/storage/check-dup
  *
  * Accepts a SHA-256 hash (hex string) and category, returns existing
- * R2 object keys if a duplicate exists.
+ * R2 object keys if a duplicate exists inside the authenticated tenant only.
  *
  * Request body:
  * {
  *   sha256: string;       // 64-char hex SHA-256
  *   category: string;     // one of CATEGORY_PATHS keys
- *   tenantId?: string;    // optional, defaults to session tenant
  * }
  *
  * Response:
@@ -38,10 +37,9 @@ export async function POST(request: NextRequest) {
     }
 
     const body = await request.json();
-    const { sha256, category, tenantId } = body as {
+    const { sha256, category } = body as {
       sha256: string;
       category: string;
-      tenantId?: string;
     };
 
     if (!sha256 || !/^[a-f0-9]{64}$/i.test(sha256)) {
@@ -69,10 +67,12 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    const targetTenantId = tenantId || session.tenantId;
-    const tenantPrefix = `tenant/${targetTenantId}`;
+    // Generic tenant uploads are always isolated to the authenticated tenant.
+    // Never accept a body-provided tenant identifier here: FILE_UPLOAD grants
+    // permission to operate in the current tenant, not to enumerate another
+    // tenant's object namespace by hash prefix.
+    const tenantPrefix = `tenant/${session.tenantId}`;
 
-    // Search for existing objects with this hash prefix
     const hashPrefix = sha256.slice(0, 16);
     const searchPrefix = `${tenantPrefix}/${CATEGORY_PATHS[category as keyof typeof CATEGORY_PATHS]}/${hashPrefix}-`;
 
