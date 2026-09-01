@@ -132,9 +132,11 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     const comments = body.comments?.trim() || null;
     const auditSequence = Date.now();
 
-    // Mid-trip vehicle replacement and trip return both mutate the active
-    // allocation. Claim the exact allocation version first so one lifecycle
-    // transition wins before the trip/authority/odometer evidence is frozen.
+    // Mid-trip vehicle replacement, handover acknowledgement/cancellation, and
+    // trip return all mutate the active allocation. Claim its exact version so
+    // only one lifecycle transition wins. If the current driver returns before
+    // a proposed relief driver acknowledges, close that proposal in this same
+    // transaction; an ended trip must never retain a pending handover.
     await db.execute(sql`
       WITH allocation_claim AS (
         UPDATE vehicle_allocations va
@@ -167,6 +169,23 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           AND EXISTS (SELECT 1 FROM allocation_claim)
         RETURNING id, request_id, vehicle_id
       ),
+      pending_handover_cancel AS (
+        UPDATE trip_authorised_drivers tad
+        SET driver_type = 'relief_cancelled'
+        WHERE tad.authority_id = ${trip.authorityId}::uuid
+          AND tad.driver_type = 'relief'
+          AND tad.acknowledged_at IS NULL
+          AND EXISTS (SELECT 1 FROM trip_claim)
+        RETURNING tad.id, tad.employee_id
+      ),
+      outgoing_segment_reset AS (
+        UPDATE trip_authorised_drivers tad
+        SET handover_odometer = NULL
+        WHERE tad.authority_id = ${trip.authorityId}::uuid
+          AND tad.employee_id = ${employee.id}::uuid
+          AND EXISTS (SELECT 1 FROM pending_handover_cancel)
+        RETURNING tad.id
+      ),
       authority_claim AS (
         UPDATE trip_authorities
         SET status = 'awaiting_arrival_inspection',
@@ -190,6 +209,58 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
           AND allocation_id = ${trip.trip.allocationId}::uuid
           AND status IN ('in_progress', 'delayed', 'route_deviation_pending_review', 'incident_reported')
           AND EXISTS (SELECT 1 FROM trip_claim)
+        RETURNING id, version
+      ),
+      handover_amendment_insert AS (
+        INSERT INTO trip_amendments (
+          authority_id, amendment_type, original_value, new_value, reason,
+          status, requested_by_user_id, approved_by_user_id, approved_at, version
+        )
+        SELECT
+          authority_claim.id,
+          'driver_handover_cancelled',
+          jsonb_build_object('reliefDriverEmployeeId', pending_handover_cancel.employee_id::text),
+          jsonb_build_object(
+            'state', 'cancelled_on_return',
+            'vehicleId', ${trip.trip.vehicleId}::text,
+            'allocationVersion', ${trip.allocationVersion + 1}::integer
+          ),
+          'Trip returned before relief-driver acknowledgement',
+          'approved',
+          ${session.user.id},
+          ${session.user.id},
+          ${nowIso}::timestamptz,
+          authority_claim.version
+        FROM authority_claim
+        CROSS JOIN pending_handover_cancel
+        WHERE EXISTS (SELECT 1 FROM outgoing_segment_reset)
+        RETURNING id
+      ),
+      handover_audit_insert AS (
+        INSERT INTO audit_events (
+          tenant_id, tenant_sequence, event_type, actor_user_id, actor_employee_id,
+          action, entity_type, entity_id, summary, reason, after, source_channel
+        )
+        SELECT
+          ${session.tenantId}::uuid,
+          ${auditSequence + 1},
+          'trip_driver_handover_cancelled_on_return',
+          ${session.user.id},
+          ${employee.id}::uuid,
+          'cancel_driver_handover_on_return',
+          'trip',
+          ${id}::uuid,
+          'Pending relief-driver handover cancelled because the current driver returned the trip',
+          'Trip returned before relief-driver acknowledgement',
+          jsonb_build_object(
+            'authorityId', ${trip.authorityId}::text,
+            'vehicleId', ${trip.trip.vehicleId}::text,
+            'allocationVersion', ${trip.allocationVersion + 1}::integer,
+            'reliefDriverEmployeeId', pending_handover_cancel.employee_id::text
+          ),
+          'web'
+        FROM pending_handover_cancel
+        WHERE EXISTS (SELECT 1 FROM handover_amendment_insert)
         RETURNING id
       ),
       odometer_insert AS (
@@ -240,7 +311,8 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
             'fuelLevel', ${fuelLevel}::text,
             'returnLocation', ${returnLocation}::text,
             'incidentDeclared', ${body.incidentDeclared}::boolean,
-            'outstandingReceiptsDeclared', ${body.outstandingReceiptsDeclared}::boolean
+            'outstandingReceiptsDeclared', ${body.outstandingReceiptsDeclared}::boolean,
+            'pendingReliefHandoverAutoCancelled', (SELECT count(*) FROM pending_handover_cancel) = 1
           ),
           'web'
         FROM vehicle_claim
@@ -253,12 +325,18 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
          AND (SELECT count(*) FROM odometer_insert) = 1
          AND (SELECT count(*) FROM vehicle_claim) = 1
          AND (SELECT count(*) FROM audit_insert) = 1
+         AND (SELECT count(*) FROM pending_handover_cancel) = (SELECT count(*) FROM outgoing_segment_reset)
+         AND (SELECT count(*) FROM pending_handover_cancel) = (SELECT count(*) FROM handover_amendment_insert)
+         AND (SELECT count(*) FROM pending_handover_cancel) = (SELECT count(*) FROM handover_audit_insert)
         THEN '1'
         ELSE 'atomic_trip_return_failed_'
           || (SELECT count(*) FROM allocation_claim)::text
           || (SELECT count(*) FROM trip_claim)::text
           || (SELECT count(*) FROM authority_claim)::text
           || (SELECT count(*) FROM vehicle_claim)::text
+          || '_handover_'
+          || (SELECT count(*) FROM pending_handover_cancel)::text
+          || (SELECT count(*) FROM handover_amendment_insert)::text
       END AS integer) AS committed
     `);
 
@@ -279,7 +357,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
   } catch (error) {
     console.error('[trips/return] POST failed:', error);
     return NextResponse.json(
-      { error: 'Trip, allocation, vehicle, or odometer state changed while return was being recorded. Refresh and review the latest trip.' },
+      { error: 'Trip, allocation, vehicle, odometer, or pending handover state changed while return was being recorded. Refresh and review the latest trip.' },
       { status: 409 },
     );
   }
