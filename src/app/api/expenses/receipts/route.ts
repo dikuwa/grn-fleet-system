@@ -4,15 +4,31 @@ import { getDb } from '@/db';
 import { trips } from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
 import { auditEvents } from '@/db/schema/audit';
+import { operationalExpenseReceiptStaging } from '@/db/schema/operational-expenses';
 import { hasPermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { tripScopeCondition } from '@/lib/record-scope';
-import { buildKey, isStorageConfigured, uploadFile } from '@/lib/storage';
+import { buildKey, deleteFile, isStorageConfigured, uploadFile } from '@/lib/storage';
 import { UPLOAD_MAX_SIZE_BYTES } from '@/lib/constants';
+import { runAtomicMutations } from '@/lib/db-atomic';
 
 const EXPENSE_RECEIPT_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
 
+function expenseReceiptClosureConflict(error: unknown) {
+  const record = error as {
+    code?: string;
+    message?: string;
+    cause?: { code?: string; message?: string };
+  };
+  const code = record?.code ?? record?.cause?.code;
+  const message = [record?.message, record?.cause?.message, String(error)]
+    .filter((value): value is string => Boolean(value))
+    .join(' ');
+  return code === '23514' && message.includes('closed_trip_expense_receipt_immutable');
+}
+
 export async function POST(request: NextRequest) {
+  let uploadedKey: string | null = null;
   try {
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
@@ -59,6 +75,9 @@ export async function POST(request: NextRequest) {
         .where(and(...conditions))
         .limit(1);
       if (!trip) return NextResponse.json({ error: 'Trip not found or not assigned to you' }, { status: 404 });
+      if (trip.status === 'closed') {
+        return NextResponse.json({ error: 'This trip is already closed. Expense receipt evidence is immutable.' }, { status: 409 });
+      }
       if (!canManage && !['in_progress', 'return_due'].includes(trip.status)) {
         return NextResponse.json({ error: 'The assigned trip is not active' }, { status: 409 });
       }
@@ -76,22 +95,59 @@ export async function POST(request: NextRequest) {
     const original = Buffer.from(await file.arrayBuffer());
     const key = buildKey(file.name, 'expense-receipts', `tenant/${session.tenantId}`);
     await uploadFile(original, key, { contentType: file.type, tenantPrefix: `tenant/${session.tenantId}` });
+    uploadedKey = key;
 
-    await db.insert(auditEvents).values({
-      tenantId: session.tenantId,
-      tenantSequence: Date.now(),
-      eventType: 'expense_receipt_uploaded',
-      actorUserId: session.user.id,
-      action: 'upload',
-      entityType: tripId ? 'trip' : 'vehicle',
-      entityId: tripId || vehicleId,
-      summary: 'Operational expense receipt evidence uploaded',
-      after: { tripId, vehicleId, key, fileName: file.name, mimeType: file.type, size: file.size },
-      sourceChannel: 'web',
-    });
+    try {
+      await runAtomicMutations((executor) => [
+        executor.insert(operationalExpenseReceiptStaging).values({
+          tenantId: session.tenantId,
+          tripId,
+          vehicleId,
+          fileKey: key,
+          originalFileName: file.name,
+          mimeType: file.type,
+          fileSize: file.size,
+          uploadedByUserId: session.user.id,
+        }),
+        executor.insert(auditEvents).values({
+          tenantId: session.tenantId,
+          tenantSequence: Date.now(),
+          eventType: 'expense_receipt_uploaded',
+          actorUserId: session.user.id,
+          action: 'upload',
+          entityType: tripId ? 'trip' : 'vehicle',
+          entityId: tripId || vehicleId,
+          summary: 'Operational expense receipt evidence uploaded',
+          after: { tripId, vehicleId, key, fileName: file.name, mimeType: file.type, size: file.size },
+          sourceChannel: 'web',
+        }),
+      ]);
+    } catch (error) {
+      await deleteFile(key).catch((cleanupError) => {
+        console.error('[expenses/receipts] failed to remove uncommitted receipt object:', cleanupError);
+      });
+      uploadedKey = null;
+      throw error;
+    }
 
     return NextResponse.json({ success: true, data: { key, fileName: file.name, mimeType: file.type } }, { status: 201 });
   } catch (error) {
+    if (uploadedKey) {
+      await deleteFile(uploadedKey).catch((cleanupError) => {
+        console.error('[expenses/receipts] failed to remove failed receipt object:', cleanupError);
+      });
+    }
+    if (expenseReceiptClosureConflict(error)) {
+      return NextResponse.json(
+        { error: 'This trip is already closed. Expense receipt evidence is immutable.' },
+        { status: 409 },
+      );
+    }
+    const record = error as { code?: string; cause?: { code?: string } };
+    const code = record?.code ?? record?.cause?.code;
+    if (code === '23505') {
+      return NextResponse.json({ error: 'This expense receipt evidence was already staged' }, { status: 409 });
+    }
     console.error('[expenses/receipts] POST failed:', error);
     return NextResponse.json({ error: 'Failed to upload expense receipt' }, { status: 500 });
   }
