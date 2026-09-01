@@ -19,6 +19,8 @@ describe('request resubmission operational retirement contract', () => {
     expect(workflow).toContain('t.issued_at IS NOT NULL');
     expect(workflow).toContain('const committed = Number(queryRows?.[0]?.committed ?? 0)');
     expect(workflow).toContain('if (committed !== 1)');
+    expect(workflow).toContain('const nowIso = new Date().toISOString()');
+    expect(workflow).toContain('${nowIso}::timestamptz');
   });
 
   it('uses the guard result without rewriting unrelated database failures', () => {
