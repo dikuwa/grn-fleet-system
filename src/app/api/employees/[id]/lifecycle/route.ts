@@ -235,13 +235,19 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     endAt?: string;
     reason?: string;
     notes?: string;
-    supportingDocumentKey?: string;
     officeId?: string;
     departmentId?: string;
     jobTitle?: string;
     position?: string;
     supervisorEmployeeId?: string;
-  };
+  } & Record<string, unknown>;
+
+  if (Object.prototype.hasOwnProperty.call(body, 'supportingDocumentKey')) {
+    return NextResponse.json(
+      { error: 'Supporting document uploads are not available for staff lifecycle actions.' },
+      { status: 422 },
+    );
+  }
 
   if (body.action === 'deactivate_account' || body.action === 'reactivate_account') {
     return NextResponse.json(
@@ -467,7 +473,6 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         endAt,
         reason: body.reason?.trim() || null,
         notes: body.notes?.trim() || null,
-        supportingDocumentKey: body.supportingDocumentKey || null,
         enteredByUserId: auth.session.user.id,
       });
       await tx
