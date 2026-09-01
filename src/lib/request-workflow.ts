@@ -81,8 +81,7 @@ async function retirePreOperationsStateForResubmission(input: {
   const now = new Date();
   const cancellationReason = 'Request corrected and resubmitted; prior operational allocation retired.';
 
-  try {
-    await db.execute(sql`
+  const result = await db.execute(sql`
       WITH request_guard AS (
         SELECT tr.id
         FROM transport_requests tr
@@ -179,20 +178,22 @@ async function retirePreOperationsStateForResubmission(input: {
           AND EXISTS (SELECT 1 FROM request_guard)
         RETURNING tr.id
       )
-      SELECT CAST(CASE
+      SELECT CASE
         WHEN (SELECT count(*) FROM request_guard) = 1
          AND (SELECT count(*) FROM request_reset) = 1
-        THEN '1'
-        ELSE 'atomic_resubmit_operational_state_failed'
-      END AS integer) AS committed
+        THEN 1
+        ELSE 0
+      END AS committed
     `);
-  } catch (error) {
-    if (String(error).includes('atomic_resubmit_operational_state_failed')) {
-      throw new Error(
-        'This request changed or entered trip operations before resubmission could restart its workflow.',
-      );
-    }
-    throw error;
+
+  const queryRows = Array.isArray(result)
+    ? result
+    : (result as { rows?: Array<{ committed?: unknown }> }).rows;
+  const committed = Number(queryRows?.[0]?.committed ?? 0);
+  if (committed !== 1) {
+    throw new Error(
+      'This request changed or entered trip operations before resubmission could restart its workflow.',
+    );
   }
 }
 
