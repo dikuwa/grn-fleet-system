@@ -1,6 +1,7 @@
 -- A relief-driver handover is completed by the relief driver from the
 -- authenticated Driver workspace. Prevent creating a pending handover that
--- cannot ever be acknowledged because the employee has no linked user account.
+-- cannot ever be acknowledged because the employee has no acknowledgement-
+-- capable account.
 --
 -- Keep this check at the database boundary so stale clients and concurrent
 -- account-link changes cannot bypass the API's eligibility checks.
@@ -14,11 +15,27 @@ BEGIN
     IF NOT EXISTS (
       SELECT 1
       FROM employees e
+      INNER JOIN tenant_memberships tm
+        ON tm.user_id = e.user_id
+       AND tm.tenant_id = e.tenant_id
+       AND tm.status = 'active'
+      INNER JOIN role_assignments ra
+        ON ra.tenant_membership_id = tm.id
+       AND ra.start_date <= now()
+       AND (ra.end_date IS NULL OR ra.end_date >= now())
+      INNER JOIN roles r
+        ON r.id = ra.role_id
+       AND r.tenant_id = e.tenant_id
+       AND r.name = 'Assigned Driver'
+      INNER JOIN role_permissions rp
+        ON rp.role_id = r.id
+       AND rp.permission_code = 'driver:log-create'
       WHERE e.id = NEW.employee_id
         AND e.employment_status = 'active'
+        AND e.is_driver = true
         AND e.user_id IS NOT NULL
     ) THEN
-      RAISE EXCEPTION 'atomic_driver_handover_initiate_failed relief_driver_account_required'
+      RAISE EXCEPTION 'atomic_driver_handover_initiate_failed relief_driver_acknowledgement_account_required'
         USING ERRCODE = '23514';
     END IF;
   END IF;
