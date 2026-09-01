@@ -1,13 +1,15 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { trips, tripAuthorities, vehicleAllocations } from '@/db/schema/trips';
+import { trips, tripAuthorities, tripAuthorisedDrivers, vehicleAllocations } from '@/db/schema/trips';
 import { employees } from '@/db/schema/people';
 import { vehicles } from '@/db/schema/fleet';
 import { transportRequests } from '@/db/schema/requests';
 import { requireDashboardAction, requireRequestAuth, requireAnyPermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { eq, and, sql } from 'drizzle-orm';
+import { eq, and, isNull, sql } from 'drizzle-orm';
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
+import { createScopedNotifications } from '@/lib/notification-service';
+import { WorkspaceIds } from '@/lib/workspaces';
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -115,6 +117,24 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (trip.allocationVehicleId !== trip.trip.vehicleId) {
       return NextResponse.json({ error: 'The active allocation vehicle changed. Refresh the trip before recording return.' }, { status: 409 });
     }
+
+    const [pendingRelief] = await db
+      .select({
+        handoverId: tripAuthorisedDrivers.id,
+        employeeId: employees.id,
+        userId: employees.userId,
+      })
+      .from(tripAuthorisedDrivers)
+      .innerJoin(employees, eq(employees.id, tripAuthorisedDrivers.employeeId))
+      .where(
+        and(
+          eq(tripAuthorisedDrivers.authorityId, trip.authorityId),
+          eq(tripAuthorisedDrivers.driverType, 'relief'),
+          isNull(tripAuthorisedDrivers.acknowledgedAt),
+          eq(employees.tenantId, session.tenantId),
+        ),
+      )
+      .limit(1);
 
     const minimumOdometer = Math.max(trip.beginningOdometer ?? 0, trip.vehicleOdometer ?? 0);
     if (Number(body.endingOdometer) < minimumOdometer) {
@@ -347,6 +367,22 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       stage: 'return_inspection',
       officeLabel: 'Return inspection',
     }).catch((error) => console.warn('[trips/return] Post-commit activity failed:', error));
+
+    if (pendingRelief?.userId) {
+      await createScopedNotifications({
+        tenantId: session.tenantId,
+        recipientUserIds: [pendingRelief.userId],
+        category: 'awareness',
+        eventType: 'driver_handover_cancelled',
+        title: 'Driver handover cancelled',
+        body: `${trip.requestReference}: the trip was returned before you acknowledged the proposed driver handover, so the handover is no longer active.`,
+        entityType: 'trip',
+        entityId: id,
+        actionUrl: '/dashboard/driver-mobile',
+        workspace: WorkspaceIds.DRIVER,
+        priority: 'normal',
+      }).catch((error) => console.warn('[trips/return] Relief-driver cancellation notification failed:', error));
+    }
 
     const [updatedTrip] = await db
       .select()
