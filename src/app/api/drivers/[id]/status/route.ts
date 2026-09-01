@@ -4,7 +4,7 @@
  * PATCH /api/drivers/[id]/status — Suspend or reactivate a driver
  *
  * Request body:
- *   { action: 'suspend', reason: string, effectiveDate?: string, documentKey?: string }
+ *   { action: 'suspend', reason: string, effectiveDate?: string }
  *   { action: 'reactivate', reason: string, effectiveDate?: string }
  */
 
@@ -41,7 +41,15 @@ export async function PATCH(
     const body = await request.json();
     const action = String(body.action || '');
     const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
-    const documentKey = typeof body.documentKey === 'string' ? body.documentKey.trim() : '';
+    if (Object.prototype.hasOwnProperty.call(body, 'documentKey')) {
+      return NextResponse.json(
+        {
+          error:
+            'Suspension document uploads are not supported by this action. Submit the suspension without documentKey.',
+        },
+        { status: 422 },
+      );
+    }
     const validActions = ['suspend', 'reactivate'];
     if (!validActions.includes(action)) {
       return NextResponse.json(
@@ -135,21 +143,6 @@ export async function PATCH(
           WHERE driver_profile_id = ${profile.id}::uuid
             AND is_active = true
             AND EXISTS (SELECT 1 FROM profile_claim)
-          RETURNING id
-        ),
-        document_insert AS (
-          INSERT INTO employee_documents (
-            employee_id, document_type, document_name, file_key, mime_type, notes
-          )
-          SELECT
-            ${employee.id}::uuid,
-            'suspension_order',
-            ${`Driver Suspension — ${reason.substring(0, 60)}`},
-            ${documentKey || null},
-            'application/pdf',
-            ${`Suspension effective ${effectiveAt.toISOString().split('T')[0]}. Reason: ${reason}`}
-          FROM profile_claim
-          WHERE ${Boolean(documentKey)} = true
           RETURNING id
         ),
         audit_insert AS (
