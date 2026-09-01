@@ -7,7 +7,7 @@ CREATE TABLE IF NOT EXISTS inspection_evidence_uploads (
   mime_type text NOT NULL,
   file_size integer NOT NULL,
   sha256 text NOT NULL,
-  claimed_inspection_id uuid REFERENCES vehicle_inspections(id) ON DELETE SET NULL,
+  claimed_inspection_id uuid REFERENCES vehicle_inspections(id) ON DELETE CASCADE,
   claimed_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
   CONSTRAINT ck_inspection_evidence_claim_pair CHECK (
