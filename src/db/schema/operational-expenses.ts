@@ -66,6 +66,41 @@ export const operationalExpenses = pgTable(
   ],
 );
 
+/**
+ * Authoritative staging ledger for operational-expense receipt objects.
+ *
+ * The object is uploaded before the expense itself exists, so this row bridges
+ * object storage and the financial ledger. Database triggers serialize trip-
+ * linked rows with final closure and mark them consumed when a matching
+ * trip_expenses row commits.
+ */
+export const operationalExpenseReceiptStaging = pgTable(
+  'operational_expense_receipt_staging',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    tripId: uuid('trip_id').references(() => trips.id, { onDelete: 'cascade' }),
+    vehicleId: uuid('vehicle_id')
+      .notNull()
+      .references(() => vehicles.id, { onDelete: 'restrict' }),
+    fileKey: text('file_key').notNull(),
+    originalFileName: text('original_file_name').notNull(),
+    mimeType: text('mime_type').notNull(),
+    fileSize: integer('file_size').notNull(),
+    uploadedByUserId: text('uploaded_by_user_id').notNull(),
+    expenseId: uuid('expense_id').references(() => operationalExpenses.id, { onDelete: 'set null' }),
+    consumedAt: timestamp('consumed_at', { withTimezone: true }),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    uniqueIndex('uq_operational_expense_receipt_staging_tenant_key').on(table.tenantId, table.fileKey),
+    index('idx_operational_expense_receipt_staging_trip').on(table.tenantId, table.tripId),
+    index('idx_operational_expense_receipt_staging_expense').on(table.expenseId),
+  ],
+);
+
 export const OPERATIONAL_EXPENSE_CATEGORIES = [
   'fuel',
   'oil',
