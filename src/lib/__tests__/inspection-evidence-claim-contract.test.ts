@@ -39,7 +39,9 @@ describe('official inspection evidence claim contract', () => {
     expect(migrationSource).toContain('tenant_id uuid NOT NULL REFERENCES tenants(id)');
     expect(migrationSource).toContain('file_key text NOT NULL UNIQUE');
     expect(migrationSource).toContain('uploaded_by_user_id text NOT NULL');
-    expect(migrationSource).toContain('claimed_inspection_id uuid REFERENCES vehicle_inspections(id)');
+    expect(migrationSource).toContain(
+      'claimed_inspection_id uuid REFERENCES vehicle_inspections(id) ON DELETE CASCADE',
+    );
     expect(migrationSource).toContain('ck_inspection_evidence_claim_pair');
   });
 
