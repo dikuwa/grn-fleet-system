@@ -78,7 +78,7 @@ async function retirePreOperationsStateForResubmission(input: {
   }
 
   const db = getDb();
-  const now = new Date();
+  const nowIso = new Date().toISOString();
   const cancellationReason = 'Request corrected and resubmitted; prior operational allocation retired.';
 
   const result = await db.execute(sql`
@@ -102,7 +102,7 @@ async function retirePreOperationsStateForResubmission(input: {
         SET state = 'cancelled',
             override_reason = ${cancellationReason},
             version = va.version + 1,
-            updated_at = ${now}
+            updated_at = ${nowIso}::timestamptz
         WHERE va.request_id = ${input.requestId}::uuid
           AND va.state IN ('provisional', 'confirmed')
           AND EXISTS (SELECT 1 FROM request_guard)
@@ -111,9 +111,9 @@ async function retirePreOperationsStateForResubmission(input: {
       external_assignment_cancel AS (
         UPDATE external_driver_assignments eda
         SET state = 'cancelled',
-            cancelled_at = ${now},
+            cancelled_at = ${nowIso}::timestamptz,
             cancellation_reason = ${cancellationReason},
-            updated_at = ${now}
+            updated_at = ${nowIso}::timestamptz
         WHERE eda.tenant_id = ${input.tenantId}::uuid
           AND eda.request_id = ${input.requestId}::uuid
           AND eda.state IN ('pending_acceptance', 'accepted')
@@ -131,7 +131,7 @@ async function retirePreOperationsStateForResubmission(input: {
       ),
       pending_trip_cancel AS (
         UPDATE trips t
-        SET status = 'cancelled', updated_at = ${now}
+        SET status = 'cancelled', updated_at = ${nowIso}::timestamptz
         WHERE t.request_id = ${input.requestId}::uuid
           AND t.tenant_id = ${input.tenantId}::uuid
           AND t.status = 'pending'
@@ -142,9 +142,9 @@ async function retirePreOperationsStateForResubmission(input: {
       authority_cancel AS (
         UPDATE trip_authorities ta
         SET status = 'cancelled',
-            cancelled_at = ${now},
+            cancelled_at = ${nowIso}::timestamptz,
             cancellation_reason = ${cancellationReason},
-            updated_at = ${now}
+            updated_at = ${nowIso}::timestamptz
         WHERE ta.request_id = ${input.requestId}::uuid
           AND ta.tenant_id = ${input.tenantId}::uuid
           AND ta.status NOT IN ('in_progress', 'awaiting_reconciliation', 'completed', 'closed', 'cancelled')
@@ -155,7 +155,7 @@ async function retirePreOperationsStateForResubmission(input: {
         UPDATE generated_documents gd
         SET status = 'cancelled',
             reason = ${cancellationReason},
-            updated_at = ${now}
+            updated_at = ${nowIso}::timestamptz
         WHERE gd.tenant_id = ${input.tenantId}::uuid
           AND gd.entity_type = 'vehicle_allocation'
           AND gd.entity_id IN (
@@ -172,7 +172,7 @@ async function retirePreOperationsStateForResubmission(input: {
         UPDATE transport_requests tr
         SET assigned_driver_employee_id = NULL,
             assigned_driver_external_party_id = NULL,
-            updated_at = ${now}
+            updated_at = ${nowIso}::timestamptz
         WHERE tr.id = ${input.requestId}::uuid
           AND tr.tenant_id = ${input.tenantId}::uuid
           AND EXISTS (SELECT 1 FROM request_guard)
