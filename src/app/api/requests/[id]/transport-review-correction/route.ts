@@ -11,6 +11,7 @@ import {
 import {
   requestActivities,
   requestRevisions,
+  requestRoutes,
   transportRequests,
 } from '@/db/schema/requests';
 import { vehicles } from '@/db/schema/fleet';
@@ -33,6 +34,8 @@ import { Permissions } from '@/lib/permissions';
 const LIVE_ALLOCATION_STATES = ['provisional', 'confirmed'] as const;
 const MAX_TEXT_LENGTH = 2_000;
 const MAX_REASON_LENGTH = 500;
+const MAX_ROUTE_NAME_LENGTH = 500;
+const MAX_KILOMETRES = 1_000_000;
 
 type ActivityInput = {
   id: string;
@@ -42,6 +45,13 @@ type ActivityInput = {
   startDate: Date;
   endDate: Date;
   estimatedKilometres: number | null;
+};
+
+type RouteInput = {
+  id: string;
+  originName: string;
+  destinationName: string;
+  totalKilometres: number;
 };
 
 function cleanOptionalText(value: unknown, maxLength = MAX_TEXT_LENGTH) {
@@ -79,7 +89,9 @@ function parseActivity(value: unknown): ActivityInput | null {
     !Number.isFinite(endDate.getTime()) ||
     endDate <= startDate ||
     (estimatedKilometres != null &&
-      (!Number.isInteger(estimatedKilometres) || estimatedKilometres < 0 || estimatedKilometres > 1_000_000))
+      (!Number.isInteger(estimatedKilometres) ||
+        estimatedKilometres < 0 ||
+        estimatedKilometres > MAX_KILOMETRES))
   ) {
     return null;
   }
@@ -93,6 +105,31 @@ function parseActivity(value: unknown): ActivityInput | null {
     endDate,
     estimatedKilometres,
   };
+}
+
+function parseRoute(value: unknown): RouteInput | null {
+  if (!value || typeof value !== 'object') return null;
+  const row = value as Record<string, unknown>;
+  const id = typeof row.id === 'string' ? row.id.trim() : '';
+  const originName = typeof row.originName === 'string' ? row.originName.trim() : '';
+  const destinationName =
+    typeof row.destinationName === 'string' ? row.destinationName.trim() : '';
+  const totalKilometres = Number(row.totalKilometres);
+
+  if (
+    !id ||
+    !originName ||
+    !destinationName ||
+    originName.length > MAX_ROUTE_NAME_LENGTH ||
+    destinationName.length > MAX_ROUTE_NAME_LENGTH ||
+    !Number.isInteger(totalKilometres) ||
+    totalKilometres < 0 ||
+    totalKilometres > MAX_KILOMETRES
+  ) {
+    return null;
+  }
+
+  return { id, originName, destinationName, totalKilometres };
 }
 
 function sameDate(a: Date, b: Date) {
@@ -153,6 +190,15 @@ export async function PATCH(
   }
   const activities = parsedActivities as ActivityInput[];
 
+  if (!Array.isArray(body.routes)) {
+    return NextResponse.json({ error: 'Journey routes are required.' }, { status: 422 });
+  }
+  const parsedRoutes = body.routes.map(parseRoute);
+  if (parsedRoutes.some((route) => !route)) {
+    return NextResponse.json({ error: 'One or more journey route entries are invalid.' }, { status: 422 });
+  }
+  const routes = parsedRoutes as RouteInput[];
+
   const db = getDb();
   const [requestContext] = await db
     .select({
@@ -164,6 +210,7 @@ export async function PATCH(
       specialRequirements: transportRequests.specialRequirements,
       vehicleRequirements: transportRequests.vehicleRequirements,
       requestOrigin: transportRequests.requestOrigin,
+      totalAuthorisedKilometres: transportRequests.totalAuthorisedKilometres,
       revision: transportRequests.revision,
       version: transportRequests.version,
     })
@@ -194,10 +241,10 @@ export async function PATCH(
     );
   }
 
-  const existingActivities = await db
-    .select()
-    .from(requestActivities)
-    .where(eq(requestActivities.requestId, id));
+  const [existingActivities, existingRoutes] = await Promise.all([
+    db.select().from(requestActivities).where(eq(requestActivities.requestId, id)),
+    db.select().from(requestRoutes).where(eq(requestRoutes.requestId, id)),
+  ]);
 
   if (activities.length !== existingActivities.length) {
     return NextResponse.json(
@@ -209,6 +256,20 @@ export async function PATCH(
   if (activities.some((activity) => !existingActivityMap.has(activity.id))) {
     return NextResponse.json(
       { error: 'Activity identifiers do not match the submitted request.' },
+      { status: 422 },
+    );
+  }
+
+  if (routes.length !== existingRoutes.length) {
+    return NextResponse.json(
+      { error: 'Transport Review may correct existing journey routes but cannot add or remove them.' },
+      { status: 422 },
+    );
+  }
+  const existingRouteMap = new Map(existingRoutes.map((route) => [route.id, route]));
+  if (routes.some((route) => !existingRouteMap.has(route.id))) {
+    return NextResponse.json(
+      { error: 'Journey route identifiers do not match the submitted request.' },
       { status: 422 },
     );
   }
@@ -228,12 +289,20 @@ export async function PATCH(
     const existing = existingActivityMap.get(activity.id)!;
     return !sameDate(activity.startDate, existing.startDate) || !sameDate(activity.endDate, existing.endDate);
   });
+  const routeChanged = routes.some((route) => {
+    const existing = existingRouteMap.get(route.id)!;
+    return (
+      route.originName !== (existing.originName ?? '') ||
+      route.destinationName !== (existing.destinationName ?? '') ||
+      route.totalKilometres !== existing.totalKilometres
+    );
+  });
   const detailsChanged =
     purpose !== requestContext.purpose ||
     specialRequirements !== requestContext.specialRequirements ||
     JSON.stringify(vehicleRequirements) !== JSON.stringify(requestContext.vehicleRequirements ?? {});
 
-  if (!activityChanged && !detailsChanged) {
+  if (!activityChanged && !routeChanged && !detailsChanged) {
     return NextResponse.json({ success: true, changed: false, revision: requestContext.revision });
   }
 
@@ -249,6 +318,12 @@ export async function PATCH(
         activities[0].endDate,
       )
     : null;
+  const activityKilometres = activities.reduce(
+    (sum, activity) => sum + (activity.estimatedKilometres ?? 0),
+    0,
+  );
+  const routeKilometres = routes.reduce((sum, route) => sum + route.totalKilometres, 0);
+  const nextTotalAuthorisedKilometres = Math.max(activityKilometres, routeKilometres) || null;
 
   try {
     const result = await db.transaction(async (tx) => {
@@ -348,8 +423,7 @@ export async function PATCH(
             .then((rows) => rows[0] ?? null),
         ]);
         const tripLocked = Boolean(
-          trip &&
-            (trip.status !== 'pending' || trip.issuedAt || trip.driverAcknowledgedAt),
+          trip && (trip.status !== 'pending' || trip.issuedAt || trip.driverAcknowledgedAt),
         );
         const authorityLocked = Boolean(
           authority &&
@@ -517,7 +591,6 @@ export async function PATCH(
             )
             .orderBy(desc(externalDriverAssignments.updatedAt))
             .limit(1);
-
           if (externalAssignment) {
             if (
               externalAssignment.licenceVerificationStatus !== 'verified' ||
@@ -572,6 +645,7 @@ export async function PATCH(
           purpose,
           specialRequirements,
           vehicleRequirements,
+          totalAuthorisedKilometres: nextTotalAuthorisedKilometres,
           revision: nextRevision,
           version: currentRequest.version + 1,
           updatedAt: now,
@@ -603,6 +677,37 @@ export async function PATCH(
             estimatedKilometres: activity.estimatedKilometres,
           })
           .where(and(eq(requestActivities.id, activity.id), eq(requestActivities.requestId, id)));
+      }
+
+      for (const route of routes) {
+        const existing = existingRouteMap.get(route.id)!;
+        const changed =
+          route.originName !== (existing.originName ?? '') ||
+          route.destinationName !== (existing.destinationName ?? '') ||
+          route.totalKilometres !== existing.totalKilometres;
+        if (!changed) continue;
+
+        await tx
+          .update(requestRoutes)
+          .set({
+            originName: route.originName,
+            destinationName: route.destinationName,
+            totalKilometres: route.totalKilometres,
+            originPlaceId: null,
+            originCoordinates: null,
+            destinationPlaceId: null,
+            destinationCoordinates: null,
+            mappedDistanceKm: null,
+            mappedDurationMinutes: null,
+            routePolyline: null,
+            additionalKilometres: 0,
+            additionalKmReason: null,
+            calculationTimestamp: null,
+            isVerified: false,
+            overrideReason: reason,
+            updatedAt: now,
+          })
+          .where(and(eq(requestRoutes.id, route.id), eq(requestRoutes.requestId, id)));
       }
 
       if (scheduleChanged && allocation && nextStart && nextEnd) {
@@ -644,6 +749,21 @@ export async function PATCH(
         startDate: activity.startDate.toISOString(),
         endDate: activity.endDate.toISOString(),
       }));
+      const beforeRoutes = existingRoutes.map((route) => ({
+        id: route.id,
+        originName: route.originName,
+        destinationName: route.destinationName,
+        totalKilometres: route.totalKilometres,
+        isVerified: route.isVerified,
+      }));
+      const afterRoutes = routes.map((route) => {
+        const existing = existingRouteMap.get(route.id)!;
+        const changed =
+          route.originName !== (existing.originName ?? '') ||
+          route.destinationName !== (existing.destinationName ?? '') ||
+          route.totalKilometres !== existing.totalKilometres;
+        return { ...route, isVerified: changed ? false : existing.isVerified };
+      });
 
       await tx.insert(requestRevisions).values({
         requestId: id,
@@ -658,8 +778,14 @@ export async function PATCH(
             before: requestContext.vehicleRequirements ?? {},
             after: vehicleRequirements,
           },
+          totalAuthorisedKilometres: {
+            before: requestContext.totalAuthorisedKilometres,
+            after: nextTotalAuthorisedKilometres,
+          },
           activities: { before: beforeActivities, after: afterActivities },
+          routes: { before: beforeRoutes, after: afterRoutes },
           scheduleChanged,
+          routeChanged,
         },
         reason,
         createdByUserId: session.user.id,
@@ -667,10 +793,13 @@ export async function PATCH(
           source: 'transport_review',
           requestOrigin: requestContext.requestOrigin,
           scheduleChanged,
+          routeChanged,
           purpose,
           specialRequirements,
           vehicleRequirements,
+          totalAuthorisedKilometres: nextTotalAuthorisedKilometres,
           activities: afterActivities,
+          routes: afterRoutes,
         },
       });
 
@@ -678,6 +807,7 @@ export async function PATCH(
         revision: updatedRequest.revision,
         version: updatedRequest.version,
         scheduleChanged,
+        routeChanged,
         allocationId: allocation?.id ?? null,
       };
     });
@@ -705,6 +835,7 @@ export async function PATCH(
           purpose: requestContext.purpose,
           specialRequirements: requestContext.specialRequirements,
           vehicleRequirements: requestContext.vehicleRequirements ?? {},
+          totalAuthorisedKilometres: requestContext.totalAuthorisedKilometres,
           activities: existingActivities.map((activity) => ({
             id: activity.id,
             title: activity.title,
@@ -714,16 +845,32 @@ export async function PATCH(
             endDate: activity.endDate.toISOString(),
             estimatedKilometres: activity.estimatedKilometres,
           })),
+          routes: existingRoutes.map((route) => ({
+            id: route.id,
+            originName: route.originName,
+            destinationName: route.destinationName,
+            totalKilometres: route.totalKilometres,
+            isVerified: route.isVerified,
+          })),
         },
         after: {
           purpose,
           specialRequirements,
           vehicleRequirements,
+          totalAuthorisedKilometres: nextTotalAuthorisedKilometres,
           activities: activities.map((activity) => ({
             ...activity,
             startDate: activity.startDate.toISOString(),
             endDate: activity.endDate.toISOString(),
           })),
+          routes: routes.map((route) => {
+            const existing = existingRouteMap.get(route.id)!;
+            const changed =
+              route.originName !== (existing.originName ?? '') ||
+              route.destinationName !== (existing.destinationName ?? '') ||
+              route.totalKilometres !== existing.totalKilometres;
+            return { ...route, isVerified: changed ? false : existing.isVerified };
+          }),
           note: reason,
         },
         summary: `${requestContext.reference} corrected during Transport Review`,
@@ -738,6 +885,7 @@ export async function PATCH(
       revision: result.revision,
       version: result.version,
       scheduleChanged: result.scheduleChanged,
+      routeChanged: result.routeChanged,
     });
   } catch (error) {
     if (error instanceof TransportReviewCorrectionError) {
