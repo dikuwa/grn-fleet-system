@@ -36,7 +36,9 @@ describe('request resubmission operational retirement contract', () => {
   it('invalidates generated Trip Authority documents tied to retired allocations', () => {
     expect(workflow).toContain('generated_authority_cancel AS (');
     expect(workflow).toContain("gd.entity_type = 'vehicle_allocation'");
-    expect(workflow).toContain('gd.entity_id IN (SELECT id FROM allocation_cancel)');
+    expect(workflow).toContain('SELECT va.id');
+    expect(workflow).toContain('FROM vehicle_allocations va');
+    expect(workflow).toContain('WHERE va.request_id = ${input.requestId}::uuid');
     expect(workflow).toContain("gd.document_type = 'trip_authority'");
     expect(workflow).toContain("gd.status IN ('draft', 'issued')");
     expect(workflow).toContain('reason = ${cancellationReason}');
