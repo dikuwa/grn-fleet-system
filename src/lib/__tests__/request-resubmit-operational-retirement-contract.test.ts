@@ -27,6 +27,19 @@ describe('request resubmission operational retirement contract', () => {
     expect(workflow).toContain("ta.status NOT IN ('in_progress', 'awaiting_reconciliation', 'completed', 'closed', 'cancelled')");
     expect(workflow).toContain('assigned_driver_employee_id = NULL');
     expect(workflow).toContain('assigned_driver_external_party_id = NULL');
+    expect(workflow).toContain('external_request_driver_reset AS (');
+    expect(workflow).toContain("SET is_confirmed = false,");
+    expect(workflow).toContain("driver_type = 'nominated'");
+    expect(workflow).toContain('EXISTS (SELECT 1 FROM external_assignment_cancel)');
+  });
+
+  it('invalidates generated Trip Authority documents tied to retired allocations', () => {
+    expect(workflow).toContain('generated_authority_cancel AS (');
+    expect(workflow).toContain("gd.entity_type = 'vehicle_allocation'");
+    expect(workflow).toContain('gd.entity_id IN (SELECT id FROM allocation_cancel)');
+    expect(workflow).toContain("gd.document_type = 'trip_authority'");
+    expect(workflow).toContain("gd.status IN ('draft', 'issued')");
+    expect(workflow).toContain('reason = ${cancellationReason}');
   });
 
   it('records a consistent retirement reason on allocation, external assignment and authority state', () => {
