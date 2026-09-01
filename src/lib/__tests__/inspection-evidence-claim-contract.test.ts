@@ -26,7 +26,7 @@ describe('official inspection evidence claim contract', () => {
   });
 
   it('stages each inspection upload as unique single-use evidence instead of deduplicating it', () => {
-    expect(uploadRouteSource).toContain("if (category === 'inspection') {");
+    expect(uploadRouteSource).toContain("category === 'inspection' || category === 'trip-incident'");
     expect(uploadRouteSource).toContain('buildKey(file.name, path, tenantPrefix)');
     expect(uploadRouteSource).toContain('INSERT INTO inspection_evidence_uploads');
     expect(uploadRouteSource).toContain('${session.tenantId}::uuid');

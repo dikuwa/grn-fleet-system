@@ -58,6 +58,17 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    // Incident attachments are single-use official evidence. Returning an
+    // existing object key here would let a later incident reuse evidence that
+    // may already be claimed. Preserve the endpoint shape for existing clients
+    // but force them down the normal upload path for this category.
+    if (category === 'trip-incident') {
+      return NextResponse.json({
+        success: true,
+        data: { keys: [], existing: false },
+      });
+    }
+
     const targetTenantId = tenantId || session.tenantId;
     const tenantPrefix = `tenant/${targetTenantId}`;
 

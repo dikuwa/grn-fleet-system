@@ -17,25 +17,15 @@ import { UPLOAD_MAX_SIZE_BYTES, ALLOWED_IMAGE_TYPES, ALLOWED_DOCUMENT_TYPES } fr
 import { computeSha256FromBytes, buildDedupKey, findDuplicateKeys } from '@/lib/storage-dedup';
 import { isUploadCategoryAllowedInWorkspace } from '@/lib/upload-workspace-policy';
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
 const ALLOWED_TYPES = [...ALLOWED_IMAGE_TYPES, ...ALLOWED_DOCUMENT_TYPES] as string[];
 const ALLOWED_IMAGE_TYPE_SET = new Set<string>(ALLOWED_IMAGE_TYPES);
 
-// ---------------------------------------------------------------------------
-// POST — Upload a file (with optional SHA-256 dedup)
-// ---------------------------------------------------------------------------
-
 export async function POST(request: NextRequest) {
   try {
-    // Auth
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
-    // Check storage is configured
     if (!isStorageConfigured()) {
       return NextResponse.json(
         { error: 'File storage is not configured. Set R2 credentials.' },
@@ -43,7 +33,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Require upload permission
     const permCheck = await requirePermission(session, Permissions.FILE_UPLOAD);
     if (permCheck instanceof NextResponse) return permCheck;
 
@@ -57,7 +46,6 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No file provided. Use field name "file".' }, { status: 400 });
     }
 
-    // Validate file size
     if (file.size > UPLOAD_MAX_SIZE_BYTES) {
       return NextResponse.json(
         { error: `File too large. Maximum size is ${UPLOAD_MAX_SIZE_BYTES / (1024 * 1024)} MB.` },
@@ -65,7 +53,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate file type
     if (!ALLOWED_TYPES.includes(file.type)) {
       return NextResponse.json(
         {
@@ -75,7 +62,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate category
     if (!CATEGORY_PATHS[category]) {
       return NextResponse.json(
         {
@@ -85,9 +71,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Generic uploads are scoped by the active workspace as well as FILE_UPLOAD.
-    // This keeps legacy broad grants from writing operational evidence into a
-    // namespace that the current workspace does not operate.
     const workspace = await getSessionWorkspace(session);
     if (!isUploadCategoryAllowedInWorkspace(workspace.activeWorkspace, category)) {
       return NextResponse.json(
@@ -96,9 +79,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Arbitrary tenant documents must never become public just because a
-    // client sends public=true. The only intentionally public upload category
-    // is an avatar, and it must actually be an allowed image type.
     if (requestedPublic && category !== 'avatar') {
       return NextResponse.json(
         { error: 'Public uploads are allowed only for avatar images.' },
@@ -116,10 +96,6 @@ export async function POST(request: NextRequest) {
     const tenantPrefix = `tenant/${session.tenantId}`;
     const path = CATEGORY_PATHS[category];
 
-    // Never trust a client-provided digest for deduplication. A forged digest
-    // could otherwise make the API reveal/reuse the object key of unrelated
-    // tenant content. Compute the digest server-side and treat a supplied hash
-    // only as an integrity assertion that must match exactly.
     const buffer = Buffer.from(await file.arrayBuffer());
     const sha256 = await computeSha256FromBytes(new Uint8Array(buffer));
     if (clientSha256 && clientSha256 !== sha256) {
@@ -129,10 +105,10 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Official inspection evidence is single-use business evidence. Give each
-    // upload its own object identity instead of deduplicating it to a key that
-    // may already have been claimed by a different inspection.
-    if (category === 'inspection') {
+    // Inspection and trip-incident uploads are single-use official evidence.
+    // Give each upload an isolated object identity and register its authoritative
+    // tenant/uploader/hash metadata before the key is returned to the client.
+    if (category === 'inspection' || category === 'trip-incident') {
       const key = buildKey(file.name, path, tenantPrefix);
       const result = await uploadFile(buffer, key, {
         contentType: file.type,
@@ -142,30 +118,54 @@ export async function POST(request: NextRequest) {
 
       try {
         const db = getDb();
-        await db.execute(sql`
-          INSERT INTO inspection_evidence_uploads (
-            tenant_id,
-            file_key,
-            uploaded_by_user_id,
-            original_file_name,
-            mime_type,
-            file_size,
-            sha256
-          ) VALUES (
-            ${session.tenantId}::uuid,
-            ${result.key},
-            ${session.user.id},
-            ${file.name},
-            ${file.type},
-            ${result.size},
-            ${sha256}
-          )
-        `);
+        if (category === 'inspection') {
+          await db.execute(sql`
+            INSERT INTO inspection_evidence_uploads (
+              tenant_id,
+              file_key,
+              uploaded_by_user_id,
+              original_file_name,
+              mime_type,
+              file_size,
+              sha256
+            ) VALUES (
+              ${session.tenantId}::uuid,
+              ${result.key},
+              ${session.user.id},
+              ${file.name},
+              ${file.type},
+              ${result.size},
+              ${sha256}
+            )
+          `);
+        } else {
+          await db.execute(sql`
+            INSERT INTO active_trip_evidence_uploads (
+              tenant_id,
+              evidence_kind,
+              file_key,
+              uploaded_by_user_id,
+              original_file_name,
+              mime_type,
+              file_size,
+              sha256
+            ) VALUES (
+              ${session.tenantId}::uuid,
+              'trip_incident',
+              ${result.key},
+              ${session.user.id},
+              ${file.name},
+              ${file.type},
+              ${result.size},
+              ${sha256}
+            )
+          `);
+        }
       } catch (error) {
         try {
           await deleteFile(result.key);
         } catch (cleanupError) {
-          console.warn('[Upload] Failed to clean unregistered inspection evidence:', cleanupError);
+          console.warn('[Upload] Failed to clean unregistered official evidence:', cleanupError);
         }
         throw error;
       }
@@ -185,7 +185,6 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Check for existing duplicate using the verified hash prefix — skip re-upload if found
     const existingKeys = await findDuplicateKeys(tenantPrefix, path, sha256);
     if (existingKeys.length > 0) {
       return NextResponse.json({
@@ -201,7 +200,6 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // No duplicate — build dedup-aware key and upload
     const key = buildDedupKey(file.name, path, tenantPrefix, sha256);
 
     const result = await uploadFile(buffer, key, {
@@ -228,10 +226,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Upload could not be completed.' }, { status: 500 });
   }
 }
-
-// ---------------------------------------------------------------------------
-// GET — List uploaded files (tenant-scoped administrative inventory)
-// ---------------------------------------------------------------------------
 
 export async function GET(request: NextRequest) {
   try {
