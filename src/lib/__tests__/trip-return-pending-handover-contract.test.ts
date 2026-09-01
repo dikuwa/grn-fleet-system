@@ -41,8 +41,23 @@ describe('trip return pending driver-handover contract', () => {
     expect(internalReturn).toContain("'atomic_trip_return_failed_'");
   });
 
+  it('notifies the proposed relief driver only after a pending handover was visible to the winning return', () => {
+    expect(internalReturn).toContain('const [pendingRelief] = await db');
+    expect(internalReturn).toContain("eq(tripAuthorisedDrivers.driverType, 'relief')");
+    expect(internalReturn).toContain('isNull(tripAuthorisedDrivers.acknowledgedAt)');
+    expect(internalReturn).toContain('if (pendingRelief?.userId)');
+    expect(internalReturn.indexOf('if (pendingRelief?.userId)')).toBeGreaterThan(
+      internalReturn.indexOf("stage: 'return_inspection'"),
+    );
+    expect(internalReturn).toContain("eventType: 'driver_handover_cancelled'");
+    expect(internalReturn).toContain("workspace: WorkspaceIds.DRIVER");
+    expect(internalReturn).toContain("actionUrl: '/dashboard/driver-mobile'");
+    expect(internalReturn).toContain('the trip was returned before you acknowledged the proposed driver handover');
+  });
+
   it('does not apply internal employee handover semantics to external-driver return', () => {
     expect(externalReturn).toContain('AND va.driver_employee_id IS NULL');
     expect(externalReturn).not.toContain('pending_handover_cancel AS (');
+    expect(externalReturn).not.toContain('pendingRelief?.userId');
   });
 });
