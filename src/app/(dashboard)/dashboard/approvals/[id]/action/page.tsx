@@ -85,6 +85,7 @@ export default async function ApprovalActionPage({ params }: { params: Promise<{
 
       {isTransportReview && (
         <TransportRequestCorrections
+          key={`${detail.instance.requestId}:${detail.instance.revision}`}
           requestId={detail.instance.requestId}
           initialPurpose={detail.instance.requestPurpose}
           initialSpecialRequirements={detail.instance.specialRequirements}
