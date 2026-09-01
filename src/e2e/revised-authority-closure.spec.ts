@@ -18,6 +18,7 @@ import {
   vehicleAllocations,
   vehicleInspections,
 } from '@/db/schema/trips';
+import { uploadInspectionEvidence } from '@/e2e/helpers/inspection-evidence';
 
 const BASE = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 const PASSWORD = process.env.SEED_ADMIN_PASSWORD || 'changeme';
@@ -42,7 +43,7 @@ async function employee(email: string) {
   return row!;
 }
 
-async function passedDepartureChecklist() {
+async function passedDepartureChecklist(api: APIRequestContext) {
   const db = getDb();
   const [template] = await db
     .select({ id: inspectionTemplates.id, version: inspectionTemplates.version })
@@ -68,11 +69,15 @@ async function passedDepartureChecklist() {
     .orderBy(inspectionTemplateItems.sortOrder);
   expect(items.length).toBeGreaterThan(0);
 
+  const photoKeys = await Promise.all(
+    items
+      .filter((item) => item.requiresPhoto)
+      .map((_item, index) => uploadInspectionEvidence(api, `revised-authority-${index}`)),
+  );
+
   return {
     checklist: items.map((item) => ({ label: item.label, result: 'pass', comment: null })),
-    photoKeys: items
-      .filter((item) => item.requiresPhoto)
-      .map((_item, index) => `tenant/${TENANT_ID}/inspections/revised-authority-${Date.now()}-${index}.jpg`),
+    photoKeys,
   };
 }
 
@@ -82,7 +87,7 @@ async function submitDepartureInspection(
   vehicleId: string,
   odometerReading: number,
 ) {
-  const evidence = await passedDepartureChecklist();
+  const evidence = await passedDepartureChecklist(api);
   return api.post('/api/inspections', {
     data: {
       vehicleId,
