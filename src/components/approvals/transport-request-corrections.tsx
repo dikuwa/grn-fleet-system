@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { CalendarClock, CheckCircle2, Loader2, PencilLine } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -40,6 +40,19 @@ function toLocalDateTime(value: string) {
   return local.toISOString().slice(0, 16);
 }
 
+function buildActivityDrafts(activities: TransportRequestCorrectionsProps['activities']): ActivityDraft[] {
+  return activities.map((activity) => ({
+    id: activity.id,
+    title: activity.title,
+    description: activity.description ?? '',
+    venue: activity.venue ?? '',
+    startDate: toLocalDateTime(activity.startDate),
+    endDate: toLocalDateTime(activity.endDate),
+    estimatedKilometres:
+      activity.estimatedKilometres == null ? '' : String(activity.estimatedKilometres),
+  }));
+}
+
 export function TransportRequestCorrections({
   requestId,
   initialPurpose,
@@ -55,18 +68,14 @@ export function TransportRequestCorrections({
   const [specialRequirements, setSpecialRequirements] = useState(initialSpecialRequirements ?? '');
   const [reason, setReason] = useState('');
   const [error, setError] = useState('');
-  const [draftActivities, setDraftActivities] = useState<ActivityDraft[]>(() =>
-    activities.map((activity) => ({
-      id: activity.id,
-      title: activity.title,
-      description: activity.description ?? '',
-      venue: activity.venue ?? '',
-      startDate: toLocalDateTime(activity.startDate),
-      endDate: toLocalDateTime(activity.endDate),
-      estimatedKilometres:
-        activity.estimatedKilometres == null ? '' : String(activity.estimatedKilometres),
-    })),
-  );
+  const [draftActivities, setDraftActivities] = useState<ActivityDraft[]>(() => buildActivityDrafts(activities));
+
+  useEffect(() => {
+    if (isOpen || saving) return;
+    setPurpose(initialPurpose ?? '');
+    setSpecialRequirements(initialSpecialRequirements ?? '');
+    setDraftActivities(buildActivityDrafts(activities));
+  }, [activities, initialPurpose, initialSpecialRequirements, isOpen, saving]);
 
   const hasInvalidSchedule = useMemo(
     () =>
@@ -98,18 +107,7 @@ export function TransportRequestCorrections({
     setSpecialRequirements(initialSpecialRequirements ?? '');
     setReason('');
     setError('');
-    setDraftActivities(
-      activities.map((activity) => ({
-        id: activity.id,
-        title: activity.title,
-        description: activity.description ?? '',
-        venue: activity.venue ?? '',
-        startDate: toLocalDateTime(activity.startDate),
-        endDate: toLocalDateTime(activity.endDate),
-        estimatedKilometres:
-          activity.estimatedKilometres == null ? '' : String(activity.estimatedKilometres),
-      })),
-    );
+    setDraftActivities(buildActivityDrafts(activities));
   };
 
   const saveCorrections = async () => {
