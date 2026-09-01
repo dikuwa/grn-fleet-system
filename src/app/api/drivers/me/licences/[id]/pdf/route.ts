@@ -14,7 +14,7 @@ import { driverLicences, driverProfiles, employees } from '@/db/schema/people';
 import { tenants } from '@/db/schema/tenants';
 import { requireRequestAuth, hasPermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { resolveTenantDocumentBranding } from '@/lib/tenant-branding';
 import { DriverLicenceDocument, type DriverLicenceData } from '@/lib/pdf/driver-licence';
 
@@ -30,7 +30,9 @@ export async function GET(
 
     const db = getDb();
 
-    // Fetch the licence record with owner info
+    // Fetch only licence records that belong to the authenticated tenant.
+    // Ownership and DRIVER_MANAGE are evaluated only after this tenant boundary
+    // so a tenant-local manager cannot probe another tenant's licence UUID.
     const [licence] = await db
       .select({
         licenceId: driverLicences.id,
@@ -55,14 +57,19 @@ export async function GET(
       .from(driverLicences)
       .innerJoin(driverProfiles, eq(driverProfiles.id, driverLicences.driverProfileId))
       .innerJoin(employees, eq(employees.id, driverProfiles.employeeId))
-      .where(eq(driverLicences.id, licenceId))
+      .where(
+        and(
+          eq(driverLicences.id, licenceId),
+          eq(employees.tenantId, session.tenantId),
+        ),
+      )
       .limit(1);
 
     if (!licence) {
       return NextResponse.json({ error: 'Licence not found' }, { status: 404 });
     }
 
-    // Security: user must own the licence or have DRIVER_MANAGE permission
+    // Security: user must own the tenant-local licence or have DRIVER_MANAGE permission.
     const isOwn = licence.employeeUserId === session.user.id;
     const canManage = await hasPermission(session, Permissions.DRIVER_MANAGE);
     if (!isOwn && !canManage) {
