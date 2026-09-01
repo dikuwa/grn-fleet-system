@@ -17,7 +17,14 @@ describe('request resubmission operational retirement contract', () => {
   it('fails closed once a trip entered operations while allowing cancelled retry evidence', () => {
     expect(workflow).toContain("t.status NOT IN ('pending', 'cancelled')");
     expect(workflow).toContain('t.issued_at IS NOT NULL');
-    expect(workflow).toContain('atomic_resubmit_operational_state_failed');
+    expect(workflow).toContain('const committed = Number(queryRows?.[0]?.committed ?? 0)');
+    expect(workflow).toContain('if (committed !== 1)');
+  });
+
+  it('uses the guard result without rewriting unrelated database failures', () => {
+    expect(workflow).toContain('const result = await db.execute(sql');
+    expect(workflow).toContain('Array.isArray(result)');
+    expect(workflow).not.toContain("String(error).includes('atomic_resubmit_operational_state_failed')");
   });
 
   it('retires all live pre-operations assignment state before a new workflow is initialized', () => {
