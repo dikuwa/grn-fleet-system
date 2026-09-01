@@ -159,7 +159,11 @@ async function retirePreOperationsStateForResubmission(input: {
             updated_at = ${now}
         WHERE gd.tenant_id = ${input.tenantId}::uuid
           AND gd.entity_type = 'vehicle_allocation'
-          AND gd.entity_id IN (SELECT id FROM allocation_cancel)
+          AND gd.entity_id IN (
+            SELECT va.id
+            FROM vehicle_allocations va
+            WHERE va.request_id = ${input.requestId}::uuid
+          )
           AND gd.document_type = 'trip_authority'
           AND gd.status IN ('draft', 'issued')
           AND EXISTS (SELECT 1 FROM request_guard)
