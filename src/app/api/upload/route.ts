@@ -1,9 +1,13 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { sql } from 'drizzle-orm';
+import { getDb } from '@/db';
 import { getSessionWorkspace, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { WorkspaceIds } from '@/lib/workspaces';
 import {
   uploadFile,
+  deleteFile,
+  buildKey,
   isStorageConfigured,
   listFiles,
   CATEGORY_PATHS,
@@ -123,6 +127,62 @@ export async function POST(request: NextRequest) {
         { error: 'File integrity check failed: SHA-256 does not match the uploaded bytes.' },
         { status: 400 },
       );
+    }
+
+    // Official inspection evidence is single-use business evidence. Give each
+    // upload its own object identity instead of deduplicating it to a key that
+    // may already have been claimed by a different inspection.
+    if (category === 'inspection') {
+      const key = buildKey(file.name, path, tenantPrefix);
+      const result = await uploadFile(buffer, key, {
+        contentType: file.type,
+        tenantPrefix,
+        isPublic: false,
+      });
+
+      try {
+        const db = getDb();
+        await db.execute(sql`
+          INSERT INTO inspection_evidence_uploads (
+            tenant_id,
+            file_key,
+            uploaded_by_user_id,
+            original_file_name,
+            mime_type,
+            file_size,
+            sha256
+          ) VALUES (
+            ${session.tenantId}::uuid,
+            ${result.key},
+            ${session.user.id},
+            ${file.name},
+            ${file.type},
+            ${result.size},
+            ${sha256}
+          )
+        `);
+      } catch (error) {
+        try {
+          await deleteFile(result.key);
+        } catch (cleanupError) {
+          console.warn('[Upload] Failed to clean unregistered inspection evidence:', cleanupError);
+        }
+        throw error;
+      }
+
+      return NextResponse.json({
+        success: true,
+        data: {
+          key: result.key,
+          size: result.size,
+          etag: result.etag,
+          publicUrl: result.publicUrl,
+          category,
+          originalName: file.name,
+          sha256,
+          deduplicated: false,
+        },
+      });
     }
 
     // Check for existing duplicate using the verified hash prefix — skip re-upload if found
