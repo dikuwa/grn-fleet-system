@@ -6,7 +6,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { requireAnyPermission, requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { refreshIncidentTripCompletionIfClosed } from '@/lib/incidents/document-refresh';
 import {
@@ -23,8 +23,15 @@ export async function GET(
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
-    const permCheck = await requirePermission(session, Permissions.INCIDENT_INVESTIGATE);
-    if (permCheck instanceof NextResponse) return permCheck;
+    // Investigation closers must be able to read the evidence they are
+    // authorised to make a final decision on, even when their role does not
+    // also grant ordinary investigation editing.
+    const readPermission = await requireAnyPermission(session, [
+      Permissions.INCIDENT_INVESTIGATE,
+      Permissions.INCIDENT_CLOSE_INVESTIGATION,
+    ]);
+    if (readPermission instanceof NextResponse) return readPermission;
+
     const closePermission = await requirePermission(
       session,
       Permissions.INCIDENT_CLOSE_INVESTIGATION,
