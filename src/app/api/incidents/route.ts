@@ -132,6 +132,7 @@ export async function POST(req: NextRequest) {
       odometerReading,
       description,
       injuries = false,
+      numberInjured,
       vehicleDamage = false,
       vehicleSafe = null,
       passengerSafe,
@@ -151,6 +152,26 @@ export async function POST(req: NextRequest) {
     if (!['minor', 'moderate', 'serious', 'critical'].includes(severity)) {
       return NextResponse.json({ error: 'Severity must be minor, moderate, serious or critical' }, { status: 422 });
     }
+    if (typeof injuries !== 'boolean') {
+      return NextResponse.json({ error: 'Injuries must be true or false' }, { status: 422 });
+    }
+    const suppliedInjuryCount =
+      numberInjured === null || numberInjured === undefined || numberInjured === ''
+        ? null
+        : Number(numberInjured);
+    if (
+      suppliedInjuryCount !== null &&
+      (!Number.isInteger(suppliedInjuryCount) || suppliedInjuryCount < 0)
+    ) {
+      return NextResponse.json({ error: 'Number injured must be a non-negative whole number' }, { status: 422 });
+    }
+    if (injuries && suppliedInjuryCount === 0) {
+      return NextResponse.json({ error: 'Number injured must be at least 1 when injuries are reported' }, { status: 422 });
+    }
+    if (!injuries && suppliedInjuryCount !== null && suppliedInjuryCount > 0) {
+      return NextResponse.json({ error: 'Number injured must be 0 when no injuries are reported' }, { status: 422 });
+    }
+    const normalizedInjuryCount = injuries ? suppliedInjuryCount ?? 1 : 0;
     if (typeof vehicleDamage !== 'boolean') {
       return NextResponse.json({ error: 'Vehicle damage must be true or false' }, { status: 422 });
     }
@@ -282,7 +303,8 @@ export async function POST(req: NextRequest) {
       location: location || null,
       odometerReading: odometer,
       description: description.trim(),
-      injuries: Boolean(injuries),
+      injuries,
+      numberInjured: normalizedInjuryCount,
       vehicleDamage,
       vehicleSafe,
       passengerSafe: typeof passengerSafe === 'boolean' ? passengerSafe : undefined,
