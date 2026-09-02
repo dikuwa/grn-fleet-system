@@ -1,0 +1,89 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { describe, expect, it } from 'vitest';
+
+const incidentRouteSource = readFileSync(
+  resolve(process.cwd(), 'src/app/api/incidents/route.ts'),
+  'utf8',
+);
+const operationsRouteSource = readFileSync(
+  resolve(process.cwd(), 'src/app/api/trips/[id]/operations/route.ts'),
+  'utf8',
+);
+const createIncidentSource = readFileSync(
+  resolve(process.cwd(), 'src/lib/incidents/create-incident.ts'),
+  'utf8',
+);
+
+describe('incident safety and injury evidence parity', () => {
+  it('accepts explicit passenger safety on the dedicated incident API', () => {
+    expect(incidentRouteSource).toContain('passengerSafe,');
+    expect(incidentRouteSource).toContain("typeof passengerSafe !== 'boolean'");
+    expect(incidentRouteSource).toContain(
+      "passengerSafe: typeof passengerSafe === 'boolean' ? passengerSafe : undefined",
+    );
+  });
+
+  it('preserves explicit injury counts and validates their relationship with the injury flag', () => {
+    expect(incidentRouteSource).toContain('numberInjured,');
+    expect(incidentRouteSource).toContain('Number injured must be a non-negative whole number');
+    expect(incidentRouteSource).toContain('Number injured must be at least 1 when injuries are reported');
+    expect(incidentRouteSource).toContain('Number injured must be 0 when no injuries are reported');
+    expect(incidentRouteSource).toContain('numberInjured: normalizedInjuryCount');
+  });
+
+  it('authorizes current trip scope before replaying committed sync IDs and validates new evidence afterward', () => {
+    const tripScopeIndex = incidentRouteSource.indexOf('const tripConditions: SQL[] =');
+    const tripLookupIndex = incidentRouteSource.indexOf('const [trip] = await db');
+    const replayIndex = incidentRouteSource.indexOf('if (syncId) {', tripLookupIndex);
+    const injuryValidationIndex = incidentRouteSource.indexOf("if (typeof injuries !== 'boolean')");
+    expect(tripScopeIndex).toBeGreaterThan(-1);
+    expect(tripLookupIndex).toBeGreaterThan(tripScopeIndex);
+    expect(replayIndex).toBeGreaterThan(tripLookupIndex);
+    expect(injuryValidationIndex).toBeGreaterThan(replayIndex);
+    expect(incidentRouteSource).toContain("if (!trip) return NextResponse.json({ error: 'Trip not found' }, { status: 404 });");
+    expect(incidentRouteSource).toContain('idempotent: true');
+  });
+
+  it('bounds injury counts to the PostgreSQL integer range on both reporting paths', () => {
+    expect(incidentRouteSource).toContain('const POSTGRES_INT_MAX = 2_147_483_647;');
+    expect(incidentRouteSource).toContain('suppliedInjuryCount > POSTGRES_INT_MAX');
+    expect(operationsRouteSource).toContain('suppliedInjuryCount > 2_147_483_647');
+    expect(incidentRouteSource).toContain('Number injured exceeds the supported integer range');
+    expect(operationsRouteSource).toContain('Number injured exceeds the supported integer range');
+  });
+
+  it('preserves the existing passenger inference only when passenger safety is omitted', () => {
+    expect(createIncidentSource).toContain('passengerSafe: input.passengerSafe ?? !input.injuries');
+  });
+
+  it('preserves passenger-safety omission and explicit booleans in trip operations', () => {
+    expect(operationsRouteSource).toContain(
+      "passengerSafe: typeof body.passengerSafe === 'boolean' ? body.passengerSafe : undefined",
+    );
+    expect(operationsRouteSource).toContain(
+      'Passenger safety must be true, false, or omitted when unknown',
+    );
+    expect(operationsRouteSource).not.toContain('passengerSafe: body.passengerSafe !== false');
+  });
+
+  it('rejects explicit null injury declarations while retaining omission as the false default', () => {
+    expect(operationsRouteSource).toContain(
+      "if (body.injuries !== undefined && typeof body.injuries !== 'boolean')",
+    );
+    expect(operationsRouteSource).toContain('const injuries = body.injuries === true;');
+    expect(operationsRouteSource).not.toContain(
+      "body.injuries !== null && body.injuries !== undefined && typeof body.injuries !== 'boolean'",
+    );
+  });
+
+  it('validates operation injury counts before coercion and preserves the normalized count', () => {
+    expect(operationsRouteSource).toContain('injuryCountHasValidRawType');
+    expect(operationsRouteSource).toContain('Number injured must be a numeric whole number');
+    expect(operationsRouteSource).toContain('Number injured must be a non-negative whole number');
+    expect(operationsRouteSource).toContain('Number injured must be at least 1 when injuries are reported');
+    expect(operationsRouteSource).toContain('Number injured must be 0 when no injuries are reported');
+    expect(operationsRouteSource).toContain('numberInjured: normalizedInjuryCount');
+    expect(operationsRouteSource).not.toContain('Math.max(1, Number(body.numberInjured) || 1)');
+  });
+});
