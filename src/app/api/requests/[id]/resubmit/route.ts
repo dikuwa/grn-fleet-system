@@ -23,6 +23,7 @@ import { recordAuditEvent } from '@/lib/audit-event';
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
 import { validateRequesterDriverNominations } from '@/lib/request-driver-eligibility';
 import { programmeEndDateCurrentSql } from '@/lib/programme-availability';
+import { onRequestSubmitted } from '@/lib/document-generator';
 
 const EDITABLE_STATUSES = ['returned', 'rejected', 'supervisor_rejected'] as const;
 
@@ -710,6 +711,12 @@ export async function POST(
   } catch (error) {
     await abandonRequestWorkflow(id, session.tenantId, workflow.instance.id).catch(() => undefined);
     throw error;
+  }
+
+  try {
+    await onRequestSubmitted(id, session.tenantId, session.user.id);
+  } catch (documentError) {
+    console.warn('[request/resubmit] Corrected Transport Request document refresh failed:', documentError);
   }
 
   try {
