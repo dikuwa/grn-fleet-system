@@ -10,6 +10,10 @@ const internalRouteSource = readFileSync(
   resolve(process.cwd(), 'src/app/api/drivers/[id]/licences/route.ts'),
   'utf8',
 );
+const externalReviewPageSource = readFileSync(
+  resolve(process.cwd(), 'src/app/(dashboard)/dashboard/drivers/external/page.tsx'),
+  'utf8',
+);
 
 describe('external driver licence OCR parity', () => {
   it('reuses the established Namibian OCR pipeline for image evidence', () => {
@@ -35,5 +39,16 @@ describe('external driver licence OCR parity', () => {
     expect(externalRouteSource).toContain('expiryDate,');
     expect(externalRouteSource).not.toContain('licenceNumber: ocr.extracted.licenceNumber');
     expect(externalRouteSource).not.toContain('licenceClass: ocr.extracted.licenceCodes');
+  });
+
+  it('shows OCR evidence and warnings to the human reviewer', () => {
+    expect(externalReviewPageSource).toContain('extractedData?: LicenceOcrData | null');
+    expect(externalReviewPageSource).toContain('OCR review evidence');
+    expect(externalReviewPageSource).toContain('Detected number');
+    expect(externalReviewPageSource).toContain('Detected expiry');
+    expect(externalReviewPageSource).toContain('aria-label="OCR review warnings"');
+    expect(externalReviewPageSource).toContain(
+      'OCR is review assistance only. Verify the uploaded evidence before approving the licence.',
+    );
   });
 });
