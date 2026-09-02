@@ -1,0 +1,44 @@
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
+import { describe, expect, it } from 'vitest';
+
+const constantsSource = readFileSync(
+  resolve(process.cwd(), 'src/lib/incidents/mva-constants.ts'),
+  'utf8',
+);
+const reviewRouteSource = readFileSync(
+  resolve(process.cwd(), 'src/app/api/incidents/[id]/review/route.ts'),
+  'utf8',
+);
+const reviewActionsSource = readFileSync(
+  resolve(
+    process.cwd(),
+    'src/app/(dashboard)/dashboard/trips/incidents/[id]/incident-review-actions.tsx',
+  ),
+  'utf8',
+);
+const investigationPanelSource = readFileSync(
+  resolve(process.cwd(), 'src/components/incidents/InvestigationPanel.tsx'),
+  'utf8',
+);
+
+describe('incident investigation status parity', () => {
+  it('keeps both historically supported open statuses in the shared vocabulary', () => {
+    expect(constantsSource).toContain("| 'awaiting_information'");
+    expect(constantsSource).toContain("| 'no_action'");
+    expect(constantsSource).toContain("awaiting_information: 'Awaiting information'");
+    expect(constantsSource).toContain("no_action: 'No action required'");
+  });
+
+  it('lets the unified review API preserve either compatible open status', () => {
+    expect(reviewRouteSource).toContain("'awaiting_information',\n  'no_action',");
+    expect(reviewRouteSource).toContain('awaiting information, or no action required');
+  });
+
+  it('offers the same open statuses on both review surfaces while keeping closure separate', () => {
+    expect(reviewActionsSource).toContain('<option value="awaiting_information">Awaiting information</option>');
+    expect(reviewActionsSource).toContain('<option value="no_action">No action required</option>');
+    expect(investigationPanelSource).toContain("awaiting_information: 'Awaiting information'");
+    expect(investigationPanelSource).toContain("(status) => status !== 'closed'");
+  });
+});
