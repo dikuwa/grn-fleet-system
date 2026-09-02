@@ -3,6 +3,10 @@ import { resolve } from 'node:path';
 import { describe, expect, it } from 'vitest';
 
 const mvaSource = readFileSync(resolve(process.cwd(), 'src/lib/incidents/mva.ts'), 'utf8');
+const investigationRouteSource = readFileSync(
+  resolve(process.cwd(), 'src/app/api/incidents/[id]/investigation/route.ts'),
+  'utf8',
+);
 
 describe('incident mutation document refresh', () => {
   it('refreshes the canonical incident document family after ordinary incident mutations', () => {
@@ -17,6 +21,12 @@ describe('incident mutation document refresh', () => {
     expect(mvaSource.split(refreshCall).length - 1).toBe(4);
     expect(mvaSource).toContain("console.error('[mva] Incident document refresh failed:', err)");
     expect(mvaSource).not.toContain('void refreshIncidentOperationalDocuments');
+  });
+
+  it('keeps investigation closure on the same single canonical refresh path', () => {
+    expect(investigationRouteSource).not.toContain('refreshIncidentTripCompletionIfClosed');
+    expect(investigationRouteSource).not.toContain("from '@/lib/incidents/document-refresh'");
+    expect(investigationRouteSource).toContain('const result = await updateInvestigation(');
   });
 
   it('passes the incident trip id so rapid/non-MVA incidents refresh the correct report family', () => {
