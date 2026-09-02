@@ -134,6 +134,7 @@ export async function POST(req: NextRequest) {
       injuries = false,
       vehicleDamage = false,
       vehicleSafe = null,
+      passengerSafe,
       thirdPartyInvolvement = false,
       policeReference,
       emergencyServicesContacted = false,
@@ -155,6 +156,9 @@ export async function POST(req: NextRequest) {
     }
     if (vehicleSafe !== null && vehicleSafe !== undefined && typeof vehicleSafe !== 'boolean') {
       return NextResponse.json({ error: 'Vehicle safety must be true, false, or omitted when unknown' }, { status: 422 });
+    }
+    if (passengerSafe !== null && passengerSafe !== undefined && typeof passengerSafe !== 'boolean') {
+      return NextResponse.json({ error: 'Passenger safety must be true, false, or omitted when unknown' }, { status: 422 });
     }
     if (typeof safeToContinue !== 'boolean') {
       return NextResponse.json({ error: 'Journey continuation safety must be true or false' }, { status: 422 });
@@ -281,6 +285,7 @@ export async function POST(req: NextRequest) {
       injuries: Boolean(injuries),
       vehicleDamage,
       vehicleSafe,
+      passengerSafe: typeof passengerSafe === 'boolean' ? passengerSafe : undefined,
       thirdPartyInvolvement: Boolean(thirdPartyInvolvement),
       policeReference: policeReference || null,
       emergencyServicesContacted: Boolean(emergencyServicesContacted),
