@@ -20,15 +20,17 @@ export async function refreshIncidentTripCompletionIfClosed(input: {
     .where(and(eq(trips.id, input.tripId), eq(trips.tenantId, input.tenantId)))
     .limit(1);
 
-  if (trip?.status !== 'closed') return null;
+  if (trip?.status !== 'closed') return [];
 
-  return generateDocument({
-    documentType: 'trip_completion',
-    entityType: 'trip',
-    entityId: input.tripId,
-    tenantId: input.tenantId,
-    generatedByUserId: input.actorUserId,
-  });
+  return Promise.allSettled([
+    generateDocument({
+      documentType: 'trip_completion',
+      entityType: 'trip',
+      entityId: input.tripId,
+      tenantId: input.tenantId,
+      generatedByUserId: input.actorUserId,
+    }),
+  ]);
 }
 
 /**
