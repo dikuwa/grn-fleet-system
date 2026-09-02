@@ -52,4 +52,11 @@ describe('incident investigation status parity', () => {
     );
     expect(workspaceSource).toContain("row.investigationStatus !== 'closed'");
   });
+
+  it('lets dedicated follow-up roles enter the same MVA workspace as their detail actions', () => {
+    expect(workspaceSource).toContain('Permissions.INCIDENT_CLOSE_INVESTIGATION');
+    expect(workspaceSource).toContain('Permissions.INCIDENT_INSURANCE_UPDATE');
+    expect(workspaceSource).toContain('Permissions.INCIDENT_TECHNICAL_CLEARANCE');
+    expect(workspaceSource).toContain('Permissions.MAINTENANCE_MANAGE');
+  });
 });
