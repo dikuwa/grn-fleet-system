@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
+import { refreshIncidentTripCompletionIfClosed } from '@/lib/incidents/document-refresh';
 import {
   updateInvestigation,
   getTenantIncident,
@@ -24,6 +25,11 @@ export async function GET(
 
     const permCheck = await requirePermission(session, Permissions.INCIDENT_INVESTIGATE);
     if (permCheck instanceof NextResponse) return permCheck;
+    const closePermission = await requirePermission(
+      session,
+      Permissions.INCIDENT_CLOSE_INVESTIGATION,
+    );
+    const canCloseInvestigation = !(closePermission instanceof NextResponse);
 
     const { id } = await params;
     const incident = await getTenantIncident(session.tenantId, id);
@@ -38,6 +44,9 @@ export async function GET(
         investigationClosedAt: incident.investigationClosedAt,
         accidentReportNumber: incident.accidentReportNumber,
         witnessStatements: incident.witnessStatements,
+      },
+      capabilities: {
+        canCloseInvestigation,
       },
     });
   } catch (error) {
@@ -136,6 +145,14 @@ export async function PATCH(
         );
       }
       return NextResponse.json({ error: result.error }, { status: 400 });
+    }
+
+    if (isClosing) {
+      await refreshIncidentTripCompletionIfClosed({
+        tenantId: session.tenantId,
+        tripId: incident.tripId,
+        actorUserId: session.user.id,
+      });
     }
 
     return NextResponse.json({ data: result.data, alreadyClosed: false });
