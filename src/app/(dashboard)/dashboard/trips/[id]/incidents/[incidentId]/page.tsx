@@ -115,7 +115,7 @@ function IncidentDetailInner() {
     try {
       const [incidentRes, capabilityRes] = await Promise.all([
         fetch(`/api/incidents?tripId=${tripId}`),
-        fetch('/api/incidents/capabilities'),
+        fetch('/api/incidents/capabilities').catch(() => null),
       ]);
       const json = await incidentRes.json();
       if (!incidentRes.ok) throw new Error(json.error);
@@ -123,7 +123,7 @@ function IncidentDetailInner() {
       if (!found) throw new Error('Incident not found');
       setIncident(found);
 
-      if (capabilityRes.ok) {
+      if (capabilityRes?.ok) {
         const capabilityJson = await capabilityRes.json();
         setCapabilities({
           ...EMPTY_CAPABILITIES,
