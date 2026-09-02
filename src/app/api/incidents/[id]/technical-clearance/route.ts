@@ -12,6 +12,7 @@ import { vehicleDefects } from '@/db/schema/fleet';
 import { trips } from '@/db/schema/trips';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
+import { getDatabaseErrorDetails } from '@/lib/database-error-details';
 import {
   recordTechnicalClearance,
   getTenantIncident,
@@ -171,7 +172,8 @@ export async function PATCH(
     });
   } catch (error) {
     console.error('[incidents/technical-clearance] PATCH failed:', error);
-    if (String(error).includes('incident_technical_clearance_revocation_blocked')) {
+    const { message } = getDatabaseErrorDetails(error);
+    if (message.includes('incident_technical_clearance_revocation_blocked')) {
       return NextResponse.json(
         {
           error:
@@ -180,7 +182,7 @@ export async function PATCH(
         { status: 409 },
       );
     }
-    if (String(error).includes('incident_technical_clearance_blocked')) {
+    if (message.includes('incident_technical_clearance_blocked')) {
       return NextResponse.json(
         {
           error:

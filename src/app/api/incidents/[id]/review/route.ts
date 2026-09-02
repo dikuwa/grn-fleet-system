@@ -7,6 +7,7 @@ import { auditEvents } from '@/db/schema/audit';
 import { requireAnyPermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { runAtomicMutations } from '@/lib/db-atomic';
+import { getDatabaseErrorDetails } from '@/lib/database-error-details';
 import { refreshIncidentOperationalDocuments } from '@/lib/incidents/document-refresh';
 
 const investigationStatuses = new Set(['pending', 'in_progress', 'awaiting_information']);
@@ -424,19 +425,20 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     return NextResponse.json({ error: 'Unsupported incident review action' }, { status: 400 });
   } catch (error) {
     console.error('[incidents/review] PATCH failed:', error);
-    if (String(error).includes('incident_investigation_update_conflict')) {
+    const { message } = getDatabaseErrorDetails(error);
+    if (message.includes('incident_investigation_update_conflict')) {
       return NextResponse.json(
         { error: 'The investigation was closed or changed while this update was being saved. Refresh the incident before making further changes.' },
         { status: 409 },
       );
     }
-    if (String(error).includes('incident_investigation_close_conflict')) {
+    if (message.includes('incident_investigation_close_conflict')) {
       return NextResponse.json(
         { error: 'The incident safety or investigation state changed while closure was being recorded. Refresh the incident and resolve the latest blockers.' },
         { status: 409 },
       );
     }
-    if (String(error).includes('incident_technical_clearance_blocked')) {
+    if (message.includes('incident_technical_clearance_blocked')) {
       return NextResponse.json(
         {
           error:
@@ -445,7 +447,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         { status: 409 },
       );
     }
-    if (String(error).includes('atomic_vehicle_return_to_service_failed')) {
+    if (message.includes('atomic_vehicle_return_to_service_failed')) {
       return NextResponse.json(
         {
           error:
