@@ -352,6 +352,27 @@ export const routeRegistry: readonly RouteDefinition[] = [
     navigationVisible: true,
   },
   {
+    id: 'trip-incidents',
+    path: '/dashboard/trips/incidents',
+    label: 'Incident Review',
+    icon: 'AlertTriangle',
+    section: 'Maintenance',
+    workspaces: [W.MAINTENANCE, W.TRANSPORT_ADMIN, W.AUDIT],
+    access: {
+      [W.MAINTENANCE]: relatedRead(),
+      [W.TRANSPORT_ADMIN]: tenantManage(OPERATE),
+      [W.AUDIT]: tenantRead(true),
+    },
+    labelByWorkspace: { [W.AUDIT]: 'Incident Register' },
+    sectionByWorkspace: {
+      [W.TRANSPORT_ADMIN]: 'Allocations & Trips',
+      [W.AUDIT]: 'Audit Registers',
+    },
+    tenantScoped: true,
+    order: 225,
+    navigationVisible: true,
+  },
+  {
     id: 'trips',
     path: '/dashboard/trips',
     label: 'Trips',
