@@ -80,6 +80,17 @@ function isMvaSeverity(severity: string): boolean {
   return ['serious', 'critical'].includes(severity);
 }
 
+function getDatabaseErrorCode(error: unknown): string | null {
+  if (!error || typeof error !== 'object') return null;
+  const errorRecord = error as { code?: unknown; cause?: unknown };
+  if (typeof errorRecord.code === 'string') return errorRecord.code;
+  if (errorRecord.cause && typeof errorRecord.cause === 'object') {
+    const causeRecord = errorRecord.cause as { code?: unknown };
+    if (typeof causeRecord.code === 'string') return causeRecord.code;
+  }
+  return null;
+}
+
 export function requiresMvaForm(
   input: Pick<CreateIncidentInput, 'incidentCategoryCode' | 'requiresMvaForm' | 'incidentType' | 'severity'>,
 ): boolean {
@@ -379,7 +390,7 @@ export async function createIncident(input: CreateIncidentInput): Promise<Create
       return mutations;
     });
   } catch (error) {
-    if (syncId && (error as { code?: string }).code === '23505') {
+    if (syncId && getDatabaseErrorCode(error) === '23505') {
       const [existing] = await db
         .select()
         .from(tripIncidents)
