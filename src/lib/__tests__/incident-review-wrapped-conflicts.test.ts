@@ -17,6 +17,23 @@ describe('database error details', () => {
     });
   });
 
+  it('traverses an additional wrapper while preserving the database marker', () => {
+    const error = new Error('Drizzle query failed');
+    (error as Error & { cause?: unknown }).cause = {
+      message: 'Neon request failed',
+      cause: {
+        code: '23514',
+        message: 'incident_investigation_close_conflict',
+      },
+    };
+
+    const details = getDatabaseErrorDetails(error);
+    expect(details.code).toBe('23514');
+    expect(details.message).toContain('Drizzle query failed');
+    expect(details.message).toContain('Neon request failed');
+    expect(details.message).toContain('incident_investigation_close_conflict');
+  });
+
   it('preserves top-level database details', () => {
     expect(getDatabaseErrorDetails({ code: '23505', message: 'duplicate sync token' })).toEqual({
       code: '23505',
