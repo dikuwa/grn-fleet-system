@@ -147,7 +147,6 @@ export async function PATCH(
         SET is_confirmed = false,
             driver_type = 'nominated'
         WHERE erd.request_id = ${id}::uuid
-          AND EXISTS (SELECT 1 FROM external_assignment_cancel)
           AND EXISTS (SELECT 1 FROM request_claim)
         RETURNING erd.id
       ),
