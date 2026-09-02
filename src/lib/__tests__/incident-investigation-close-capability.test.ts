@@ -23,10 +23,13 @@ describe('incident investigation close capability contract', () => {
     expect(routeSource).toContain('canCloseInvestigation,');
   });
 
-  it('fails closed before showing the close action', () => {
-    expect(panelSource).toContain('const [canCloseInvestigation, setCanCloseInvestigation] = useState(false)');
+  it('fails closed while supporting an explicitly resolved close capability', () => {
+    expect(panelSource).toContain('canCloseInvestigation?: boolean;');
+    expect(panelSource).toContain('explicitCanCloseInvestigation ?? false');
+    expect(panelSource).toContain('explicitCanCloseInvestigation !== undefined');
     expect(panelSource).toContain("json.capabilities?.canCloseInvestigation === true");
-    expect(panelSource).toContain("requestedStatus === 'closed' && !canCloseInvestigation");
+    expect(panelSource).toContain("if (requestedStatus === 'closed')");
+    expect(panelSource).toContain('if (!canCloseInvestigation) return;');
     expect(panelSource).toContain('Closure requires an authorised closing officer.');
   });
 

@@ -16,6 +16,7 @@ import {
   MapPin,
   Car,
   CheckCircle2,
+  Shield,
 } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -36,6 +37,8 @@ interface Incident {
   injuries: boolean;
   numberInjured: number;
   vehicleDamage: boolean;
+  vehicleSafe: boolean | null;
+  passengerSafe: boolean | null;
   thirdPartyInvolvement: boolean;
   policeReference: string | null;
   emergencyServicesContacted: boolean;
@@ -58,12 +61,40 @@ interface Incident {
   technicalClearanceByUserId: string | null;
 }
 
+interface IncidentCapabilities {
+  canManage: boolean;
+  canCompleteDetails: boolean;
+  canInvestigate: boolean;
+  canCloseInvestigation: boolean;
+  canTechnicalClearance: boolean;
+  canInsuranceUpdate: boolean;
+  canGenerateMva: boolean;
+  canViewFiles: boolean;
+}
+
+const EMPTY_CAPABILITIES: IncidentCapabilities = {
+  canManage: false,
+  canCompleteDetails: false,
+  canInvestigate: false,
+  canCloseInvestigation: false,
+  canTechnicalClearance: false,
+  canInsuranceUpdate: false,
+  canGenerateMva: false,
+  canViewFiles: false,
+};
+
 const SEVERITY_BADGE: Record<string, 'default' | 'info' | 'warning' | 'error'> = {
   minor: 'default',
   moderate: 'info',
   serious: 'warning',
   critical: 'error',
 };
+
+function formatSafety(value: boolean | null) {
+  if (value === true) return 'Yes';
+  if (value === false) return 'No';
+  return 'Not recorded';
+}
 
 function IncidentDetailInner() {
   const params = useParams();
@@ -72,7 +103,7 @@ function IncidentDetailInner() {
   const { toast } = useToast();
 
   const [incident, setIncident] = useState<Incident | null>(null);
-  const [canManage, setCanManage] = useState(false);
+  const [capabilities, setCapabilities] = useState<IncidentCapabilities>(EMPTY_CAPABILITIES);
   const [loading, setLoading] = useState(true);
   const [generatingReport, setGeneratingReport] = useState(false);
   const [downloadingReport, setDownloadingReport] = useState(false);
@@ -82,15 +113,27 @@ function IncidentDetailInner() {
   const fetchIncident = useCallback(async () => {
     setLoading(true);
     try {
-      const res = await fetch(`/api/incidents?tripId=${tripId}`);
-      const json = await res.json();
-      if (!res.ok) throw new Error(json.error);
+      const [incidentRes, capabilityRes] = await Promise.all([
+        fetch(`/api/incidents?tripId=${tripId}`),
+        fetch('/api/incidents/capabilities').catch(() => null),
+      ]);
+      const json = await incidentRes.json();
+      if (!incidentRes.ok) throw new Error(json.error);
       const found = json.data?.find((i: Incident) => i.id === incidentId);
       if (!found) throw new Error('Incident not found');
       setIncident(found);
-      setCanManage(json.capabilities?.canManage === true);
+
+      if (capabilityRes?.ok) {
+        const capabilityJson = await capabilityRes.json();
+        setCapabilities({
+          ...EMPTY_CAPABILITIES,
+          ...(capabilityJson.capabilities || {}),
+        });
+      } else {
+        setCapabilities(EMPTY_CAPABILITIES);
+      }
     } catch (err) {
-      setCanManage(false);
+      setCapabilities(EMPTY_CAPABILITIES);
       toast({
         title: 'Error',
         description: err instanceof Error ? err.message : 'Failed to load incident',
@@ -107,7 +150,7 @@ function IncidentDetailInner() {
   }, [fetchIncident]);
 
   const generateReport = useCallback(async () => {
-    if (!canManage) return;
+    if (!capabilities.canGenerateMva) return;
     setGeneratingReport(true);
     try {
       const res = await fetch(`/api/incidents/${incidentId}/mva-report`, { method: 'POST' });
@@ -127,9 +170,10 @@ function IncidentDetailInner() {
     } finally {
       setGeneratingReport(false);
     }
-  }, [canManage, incidentId, toast]);
+  }, [capabilities.canGenerateMva, incidentId, toast]);
 
   const downloadReport = useCallback(async () => {
+    if (!capabilities.canViewFiles) return;
     setDownloadingReport(true);
     try {
       const res = await fetch(`/api/incidents/${incidentId}/mva-report`);
@@ -159,10 +203,10 @@ function IncidentDetailInner() {
     } finally {
       setDownloadingReport(false);
     }
-  }, [incidentId, incident, toast]);
+  }, [capabilities.canViewFiles, incidentId, incident, toast]);
 
   const completeDetails = useCallback(async () => {
-    if (!canManage) return;
+    if (!capabilities.canCompleteDetails) return;
     setCompletingDetails(true);
     try {
       const res = await fetch(`/api/incidents/${incidentId}/complete`, { method: 'POST' });
@@ -179,7 +223,7 @@ function IncidentDetailInner() {
     } finally {
       setCompletingDetails(false);
     }
-  }, [canManage, incidentId, toast, fetchIncident]);
+  }, [capabilities.canCompleteDetails, incidentId, toast, fetchIncident]);
 
   if (loading) {
     return (
@@ -208,6 +252,20 @@ function IncidentDetailInner() {
     incident.insuranceClaimReference ||
     incident.policeReportFiled ||
     incident.technicalClearanceStatus !== 'pending';
+  const hasMvaReadOrActionAccess =
+    capabilities.canManage ||
+    capabilities.canInvestigate ||
+    capabilities.canCloseInvestigation ||
+    capabilities.canInsuranceUpdate ||
+    capabilities.canTechnicalClearance;
+  const showMvaWorkspace =
+    hasMvaReadOrActionAccess &&
+    (hasMvaFields ||
+      incident.incidentType.includes('accident') ||
+      incident.severity === 'critical' ||
+      incident.severity === 'serious');
+  const showInvestigationEvidence =
+    capabilities.canManage || capabilities.canInvestigate || capabilities.canCloseInvestigation;
 
   return (
     <div className="space-y-6">
@@ -227,7 +285,7 @@ function IncidentDetailInner() {
           <Button size="compact" variant="secondary" onClick={fetchIncident} title="Refresh">
             <RefreshCw className="h-4 w-4" />
           </Button>
-          {canManage && (
+          {capabilities.canGenerateMva && (
             <Button
               size="compact"
               variant="secondary"
@@ -242,19 +300,21 @@ function IncidentDetailInner() {
               Generate MVAR
             </Button>
           )}
-          <Button
-            size="compact"
-            variant="primary"
-            onClick={downloadReport}
-            disabled={downloadingReport}
-          >
-            {downloadingReport ? (
-              <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-            ) : (
-              <Download className="mr-1 h-4 w-4" />
-            )}
-            Download PDF
-          </Button>
+          {capabilities.canViewFiles && (
+            <Button
+              size="compact"
+              variant="primary"
+              onClick={downloadReport}
+              disabled={downloadingReport}
+            >
+              {downloadingReport ? (
+                <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+              ) : (
+                <Download className="mr-1 h-4 w-4" />
+              )}
+              Download PDF
+            </Button>
+          )}
         </div>
       </PageHeader>
 
@@ -304,11 +364,11 @@ function IncidentDetailInner() {
             <div className="flex items-center gap-2">
               <Car className="text-ink-400 h-4 w-4" />
               <span className="text-ink-600">Vehicle safe:</span>
-              <span className="font-medium">{incident.safeToContinue ? 'Yes' : 'No'}</span>
+              <span className="font-medium">{formatSafety(incident.vehicleSafe)}</span>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-ink-600">Passengers safe:</span>
-              <span className="font-medium">{!incident.injuries ? 'Yes' : 'No'}</span>
+              <span className="font-medium">{formatSafety(incident.passengerSafe)}</span>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-ink-600">Injuries:</span>
@@ -321,6 +381,9 @@ function IncidentDetailInner() {
               <span className="font-medium">{incident.thirdPartyInvolvement ? 'Yes' : 'No'}</span>
             </div>
           </div>
+          <p className="text-ink-500 mt-3 text-xs">
+            Journey continuation: {incident.continuationState.replace(/_/g, ' ')}
+          </p>
         </CardContent>
       </Card>
 
@@ -336,7 +399,7 @@ function IncidentDetailInner() {
                 <AlertTriangle className="h-4 w-4" />
                 Additional details required before this incident can be finalised.
               </div>
-              {canManage && (
+              {capabilities.canCompleteDetails && (
                 <div className="mt-3 flex justify-end">
                   <Button
                     size="compact"
@@ -381,54 +444,118 @@ function IncidentDetailInner() {
         </Card>
       )}
 
-      {canManage && (hasMvaFields ||
-        incident.incidentType.includes('accident') ||
-        incident.severity === 'critical' ||
-        incident.severity === 'serious') && (
+      {showMvaWorkspace && (
         <div className="space-y-6">
           <h2 className="text-ink-900 flex items-center gap-2 text-lg font-semibold">
             <FileText className="h-5 w-5" />
             Motor Vehicle Accident Report
           </h2>
 
-          <InvestigationPanel
-            incidentId={incidentId}
-            tripId={tripId}
-            data={{
-              investigationStatus: incident.investigationStatus as InvestigationStatus,
-              investigationNotes: incident.investigationNotes,
-              investigationClosedAt: incident.investigationClosedAt,
-              accidentReportNumber: incident.accidentReportNumber,
-              witnessStatements: incident.witnessStatements as Array<Record<string, unknown>> | null,
-            }}
-            onUpdate={fetchIncident}
-          />
+          {showInvestigationEvidence && (
+            <InvestigationPanel
+              incidentId={incidentId}
+              tripId={tripId}
+              data={{
+                investigationStatus: incident.investigationStatus as InvestigationStatus,
+                investigationNotes: incident.investigationNotes,
+                investigationClosedAt: incident.investigationClosedAt,
+                accidentReportNumber: incident.accidentReportNumber,
+                witnessStatements: incident.witnessStatements as Array<Record<string, unknown>> | null,
+              }}
+              canInvestigate={capabilities.canInvestigate}
+              canCloseInvestigation={capabilities.canCloseInvestigation}
+              onUpdate={fetchIncident}
+            />
+          )}
 
-          <InsuranceTrackingPanel
-            incidentId={incidentId}
-            data={{
-              insuranceClaimReference: incident.insuranceClaimReference,
-              insuranceNotified: incident.insuranceNotified,
-              insuranceNotifiedAt: incident.insuranceNotifiedAt,
-              policeReportFiled: incident.policeReportFiled,
-              thirdPartyInsuranceDetails: incident.thirdPartyInsuranceDetails,
-            }}
-            onUpdate={fetchIncident}
-          />
+          {capabilities.canInsuranceUpdate ? (
+            <InsuranceTrackingPanel
+              incidentId={incidentId}
+              data={{
+                insuranceClaimReference: incident.insuranceClaimReference,
+                insuranceNotified: incident.insuranceNotified,
+                insuranceNotifiedAt: incident.insuranceNotifiedAt,
+                policeReportFiled: incident.policeReportFiled,
+                thirdPartyInsuranceDetails: incident.thirdPartyInsuranceDetails,
+              }}
+              onUpdate={fetchIncident}
+            />
+          ) : capabilities.canManage ? (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base font-semibold">
+                  <Shield className="h-4 w-4" />
+                  Insurance & Police
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="grid gap-3 text-sm sm:grid-cols-2">
+                <div>
+                  <p className="text-ink-500 text-xs">Claim reference</p>
+                  <p className="mt-1 font-medium">{incident.insuranceClaimReference || 'Not recorded'}</p>
+                </div>
+                <div>
+                  <p className="text-ink-500 text-xs">Insurer notified</p>
+                  <p className="mt-1 font-medium">{incident.insuranceNotified ? 'Yes' : 'No'}</p>
+                </div>
+                <div>
+                  <p className="text-ink-500 text-xs">Police report filed</p>
+                  <p className="mt-1 font-medium">{incident.policeReportFiled ? 'Yes' : 'No'}</p>
+                </div>
+                <div>
+                  <p className="text-ink-500 text-xs">Notification date</p>
+                  <p className="mt-1 font-medium">
+                    {incident.insuranceNotifiedAt
+                      ? new Date(incident.insuranceNotifiedAt).toLocaleDateString()
+                      : 'Not recorded'}
+                  </p>
+                </div>
+                {incident.thirdPartyInsuranceDetails ? (
+                  <div className="sm:col-span-2">
+                    <p className="text-ink-500 text-xs">Third-party insurance details</p>
+                    <pre className="border-border bg-muted/30 mt-1 overflow-x-auto rounded-lg border p-3 text-xs">
+                      {JSON.stringify(incident.thirdPartyInsuranceDetails, null, 2)}
+                    </pre>
+                  </div>
+                ) : null}
+              </CardContent>
+            </Card>
+          ) : null}
 
-          <TechnicalClearanceForm
-            incidentId={incidentId}
-            data={{
-              technicalClearanceStatus: incident.technicalClearanceStatus as TechnicalClearanceStatus,
-              technicalClearanceAt: incident.technicalClearanceAt,
-              technicalClearanceByUserId: incident.technicalClearanceByUserId,
-            }}
-            onUpdate={fetchIncident}
-          />
+          {capabilities.canTechnicalClearance ? (
+            <TechnicalClearanceForm
+              incidentId={incidentId}
+              data={{
+                technicalClearanceStatus: incident.technicalClearanceStatus as TechnicalClearanceStatus,
+                technicalClearanceAt: incident.technicalClearanceAt,
+                technicalClearanceByUserId: incident.technicalClearanceByUserId,
+              }}
+              onUpdate={fetchIncident}
+            />
+          ) : capabilities.canManage ? (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base font-semibold">Technical Clearance</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 text-sm">
+                <Badge
+                  variant={incident.technicalClearanceStatus === 'cleared' ? 'success' : 'warning'}
+                  size="sm"
+                  className="capitalize"
+                >
+                  {incident.technicalClearanceStatus.replace(/_/g, ' ')}
+                </Badge>
+                <p className="text-ink-500 text-xs">
+                  {incident.technicalClearanceAt
+                    ? `Decision recorded ${new Date(incident.technicalClearanceAt).toLocaleString()}`
+                    : 'No technical-clearance decision has been recorded.'}
+                </p>
+              </CardContent>
+            </Card>
+          ) : null}
         </div>
       )}
 
-      {canManage && (
+      {capabilities.canCompleteDetails && (
         <ConfirmDialog
           open={confirmCompleteOpen}
           onOpenChange={setConfirmCompleteOpen}
