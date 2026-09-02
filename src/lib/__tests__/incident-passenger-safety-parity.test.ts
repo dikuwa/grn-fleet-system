@@ -36,8 +36,23 @@ describe('incident safety and injury evidence parity', () => {
     expect(createIncidentSource).toContain('passengerSafe: input.passengerSafe ?? !input.injuries');
   });
 
-  it('matches the operational trip reporting path that already records safety and injury evidence', () => {
-    expect(operationsRouteSource).toContain('passengerSafe: body.passengerSafe !== false');
-    expect(operationsRouteSource).toContain('numberInjured: body.injuries === true');
+  it('preserves passenger-safety omission and explicit booleans in trip operations', () => {
+    expect(operationsRouteSource).toContain(
+      "passengerSafe: typeof body.passengerSafe === 'boolean' ? body.passengerSafe : undefined",
+    );
+    expect(operationsRouteSource).toContain(
+      'Passenger safety must be true, false, or omitted when unknown',
+    );
+    expect(operationsRouteSource).not.toContain('passengerSafe: body.passengerSafe !== false');
+  });
+
+  it('validates operation injury counts before coercion and preserves the normalized count', () => {
+    expect(operationsRouteSource).toContain('injuryCountHasValidRawType');
+    expect(operationsRouteSource).toContain('Number injured must be a numeric whole number');
+    expect(operationsRouteSource).toContain('Number injured must be a non-negative whole number');
+    expect(operationsRouteSource).toContain('Number injured must be at least 1 when injuries are reported');
+    expect(operationsRouteSource).toContain('Number injured must be 0 when no injuries are reported');
+    expect(operationsRouteSource).toContain('numberInjured: normalizedInjuryCount');
+    expect(operationsRouteSource).not.toContain('Math.max(1, Number(body.numberInjured) || 1)');
   });
 });
