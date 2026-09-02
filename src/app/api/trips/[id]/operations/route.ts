@@ -498,6 +498,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     ) {
       return NextResponse.json({ error: 'Number injured must be a non-negative whole number' }, { status: 422 });
     }
+    if (suppliedInjuryCount !== null && suppliedInjuryCount > 2_147_483_647) {
+      return NextResponse.json({ error: 'Number injured exceeds the supported integer range' }, { status: 422 });
+    }
     if (injuries && suppliedInjuryCount === 0) {
       return NextResponse.json({ error: 'Number injured must be at least 1 when injuries are reported' }, { status: 422 });
     }
