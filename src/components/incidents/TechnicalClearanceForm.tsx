@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -8,10 +8,6 @@ import { Wrench, CheckCircle2, XCircle, Loader2 } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import type { TechnicalClearanceStatus } from '@/lib/incidents/mva-constants';
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
 
 interface TechnicalClearanceData {
   technicalClearanceStatus: TechnicalClearanceStatus;
@@ -37,22 +33,41 @@ interface Props {
   onUpdate: () => void;
 }
 
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
-
 export function TechnicalClearanceForm({ incidentId, data, onUpdate }: Props) {
   const { toast } = useToast();
   const [saving, setSaving] = useState(false);
   const [pendingDecision, setPendingDecision] = useState<'cleared' | 'not_cleared' | null>(null);
+  const [canTechnicalClearance, setCanTechnicalClearance] = useState(false);
+  const [clearanceAccessResolved, setClearanceAccessResolved] = useState(false);
 
   const status = data.technicalClearanceStatus;
   const isAlreadyCleared = status === 'cleared';
   const isNotCleared = status === 'not_cleared';
-  const isResolved = isAlreadyCleared || isNotCleared;
+
+  useEffect(() => {
+    let active = true;
+
+    async function resolveClearanceAccess() {
+      try {
+        const response = await fetch(`/api/incidents/${incidentId}/technical-clearance`);
+        if (!active) return;
+        setCanTechnicalClearance(response.ok);
+      } catch {
+        if (active) setCanTechnicalClearance(false);
+      } finally {
+        if (active) setClearanceAccessResolved(true);
+      }
+    }
+
+    void resolveClearanceAccess();
+    return () => {
+      active = false;
+    };
+  }, [incidentId]);
 
   const issueClearance = useCallback(
     async (decision: 'cleared' | 'not_cleared') => {
+      if (!canTechnicalClearance) return;
       setSaving(true);
       try {
         const res = await fetch(`/api/incidents/${incidentId}/technical-clearance`, {
@@ -77,10 +92,11 @@ export function TechnicalClearanceForm({ incidentId, data, onUpdate }: Props) {
         setSaving(false);
       }
     },
-    [incidentId, toast, onUpdate],
+    [canTechnicalClearance, incidentId, toast, onUpdate],
   );
 
   const requestClearance = (decision: 'cleared' | 'not_cleared') => {
+    if (!canTechnicalClearance) return;
     setPendingDecision(decision);
   };
 
@@ -96,21 +112,11 @@ export function TechnicalClearanceForm({ incidentId, data, onUpdate }: Props) {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        {isResolved ? (
+        {isAlreadyCleared ? (
           <div className="space-y-3">
-            <div
-              className={`flex items-center gap-2 rounded-lg p-3 text-sm ${
-                isAlreadyCleared
-                  ? 'bg-green-50 text-green-800 dark:bg-green-950/30 dark:text-green-200'
-                  : 'bg-red-50 text-red-800 dark:bg-red-950/30 dark:text-red-200'
-              }`}
-            >
-              {isAlreadyCleared ? (
-                <CheckCircle2 className="h-4 w-4" />
-              ) : (
-                <XCircle className="h-4 w-4" />
-              )}
-              Vehicle has been {isAlreadyCleared ? 'technically cleared' : 'declared not clear'}
+            <div className="flex items-center gap-2 rounded-lg bg-green-50 p-3 text-sm text-green-800 dark:bg-green-950/30 dark:text-green-200">
+              <CheckCircle2 className="h-4 w-4 shrink-0" />
+              <span>Vehicle has been technically cleared.</span>
               {data.technicalClearanceAt ? (
                 <span className="ml-auto text-xs opacity-80">
                   {new Date(data.technicalClearanceAt).toLocaleString()}
@@ -119,84 +125,113 @@ export function TechnicalClearanceForm({ incidentId, data, onUpdate }: Props) {
             </div>
             {data.technicalClearanceByUserId ? (
               <p className="text-ink-500 text-xs">
-                Cleared by: {data.technicalClearanceByUserId.slice(0, 8)}...
+                Decision recorded by: {data.technicalClearanceByUserId.slice(0, 8)}...
               </p>
             ) : null}
-
-            {!isNotCleared && (
-              <Button
-                size="compact"
-                variant="destructive"
-                onClick={() => requestClearance('not_cleared')}
-                disabled={saving}
-              >
-                {saving ? (
-                  <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-                ) : (
-                  <XCircle className="mr-1 h-4 w-4" />
-                )}
-                Revoke clearance (not cleared)
-              </Button>
-            )}
+            <p className="text-ink-600 text-sm">
+              Granted technical clearance is final for this safety review. If the vehicle becomes
+              unsafe again, record a new defect or incident so a new restriction and clearance cycle
+              is created with its own audit trail.
+            </p>
           </div>
         ) : (
           <div className="space-y-3">
-            <p className="text-ink-600 text-sm">
-              A designated officer must confirm the vehicle has been inspected and is safe to return
-              to service. This is the final step before the vehicle can be released from the
-              maintenance hold.
-            </p>
-            <div className="flex gap-3">
-              <Button
-                variant="primary"
-                size="compact"
-                onClick={() => requestClearance('cleared')}
-                disabled={saving}
-              >
-                {saving ? (
-                  <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-                ) : (
-                  <CheckCircle2 className="mr-1 h-4 w-4" />
-                )}
-                Issue clearance (vehicle safe)
-              </Button>
-              <Button
-                variant="destructive"
-                size="compact"
-                onClick={() => requestClearance('not_cleared')}
-                disabled={saving}
-              >
-                {saving ? (
-                  <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-                ) : (
-                  <XCircle className="mr-1 h-4 w-4" />
-                )}
-                Not cleared
-              </Button>
-            </div>
+            {isNotCleared ? (
+              <div className="flex items-start gap-2 rounded-lg bg-red-50 p-3 text-sm text-red-800 dark:bg-red-950/30 dark:text-red-200">
+                <XCircle className="mt-0.5 h-4 w-4 shrink-0" />
+                <div className="space-y-1">
+                  <p>Vehicle is not cleared and must remain out of service.</p>
+                  <p className="text-xs opacity-80">
+                    After the blocking defect is resolved and the vehicle is re-inspected, technical
+                    clearance can be issued by an authorised clearance officer.
+                  </p>
+                </div>
+                {data.technicalClearanceAt ? (
+                  <span className="ml-auto shrink-0 text-xs opacity-80">
+                    {new Date(data.technicalClearanceAt).toLocaleString()}
+                  </span>
+                ) : null}
+              </div>
+            ) : (
+              <p className="text-ink-600 text-sm">
+                A designated officer must confirm the vehicle has been inspected and is safe to
+                return to service. This is the final safety decision before the maintenance hold can
+                be released.
+              </p>
+            )}
+
+            {data.technicalClearanceByUserId && isNotCleared ? (
+              <p className="text-ink-500 text-xs">
+                Decision recorded by: {data.technicalClearanceByUserId.slice(0, 8)}...
+              </p>
+            ) : null}
+
+            {!clearanceAccessResolved ? (
+              <p className="text-ink-500 flex items-center gap-2 text-xs">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Checking technical-clearance access…
+              </p>
+            ) : canTechnicalClearance ? (
+              <div className="flex flex-wrap gap-3">
+                <Button
+                  variant="primary"
+                  size="compact"
+                  onClick={() => requestClearance('cleared')}
+                  disabled={saving}
+                >
+                  {saving ? (
+                    <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                  ) : (
+                    <CheckCircle2 className="mr-1 h-4 w-4" />
+                  )}
+                  {isNotCleared ? 'Issue clearance after re-inspection' : 'Issue clearance (vehicle safe)'}
+                </Button>
+                {!isNotCleared ? (
+                  <Button
+                    variant="destructive"
+                    size="compact"
+                    onClick={() => requestClearance('not_cleared')}
+                    disabled={saving}
+                  >
+                    {saving ? (
+                      <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                    ) : (
+                      <XCircle className="mr-1 h-4 w-4" />
+                    )}
+                    Not cleared
+                  </Button>
+                ) : null}
+              </div>
+            ) : (
+              <p className="text-ink-500 text-xs">
+                Technical clearance actions are available only to authorised clearance officers.
+              </p>
+            )}
           </div>
         )}
       </CardContent>
 
-      <ConfirmDialog
-        open={pendingDecision !== null}
-        onOpenChange={(open) => !open && setPendingDecision(null)}
-        title={
-          pendingDecision === 'cleared'
-            ? 'Issue technical clearance?'
-            : 'Mark vehicle as not cleared?'
-        }
-        description={
-          pendingDecision === 'cleared'
-            ? 'This confirms the vehicle has been inspected and is safe to return to service.'
-            : 'The vehicle must not be released. A designated officer will need to re-inspect before it can return to service.'
-        }
-        confirmLabel={pendingDecision === 'cleared' ? 'Issue clearance' : 'Not cleared'}
-        variant={pendingDecision === 'not_cleared' ? 'destructive' : 'default'}
-        onConfirm={() => {
-          if (pendingDecision) return issueClearance(pendingDecision);
-        }}
-      />
+      {canTechnicalClearance ? (
+        <ConfirmDialog
+          open={pendingDecision !== null}
+          onOpenChange={(open) => !open && setPendingDecision(null)}
+          title={
+            pendingDecision === 'cleared'
+              ? 'Issue technical clearance?'
+              : 'Mark vehicle as not cleared?'
+          }
+          description={
+            pendingDecision === 'cleared'
+              ? 'This confirms the vehicle has been re-inspected, all blocking defects are resolved, and it is safe for the clearance stage.'
+              : 'The vehicle must remain out of service. Clearance can be issued later after the blocking defect is resolved and the vehicle is re-inspected.'
+          }
+          confirmLabel={pendingDecision === 'cleared' ? 'Issue clearance' : 'Not cleared'}
+          variant={pendingDecision === 'not_cleared' ? 'destructive' : 'default'}
+          onConfirm={() => {
+            if (pendingDecision) return issueClearance(pendingDecision);
+          }}
+        />
+      ) : null}
     </Card>
   );
 }
