@@ -45,20 +45,22 @@ export async function getTenantIncident(tenantId: string, incidentId: string) {
 }
 
 /** Refresh the correct incident document family after a committed mutation. */
-function refreshIncidentDocuments(
+async function refreshIncidentDocuments(
   tenantId: string,
   incidentId: string,
   tripId: string,
   actorUserId: string,
 ) {
-  void refreshIncidentOperationalDocuments({
-    tenantId,
-    incidentId,
-    tripId,
-    actorUserId,
-  }).catch((err) =>
-    console.error('[mva] Incident document refresh failed:', err),
-  );
+  try {
+    await refreshIncidentOperationalDocuments({
+      tenantId,
+      incidentId,
+      tripId,
+      actorUserId,
+    });
+  } catch (err) {
+    console.error('[mva] Incident document refresh failed:', err);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -179,7 +181,7 @@ export async function updateInvestigation(
     return { ok: false as const, error: 'investigation_update_conflict' };
   }
 
-  refreshIncidentDocuments(tenantId, incidentId, incident.tripId, actorUserId);
+  await refreshIncidentDocuments(tenantId, incidentId, incident.tripId, actorUserId);
 
   return { ok: true as const, data: row };
 }
@@ -251,7 +253,7 @@ export async function updateInsurance(
     return updated;
   });
 
-  refreshIncidentDocuments(tenantId, incidentId, incident.tripId, actorUserId);
+  await refreshIncidentDocuments(tenantId, incidentId, incident.tripId, actorUserId);
 
   return { ok: true as const, data: row };
 }
@@ -326,7 +328,7 @@ export async function completeIncidentDetails(
     return { ok: false as const, error: 'details_completion_conflict' };
   }
 
-  refreshIncidentDocuments(tenantId, incidentId, incident.tripId, actorUserId);
+  await refreshIncidentDocuments(tenantId, incidentId, incident.tripId, actorUserId);
 
   return { ok: true as const, data: row };
 }
@@ -400,7 +402,7 @@ export async function recordTechnicalClearance(
     return { ok: false as const, error: 'technical_clearance_conflict' };
   }
 
-  refreshIncidentDocuments(tenantId, incidentId, incident.tripId, actorUserId);
+  await refreshIncidentDocuments(tenantId, incidentId, incident.tripId, actorUserId);
 
   return { ok: true as const, data: row, idempotent: false as const };
 }
