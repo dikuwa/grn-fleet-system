@@ -26,6 +26,19 @@ type Party = {
   isDriverReady?: boolean;
 };
 
+type LicenceOcrData = {
+  provider?: string | null;
+  confidence?: number | null;
+  qualityWarnings?: string[];
+  extracted?: {
+    licenceNumber?: string | null;
+    licenceCodes?: string[];
+    validFrom?: string | null;
+    validUntil?: string | null;
+    holderName?: string | null;
+  };
+};
+
 type Licence = {
   id: string;
   version: number;
@@ -37,6 +50,7 @@ type Licence = {
   reviewNotes?: string | null;
   frontUrl?: string | null;
   backUrl?: string | null;
+  extractedData?: LicenceOcrData | null;
 };
 
 const badgeVariant = (status: string): 'success' | 'pending' | 'error' | 'info' => {
@@ -45,6 +59,10 @@ const badgeVariant = (status: string): 'success' | 'pending' | 'error' | 'info' 
   if (status === 'needs_correction') return 'info';
   return 'pending';
 };
+
+function formatOcrWarning(value: string) {
+  return value.replaceAll('_', ' ');
+}
 
 export default function ExternalDriversPage() {
   const { toast } = useToast();
@@ -281,6 +299,9 @@ export default function ExternalDriversPage() {
                 <div className="space-y-3">
                   {licences.map((licence) => {
                     const reviewable = ['awaiting_review', 'needs_correction'].includes(licence.verificationStatus);
+                    const ocr = licence.extractedData;
+                    const extracted = ocr?.extracted;
+                    const warnings = Array.isArray(ocr?.qualityWarnings) ? ocr.qualityWarnings : [];
                     return (
                       <div key={licence.id} className="border-border rounded-[10px] border p-4">
                         <div className="flex flex-wrap items-start justify-between gap-3">
@@ -291,6 +312,34 @@ export default function ExternalDriversPage() {
                           <Badge variant={badgeVariant(licence.verificationStatus)}>{licence.verificationStatus.replaceAll('_', ' ')}</Badge>
                         </div>
                         {licence.reviewNotes && <p className="bg-muted/40 text-ink-600 mt-3 rounded-[8px] px-3 py-2 text-xs">{licence.reviewNotes}</p>}
+                        {ocr && (
+                          <div className="border-border bg-muted/20 mt-3 rounded-[8px] border p-3">
+                            <div className="flex flex-wrap items-center justify-between gap-2">
+                              <p className="text-ink-950 text-xs font-semibold">OCR review evidence</p>
+                              {ocr.provider && (
+                                <p className="text-ink-500 text-[11px]">
+                                  {ocr.provider}{typeof ocr.confidence === 'number' ? ` · ${Math.round(ocr.confidence)}% confidence` : ''}
+                                </p>
+                              )}
+                            </div>
+                            {extracted && (
+                              <dl className="mt-2 grid gap-x-4 gap-y-2 text-xs sm:grid-cols-2">
+                                <div><dt className="text-ink-500">Detected number</dt><dd className="text-ink-900">{extracted.licenceNumber || 'Not detected'}</dd></div>
+                                <div><dt className="text-ink-500">Detected class</dt><dd className="text-ink-900">{extracted.licenceCodes?.join(', ') || 'Not detected'}</dd></div>
+                                <div><dt className="text-ink-500">Detected expiry</dt><dd className="text-ink-900">{extracted.validUntil || 'Not detected'}</dd></div>
+                                <div><dt className="text-ink-500">Detected holder</dt><dd className="text-ink-900">{extracted.holderName || 'Not detected'}</dd></div>
+                              </dl>
+                            )}
+                            {warnings.length > 0 && (
+                              <div className="mt-3 flex flex-wrap gap-1.5" aria-label="OCR review warnings">
+                                {warnings.map((warning) => (
+                                  <Badge key={warning} variant="info">{formatOcrWarning(warning)}</Badge>
+                                ))}
+                              </div>
+                            )}
+                            <p className="text-ink-500 mt-2 text-[11px]">OCR is review assistance only. Verify the uploaded evidence before approving the licence.</p>
+                          </div>
+                        )}
                         <div className="mt-3 flex flex-wrap gap-2">
                           {licence.frontUrl && <Button variant="secondary" size="sm" asChild><a href={licence.frontUrl} target="_blank" rel="noreferrer"><ExternalLink className="h-4 w-4" /> Front</a></Button>}
                           {licence.backUrl && <Button variant="secondary" size="sm" asChild><a href={licence.backUrl} target="_blank" rel="noreferrer"><ExternalLink className="h-4 w-4" /> Back</a></Button>}
