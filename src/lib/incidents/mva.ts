@@ -11,6 +11,7 @@ import { tripIncidents } from '@/db/schema/trips';
 import { and, eq, sql } from 'drizzle-orm';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { generateDocument } from '@/lib/document-generator';
+import { refreshIncidentOperationalDocuments } from '@/lib/incidents/document-refresh';
 
 // Re-export client-safe constants and types
 export {
@@ -43,20 +44,20 @@ export async function getTenantIncident(tenantId: string, incidentId: string) {
   return row || null;
 }
 
-/** Regenerate the stored MVAR document (fire-and-forget). */
-function regenerateMvaReport(
+/** Refresh the correct incident document family after a committed mutation. */
+function refreshIncidentDocuments(
   tenantId: string,
   incidentId: string,
+  tripId: string,
   actorUserId: string,
 ) {
-  generateDocument({
-    documentType: 'accident_report',
-    entityType: 'trip_incident',
-    entityId: incidentId,
+  void refreshIncidentOperationalDocuments({
     tenantId,
-    generatedByUserId: actorUserId,
+    incidentId,
+    tripId,
+    actorUserId,
   }).catch((err) =>
-    console.error('[mva] MVAR regeneration failed:', err),
+    console.error('[mva] Incident document refresh failed:', err),
   );
 }
 
@@ -178,7 +179,7 @@ export async function updateInvestigation(
     return { ok: false as const, error: 'investigation_update_conflict' };
   }
 
-  regenerateMvaReport(tenantId, incidentId, actorUserId);
+  refreshIncidentDocuments(tenantId, incidentId, incident.tripId, actorUserId);
 
   return { ok: true as const, data: row };
 }
@@ -250,7 +251,7 @@ export async function updateInsurance(
     return updated;
   });
 
-  regenerateMvaReport(tenantId, incidentId, actorUserId);
+  refreshIncidentDocuments(tenantId, incidentId, incident.tripId, actorUserId);
 
   return { ok: true as const, data: row };
 }
@@ -325,7 +326,7 @@ export async function completeIncidentDetails(
     return { ok: false as const, error: 'details_completion_conflict' };
   }
 
-  regenerateMvaReport(tenantId, incidentId, actorUserId);
+  refreshIncidentDocuments(tenantId, incidentId, incident.tripId, actorUserId);
 
   return { ok: true as const, data: row };
 }
@@ -399,7 +400,7 @@ export async function recordTechnicalClearance(
     return { ok: false as const, error: 'technical_clearance_conflict' };
   }
 
-  regenerateMvaReport(tenantId, incidentId, actorUserId);
+  refreshIncidentDocuments(tenantId, incidentId, incident.tripId, actorUserId);
 
   return { ok: true as const, data: row, idempotent: false as const };
 }
