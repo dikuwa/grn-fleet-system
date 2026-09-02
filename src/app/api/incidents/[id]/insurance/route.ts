@@ -64,12 +64,55 @@ export async function PATCH(
     const { id } = await params;
     const body = await req.json();
 
+    if (
+      body.insuranceClaimReference !== undefined &&
+      body.insuranceClaimReference !== null &&
+      typeof body.insuranceClaimReference !== 'string'
+    ) {
+      return NextResponse.json(
+        { error: 'Insurance claim reference must be text or null' },
+        { status: 422 },
+      );
+    }
+    if (
+      body.insuranceNotified !== undefined &&
+      typeof body.insuranceNotified !== 'boolean'
+    ) {
+      return NextResponse.json(
+        { error: 'Insurance notified must be true or false' },
+        { status: 422 },
+      );
+    }
+    if (
+      body.policeReportFiled !== undefined &&
+      typeof body.policeReportFiled !== 'boolean'
+    ) {
+      return NextResponse.json(
+        { error: 'Police report filed must be true or false' },
+        { status: 422 },
+      );
+    }
+    if (
+      body.thirdPartyInsuranceDetails !== undefined &&
+      body.thirdPartyInsuranceDetails !== null &&
+      (typeof body.thirdPartyInsuranceDetails !== 'object' ||
+        Array.isArray(body.thirdPartyInsuranceDetails))
+    ) {
+      return NextResponse.json(
+        { error: 'Third-party insurance details must be an object or null' },
+        { status: 422 },
+      );
+    }
+
     const result = await updateInsurance(
       session.tenantId,
       id,
       session.user.id,
       {
-        insuranceClaimReference: body.insuranceClaimReference,
+        insuranceClaimReference:
+          typeof body.insuranceClaimReference === 'string'
+            ? body.insuranceClaimReference.trim() || null
+            : body.insuranceClaimReference,
         insuranceNotified: body.insuranceNotified,
         policeReportFiled: body.policeReportFiled,
         thirdPartyInsuranceDetails: body.thirdPartyInsuranceDetails,
