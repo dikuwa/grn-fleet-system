@@ -21,6 +21,10 @@ const investigationPanelSource = readFileSync(
   resolve(process.cwd(), 'src/components/incidents/InvestigationPanel.tsx'),
   'utf8',
 );
+const workspaceSource = readFileSync(
+  resolve(process.cwd(), 'src/app/(dashboard)/dashboard/trips/incidents/page.tsx'),
+  'utf8',
+);
 
 describe('incident investigation status parity', () => {
   it('keeps both historically supported open statuses in the shared vocabulary', () => {
@@ -40,5 +44,12 @@ describe('incident investigation status parity', () => {
     expect(reviewActionsSource).toContain('<option value="no_action">No action required</option>');
     expect(investigationPanelSource).toContain("awaiting_information: 'Awaiting information'");
     expect(investigationPanelSource).toContain("(status) => status !== 'closed'");
+  });
+
+  it('keeps no-action investigations visible in the operational Open workspace', () => {
+    expect(workspaceSource).toContain(
+      "['pending', 'in_progress', 'awaiting_information', 'no_action']",
+    );
+    expect(workspaceSource).toContain("row.investigationStatus !== 'closed'");
   });
 });
