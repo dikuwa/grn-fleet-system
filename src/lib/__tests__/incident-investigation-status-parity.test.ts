@@ -25,6 +25,10 @@ const workspaceSource = readFileSync(
   resolve(process.cwd(), 'src/app/(dashboard)/dashboard/trips/incidents/page.tsx'),
   'utf8',
 );
+const detailSource = readFileSync(
+  resolve(process.cwd(), 'src/app/(dashboard)/dashboard/trips/incidents/[id]/page.tsx'),
+  'utf8',
+);
 const dashboardAccessSource = readFileSync(
   resolve(process.cwd(), 'src/lib/dashboard-access.ts'),
   'utf8',
@@ -76,5 +80,22 @@ describe('incident investigation status parity', () => {
     expect(dashboardAccessSource).toContain(
       "workspaces: [W.DRIVER, W.TRANSPORT_ADMIN, W.AUDIT]",
     );
+  });
+
+  it('enforces the active workspace record scope on incident list, detail and mutations', () => {
+    for (const source of [workspaceSource, detailSource, reviewRouteSource]) {
+      expect(source).toContain("resolveDashboardAccess('/dashboard/trips/incidents', roleNames)");
+      expect(source).toContain('vehicleScopeCondition({');
+      expect(source).toContain('recordScope: routeAccess.recordScope');
+    }
+    expect(workspaceSource).toContain('vehicleScope, mvaCondition, statusCondition');
+    expect(detailSource).toContain('eq(tripIncidents.tenantId, session.tenantId), vehicleScope');
+    expect(reviewRouteSource).toContain('eq(tripIncidents.tenantId, auth.session.tenantId), vehicleScope');
+  });
+
+  it('does not expose generic Trip or Documents links from Maintenance related scope', () => {
+    expect(workspaceSource).toContain("routeAccess.recordScope !== 'related'");
+    expect(detailSource).toContain("const canOpenGenericTrip = routeAccess.recordScope !== 'related';");
+    expect(detailSource).toContain("const canOpenDocuments = routeAccess.recordScope !== 'related';");
   });
 });
