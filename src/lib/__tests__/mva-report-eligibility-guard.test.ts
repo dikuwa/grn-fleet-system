@@ -19,10 +19,15 @@ describe('MVA report eligibility contract', () => {
     const guard = 'if (!(await isMvaEligibleIncident(session.tenantId, incident)))';
     expect(routeSource.split(guard)).toHaveLength(3);
 
-    const getSection = routeSource.split('// ---------------------------------------------------------------------------\n// POST')[0];
-    expect(getSection.indexOf(guard)).toBeLessThan(getSection.indexOf('const db = getDb();'));
+    const postMarker = '// POST — Generate/regenerate the MVA report document';
+    const postMarkerIndex = routeSource.indexOf(postMarker);
+    expect(postMarkerIndex).toBeGreaterThan(-1);
 
-    const postSection = routeSource.split('// POST — Generate/regenerate the MVA report document snapshot')[1];
+    const getSection = routeSource.slice(0, postMarkerIndex);
+    const postSection = routeSource.slice(postMarkerIndex);
+    expect(getSection.indexOf(guard)).toBeGreaterThan(-1);
+    expect(getSection.indexOf(guard)).toBeLessThan(getSection.indexOf('const db = getDb();'));
+    expect(postSection.indexOf(guard)).toBeGreaterThan(-1);
     expect(postSection.indexOf(guard)).toBeLessThan(postSection.indexOf('const result = await generateMvaReport('));
   });
 
