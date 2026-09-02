@@ -20,10 +20,12 @@ describe('technical clearance terminal UI contract', () => {
     expect(source).toContain('After the blocking defect is resolved and the vehicle is re-inspected');
   });
 
-  it('requires the dedicated clearance capability before exposing mutation controls', () => {
-    expect(source).toContain('canTechnicalClearance: boolean');
-    expect(source).toContain('{canTechnicalClearance ? (');
+  it('resolves the dedicated clearance capability before exposing mutation controls', () => {
+    expect(source).toContain('const [canTechnicalClearance, setCanTechnicalClearance] = useState(false)');
+    expect(source).toContain('const response = await fetch(`/api/incidents/${incidentId}/technical-clearance`)');
+    expect(source).toContain('setCanTechnicalClearance(response.ok)');
     expect(source).toContain('if (!canTechnicalClearance) return;');
+    expect(source).toContain('Checking technical-clearance access');
     expect(source).toContain('Technical clearance actions are available only to authorised clearance officers.');
   });
 
