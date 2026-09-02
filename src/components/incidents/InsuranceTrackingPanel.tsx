@@ -27,35 +27,59 @@ interface Props {
   onUpdate: () => void;
 }
 
-const THIRD_PARTY_FORM_KEYS = new Set([
-  'insurerName',
-  'insurer',
-  'insurerPhone',
-  'phone',
-  'policyNumber',
-  'policy',
-  'details',
-  'description',
-]);
+const THIRD_PARTY_FIELD_GROUPS = {
+  insurerName: ['insurerName', 'insurer'],
+  insurerPhone: ['insurerPhone', 'phone'],
+  policyNumber: ['policyNumber', 'policy'],
+  details: ['details', 'description'],
+} as const;
 
-function firstStringValue(
+function firstDisplayValue(
   details: Record<string, unknown>,
   keys: readonly string[],
 ): string {
   for (const key of keys) {
     const value = details[key];
-    if (typeof value === 'string' && value.trim()) return value;
+    if (
+      typeof value === 'string' ||
+      typeof value === 'number' ||
+      typeof value === 'boolean'
+    ) {
+      return String(value);
+    }
   }
   return '';
+}
+
+function replaceFieldGroup(
+  target: Record<string, unknown>,
+  aliases: readonly string[],
+  canonicalKey: string,
+  value: string,
+) {
+  for (const alias of aliases) delete target[alias];
+  if (value) target[canonicalKey] = value;
 }
 
 export function InsuranceTrackingPanel({ incidentId, data, onUpdate }: Props) {
   const { toast } = useToast();
   const storedThirdPartyDetails = data.thirdPartyInsuranceDetails || {};
-  const initialTpInsurerName = firstStringValue(storedThirdPartyDetails, ['insurerName', 'insurer']);
-  const initialTpInsurerPhone = firstStringValue(storedThirdPartyDetails, ['insurerPhone', 'phone']);
-  const initialTpInsurerPolicy = firstStringValue(storedThirdPartyDetails, ['policyNumber', 'policy']);
-  const initialTpDetails = firstStringValue(storedThirdPartyDetails, ['details', 'description']);
+  const initialTpInsurerName = firstDisplayValue(
+    storedThirdPartyDetails,
+    THIRD_PARTY_FIELD_GROUPS.insurerName,
+  );
+  const initialTpInsurerPhone = firstDisplayValue(
+    storedThirdPartyDetails,
+    THIRD_PARTY_FIELD_GROUPS.insurerPhone,
+  );
+  const initialTpInsurerPolicy = firstDisplayValue(
+    storedThirdPartyDetails,
+    THIRD_PARTY_FIELD_GROUPS.policyNumber,
+  );
+  const initialTpDetails = firstDisplayValue(
+    storedThirdPartyDetails,
+    THIRD_PARTY_FIELD_GROUPS.details,
+  );
 
   const [claimRef, setClaimRef] = useState(data.insuranceClaimReference || '');
   const [notified, setNotified] = useState(data.insuranceNotified);
@@ -75,11 +99,13 @@ export function InsuranceTrackingPanel({ incidentId, data, onUpdate }: Props) {
         policyNumber: tpInsurerPolicy.trim(),
         details: tpDetails.trim(),
       };
-      const thirdPartyFieldsChanged =
-        normalizedThirdPartyFields.insurerName !== initialTpInsurerName.trim() ||
-        normalizedThirdPartyFields.insurerPhone !== initialTpInsurerPhone.trim() ||
-        normalizedThirdPartyFields.policyNumber !== initialTpInsurerPolicy.trim() ||
-        normalizedThirdPartyFields.details !== initialTpDetails.trim();
+      const changedFields = {
+        insurerName: normalizedThirdPartyFields.insurerName !== initialTpInsurerName.trim(),
+        insurerPhone: normalizedThirdPartyFields.insurerPhone !== initialTpInsurerPhone.trim(),
+        policyNumber: normalizedThirdPartyFields.policyNumber !== initialTpInsurerPolicy.trim(),
+        details: normalizedThirdPartyFields.details !== initialTpDetails.trim(),
+      };
+      const thirdPartyFieldsChanged = Object.values(changedFields).some(Boolean);
 
       const body: Record<string, unknown> = {
         insuranceClaimReference: claimRef.trim() || null,
@@ -88,13 +114,39 @@ export function InsuranceTrackingPanel({ incidentId, data, onUpdate }: Props) {
       };
 
       if (thirdPartyFieldsChanged) {
-        const preservedHiddenDetails = Object.fromEntries(
-          Object.entries(storedThirdPartyDetails).filter(([key]) => !THIRD_PARTY_FORM_KEYS.has(key)),
-        );
-        const nextThirdPartyDetails: Record<string, unknown> = { ...preservedHiddenDetails };
+        const nextThirdPartyDetails: Record<string, unknown> = { ...storedThirdPartyDetails };
 
-        for (const [key, value] of Object.entries(normalizedThirdPartyFields)) {
-          if (value) nextThirdPartyDetails[key] = value;
+        if (changedFields.insurerName) {
+          replaceFieldGroup(
+            nextThirdPartyDetails,
+            THIRD_PARTY_FIELD_GROUPS.insurerName,
+            'insurerName',
+            normalizedThirdPartyFields.insurerName,
+          );
+        }
+        if (changedFields.insurerPhone) {
+          replaceFieldGroup(
+            nextThirdPartyDetails,
+            THIRD_PARTY_FIELD_GROUPS.insurerPhone,
+            'insurerPhone',
+            normalizedThirdPartyFields.insurerPhone,
+          );
+        }
+        if (changedFields.policyNumber) {
+          replaceFieldGroup(
+            nextThirdPartyDetails,
+            THIRD_PARTY_FIELD_GROUPS.policyNumber,
+            'policyNumber',
+            normalizedThirdPartyFields.policyNumber,
+          );
+        }
+        if (changedFields.details) {
+          replaceFieldGroup(
+            nextThirdPartyDetails,
+            THIRD_PARTY_FIELD_GROUPS.details,
+            'details',
+            normalizedThirdPartyFields.details,
+          );
         }
 
         body.thirdPartyInsuranceDetails = Object.keys(nextThirdPartyDetails).length
