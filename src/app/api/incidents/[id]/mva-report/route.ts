@@ -12,11 +12,38 @@ import {
   getTenantIncident,
   generateMvaReport,
 } from '@/lib/incidents/mva';
+import { getIncidentCategory } from '@/lib/incidents/categories';
+import {
+  requiresMvaForm,
+  type CreateIncidentInput,
+} from '@/lib/incidents/create-incident';
 import { generateDocumentPdf } from '@/lib/pdf/generate';
 import { canSessionReadGeneratedDocument } from '@/lib/document-access';
 import { getDb } from '@/db';
 import { generatedDocuments } from '@/db/schema/documents';
 import { and, eq, desc } from 'drizzle-orm';
+
+type TenantIncident = NonNullable<Awaited<ReturnType<typeof getTenantIncident>>>;
+
+async function isMvaEligibleIncident(tenantId: string, incident: TenantIncident) {
+  const category = incident.incidentCategoryCode
+    ? await getIncidentCategory(tenantId, incident.incidentCategoryCode)
+    : null;
+
+  return requiresMvaForm({
+    incidentCategoryCode: incident.incidentCategoryCode,
+    requiresMvaForm: category?.requiresMvaForm ?? false,
+    incidentType: incident.incidentType,
+    severity: incident.severity as CreateIncidentInput['severity'],
+  });
+}
+
+function nonMvaResponse() {
+  return NextResponse.json(
+    { error: 'This incident does not require a Motor Vehicle Accident report.' },
+    { status: 409 },
+  );
+}
 
 // ---------------------------------------------------------------------------
 // GET — Download the MVA report as a PDF
@@ -38,6 +65,9 @@ export async function GET(
     const incident = await getTenantIncident(session.tenantId, id);
     if (!incident) {
       return NextResponse.json({ error: 'Incident not found' }, { status: 404 });
+    }
+    if (!(await isMvaEligibleIncident(session.tenantId, incident))) {
+      return nonMvaResponse();
     }
 
     // Find the existing accident_report document for this incident. Tenant
@@ -114,6 +144,9 @@ export async function POST(
     const incident = await getTenantIncident(session.tenantId, id);
     if (!incident) {
       return NextResponse.json({ error: 'Incident not found' }, { status: 404 });
+    }
+    if (!(await isMvaEligibleIncident(session.tenantId, incident))) {
+      return nonMvaResponse();
     }
 
     const result = await generateMvaReport(
