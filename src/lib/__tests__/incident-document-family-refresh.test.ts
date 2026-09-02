@@ -15,7 +15,7 @@ describe('incident mutation document refresh', () => {
   it('passes the incident trip id so rapid/non-MVA incidents refresh the correct report family', () => {
     expect(mvaSource).toContain('tripId,');
     const refreshCall = 'refreshIncidentDocuments(tenantId, incidentId, incident.tripId, actorUserId)';
-    expect(mvaSource.match(new RegExp(refreshCall.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'g'))?.length).toBe(4);
+    expect(mvaSource.split(refreshCall).length - 1).toBe(4);
   });
 
   it('keeps explicit MVA report generation as accident-report generation', () => {
