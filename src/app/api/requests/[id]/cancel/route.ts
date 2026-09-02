@@ -9,6 +9,7 @@ import {
   requirePermission,
   requireAnyPermission,
 } from '@/lib/auth-helpers';
+import { getDatabaseErrorDetails } from '@/lib/database-error-details';
 import { Permissions } from '@/lib/permissions';
 import { notifyRequestCancelled } from '@/lib/request-lifecycle-notifications';
 import { resolveActionNotifications } from '@/lib/notification-service';
@@ -100,11 +101,15 @@ export async function PATCH(
     // Re-check operational safety inside the same database statement that
     // claims the request. Every dependent cancellation is chained to that
     // claim, so a concurrent issue/start/status change cannot leave request,
-    // allocation, trip, authority, workflow and audit in conflicting states.
+    // allocation, trip, authority, external driver, workflow or governed
+    // Trip Authority document in conflicting states.
     await db.execute(sql`
       WITH request_claim AS (
         UPDATE transport_requests
-        SET status = 'cancelled', assigned_driver_employee_id = NULL, updated_at = ${nowIso}::timestamptz
+        SET status = 'cancelled',
+            assigned_driver_employee_id = NULL,
+            assigned_driver_external_party_id = NULL,
+            updated_at = ${nowIso}::timestamptz
         WHERE id = ${id}::uuid
           AND tenant_id = ${session.tenantId}::uuid
           AND status = ${req.status}
@@ -125,6 +130,27 @@ export async function PATCH(
           AND EXISTS (SELECT 1 FROM request_claim)
         RETURNING id
       ),
+      external_assignment_cancel AS (
+        UPDATE external_driver_assignments eda
+        SET state = 'cancelled',
+            cancelled_at = ${nowIso}::timestamptz,
+            cancellation_reason = ${reason},
+            updated_at = ${nowIso}::timestamptz
+        WHERE eda.tenant_id = ${session.tenantId}::uuid
+          AND eda.request_id = ${id}::uuid
+          AND eda.state IN ('pending_acceptance', 'accepted')
+          AND EXISTS (SELECT 1 FROM request_claim)
+        RETURNING eda.id
+      ),
+      external_request_driver_reset AS (
+        UPDATE external_request_drivers erd
+        SET is_confirmed = false,
+            driver_type = 'nominated'
+        WHERE erd.request_id = ${id}::uuid
+          AND EXISTS (SELECT 1 FROM external_assignment_cancel)
+          AND EXISTS (SELECT 1 FROM request_claim)
+        RETURNING erd.id
+      ),
       trip_cancel AS (
         UPDATE trips
         SET status = 'cancelled', updated_at = ${nowIso}::timestamptz
@@ -141,6 +167,23 @@ export async function PATCH(
           AND tenant_id = ${session.tenantId}::uuid
           AND EXISTS (SELECT 1 FROM request_claim)
         RETURNING id
+      ),
+      generated_authority_cancel AS (
+        UPDATE generated_documents gd
+        SET status = 'cancelled',
+            reason = ${reason},
+            updated_at = ${nowIso}::timestamptz
+        WHERE gd.tenant_id = ${session.tenantId}::uuid
+          AND gd.entity_type = 'vehicle_allocation'
+          AND gd.entity_id IN (
+            SELECT va.id
+            FROM vehicle_allocations va
+            WHERE va.request_id = ${id}::uuid
+          )
+          AND gd.document_type = 'trip_authority'
+          AND gd.status IN ('draft', 'issued')
+          AND EXISTS (SELECT 1 FROM request_claim)
+        RETURNING gd.id
       ),
       driver_reset AS (
         UPDATE request_drivers
@@ -207,7 +250,8 @@ export async function PATCH(
     return NextResponse.json({ success: true, status: 'cancelled' });
   } catch (error) {
     console.error('Cancel request failed:', error);
-    if (String(error).includes('division by zero') || String(error).includes('atomic_request_cancel_failed')) {
+    const { message } = getDatabaseErrorDetails(error);
+    if (message.includes('division by zero') || message.includes('atomic_request_cancel_failed')) {
       return NextResponse.json(
         {
           error:
