@@ -31,6 +31,7 @@ interface InvestigationData {
 const STATUS_LABELS: Record<InvestigationStatus, string> = {
   pending: 'Pending',
   in_progress: 'In progress',
+  awaiting_information: 'Awaiting information',
   closed: 'Closed',
   no_action: 'No action required',
 };
@@ -38,6 +39,7 @@ const STATUS_LABELS: Record<InvestigationStatus, string> = {
 const STATUS_BADGE: Record<InvestigationStatus, 'info' | 'success' | 'warning' | 'default'> = {
   pending: 'default',
   in_progress: 'info',
+  awaiting_information: 'warning',
   closed: 'success',
   no_action: 'default',
 };

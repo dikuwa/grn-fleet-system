@@ -10,7 +10,12 @@ import { runAtomicMutations } from '@/lib/db-atomic';
 import { getDatabaseErrorDetails } from '@/lib/database-error-details';
 import { refreshIncidentOperationalDocuments } from '@/lib/incidents/document-refresh';
 
-const investigationStatuses = new Set(['pending', 'in_progress', 'awaiting_information']);
+const investigationStatuses = new Set([
+  'pending',
+  'in_progress',
+  'awaiting_information',
+  'no_action',
+]);
 const NON_REVIVABLE_VEHICLE_STATUSES = new Set(['written_off', 'decommissioned']);
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -65,7 +70,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       const investigationStatus = String(body.investigationStatus || context.incident.investigationStatus);
       if (!investigationStatuses.has(investigationStatus)) {
         return NextResponse.json(
-          { error: 'Select pending, in progress, or awaiting information. Use Close investigation for final closure.' },
+          { error: 'Select pending, in progress, awaiting information, or no action required. Use Close investigation for final closure.' },
           { status: 422 },
         );
       }

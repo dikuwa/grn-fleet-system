@@ -33,7 +33,10 @@ export default async function MvaWorkspacePage({ searchParams }: { searchParams:
   const allowed = [
     Permissions.TRIP_INCIDENT_MANAGE,
     Permissions.INCIDENT_INVESTIGATE,
+    Permissions.INCIDENT_CLOSE_INVESTIGATION,
+    Permissions.INCIDENT_INSURANCE_UPDATE,
     Permissions.INCIDENT_TECHNICAL_CLEARANCE,
+    Permissions.MAINTENANCE_MANAGE,
     Permissions.AUDIT_READ,
   ].some((permission) => permissions.includes(permission));
   if (!allowed) notFound();
@@ -48,7 +51,7 @@ export default async function MvaWorkspacePage({ searchParams }: { searchParams:
     ? eq(tripIncidents.investigationStatus, 'closed')
     : status === 'all'
       ? undefined
-      : inArray(tripIncidents.investigationStatus, ['pending', 'in_progress', 'awaiting_information']);
+      : inArray(tripIncidents.investigationStatus, ['pending', 'in_progress', 'awaiting_information', 'no_action']);
 
   const rows = await db
     .select({
