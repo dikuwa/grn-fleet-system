@@ -155,10 +155,17 @@ export async function POST(req: NextRequest) {
     if (typeof injuries !== 'boolean') {
       return NextResponse.json({ error: 'Injuries must be true or false' }, { status: 422 });
     }
-    const suppliedInjuryCount =
-      numberInjured === null || numberInjured === undefined || numberInjured === ''
-        ? null
-        : Number(numberInjured);
+    const hasSuppliedInjuryCount =
+      numberInjured !== null && numberInjured !== undefined && numberInjured !== '';
+    const injuryCountHasValidRawType =
+      typeof numberInjured === 'number' ||
+      (typeof numberInjured === 'string' &&
+        numberInjured.trim() !== '' &&
+        Number.isFinite(Number(numberInjured)));
+    if (hasSuppliedInjuryCount && !injuryCountHasValidRawType) {
+      return NextResponse.json({ error: 'Number injured must be a numeric whole number' }, { status: 422 });
+    }
+    const suppliedInjuryCount = hasSuppliedInjuryCount ? Number(numberInjured) : null;
     if (
       suppliedInjuryCount !== null &&
       (!Number.isInteger(suppliedInjuryCount) || suppliedInjuryCount < 0)
