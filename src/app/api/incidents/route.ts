@@ -300,11 +300,25 @@ export async function POST(req: NextRequest) {
       { status: result.idempotent ? 200 : 201 },
     );
   } catch (error) {
-    const databaseError = error as { code?: string; message?: string };
-    if (
-      databaseError.code === '23514' &&
-      databaseError.message?.includes('trip_progress_lifecycle_conflict')
-    ) {
+    const errorRecord = error && typeof error === 'object'
+      ? (error as { code?: unknown; message?: unknown; cause?: unknown })
+      : null;
+    const causeRecord = errorRecord?.cause && typeof errorRecord.cause === 'object'
+      ? (errorRecord.cause as { code?: unknown; message?: unknown })
+      : null;
+    const message = [
+      typeof errorRecord?.message === 'string' ? errorRecord.message : '',
+      typeof causeRecord?.message === 'string' ? causeRecord.message : '',
+      String(error || ''),
+    ]
+      .filter(Boolean)
+      .join(' ');
+    const code = typeof errorRecord?.code === 'string'
+      ? errorRecord.code
+      : typeof causeRecord?.code === 'string'
+        ? causeRecord.code
+        : null;
+    if (code === '23514' && message.includes('trip_progress_lifecycle_conflict')) {
       return NextResponse.json(
         {
           error:
@@ -313,7 +327,7 @@ export async function POST(req: NextRequest) {
         { status: 409 },
       );
     }
-    if (databaseError.code === '23505') {
+    if (code === '23505') {
       return NextResponse.json(
         {
           error:
