@@ -44,10 +44,11 @@ describe('incident terminal action confirmation contract', () => {
     expect(source).toContain('The server will recheck blocking defects, active trips and unresolved safety incidents');
   });
 
-  it('refreshes Trip Completion after dedicated closure without duplicating the MVA refresh', () => {
+  it('refreshes Trip Completion after dedicated closure without duplicating or blocking closure on document side effects', () => {
     expect(investigationRouteSource).toContain('refreshIncidentTripCompletionIfClosed');
     expect(investigationRouteSource).toContain('tripId: incident.tripId');
-    expect(documentRefreshSource).toContain("if (trip?.status !== 'closed') return null;");
+    expect(documentRefreshSource).toContain("if (trip?.status !== 'closed') return [];");
+    expect(documentRefreshSource).toContain('return Promise.allSettled([');
     expect(documentRefreshSource).toContain("documentType: 'trip_completion'");
   });
 });
