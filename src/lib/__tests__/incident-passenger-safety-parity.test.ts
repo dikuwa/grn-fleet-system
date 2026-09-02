@@ -32,6 +32,22 @@ describe('incident safety and injury evidence parity', () => {
     expect(incidentRouteSource).toContain('numberInjured: normalizedInjuryCount');
   });
 
+  it('preserves committed dedicated-endpoint sync replays before new evidence validation', () => {
+    const replayIndex = incidentRouteSource.indexOf('if (syncId) {');
+    const injuryValidationIndex = incidentRouteSource.indexOf("if (typeof injuries !== 'boolean')");
+    expect(replayIndex).toBeGreaterThan(-1);
+    expect(injuryValidationIndex).toBeGreaterThan(replayIndex);
+    expect(incidentRouteSource).toContain('idempotent: true');
+  });
+
+  it('bounds injury counts to the PostgreSQL integer range on both reporting paths', () => {
+    expect(incidentRouteSource).toContain('const POSTGRES_INT_MAX = 2_147_483_647;');
+    expect(incidentRouteSource).toContain('suppliedInjuryCount > POSTGRES_INT_MAX');
+    expect(operationsRouteSource).toContain('suppliedInjuryCount > 2_147_483_647');
+    expect(incidentRouteSource).toContain('Number injured exceeds the supported integer range');
+    expect(operationsRouteSource).toContain('Number injured exceeds the supported integer range');
+  });
+
   it('preserves the existing passenger inference only when passenger safety is omitted', () => {
     expect(createIncidentSource).toContain('passengerSafe: input.passengerSafe ?? !input.injuries');
   });
