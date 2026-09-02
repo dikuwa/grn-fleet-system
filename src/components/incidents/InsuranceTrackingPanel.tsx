@@ -13,10 +13,6 @@ import {
 } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
 interface InsuranceData {
   insuranceClaimReference: string | null;
   insuranceNotified: boolean;
@@ -31,47 +27,131 @@ interface Props {
   onUpdate: () => void;
 }
 
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
+const THIRD_PARTY_FIELD_GROUPS = {
+  insurerName: ['insurerName', 'insurer'],
+  insurerPhone: ['insurerPhone', 'phone'],
+  policyNumber: ['policyNumber', 'policy'],
+  details: ['details', 'description'],
+} as const;
+
+function firstDisplayValue(
+  details: Record<string, unknown>,
+  keys: readonly string[],
+): string {
+  for (const key of keys) {
+    const value = details[key];
+    if (
+      typeof value === 'string' ||
+      typeof value === 'number' ||
+      typeof value === 'boolean'
+    ) {
+      return String(value);
+    }
+  }
+  return '';
+}
+
+function replaceFieldGroup(
+  target: Record<string, unknown>,
+  aliases: readonly string[],
+  canonicalKey: string,
+  value: string,
+) {
+  for (const alias of aliases) delete target[alias];
+  if (value) target[canonicalKey] = value;
+}
 
 export function InsuranceTrackingPanel({ incidentId, data, onUpdate }: Props) {
   const { toast } = useToast();
+  const storedThirdPartyDetails = data.thirdPartyInsuranceDetails || {};
+  const initialTpInsurerName = firstDisplayValue(
+    storedThirdPartyDetails,
+    THIRD_PARTY_FIELD_GROUPS.insurerName,
+  );
+  const initialTpInsurerPhone = firstDisplayValue(
+    storedThirdPartyDetails,
+    THIRD_PARTY_FIELD_GROUPS.insurerPhone,
+  );
+  const initialTpInsurerPolicy = firstDisplayValue(
+    storedThirdPartyDetails,
+    THIRD_PARTY_FIELD_GROUPS.policyNumber,
+  );
+  const initialTpDetails = firstDisplayValue(
+    storedThirdPartyDetails,
+    THIRD_PARTY_FIELD_GROUPS.details,
+  );
 
   const [claimRef, setClaimRef] = useState(data.insuranceClaimReference || '');
   const [notified, setNotified] = useState(data.insuranceNotified);
   const [policeFiled, setPoliceFiled] = useState(data.policeReportFiled);
-  const [tpInsurerName, setTpInsurerName] = useState(
-    (data.thirdPartyInsuranceDetails as Record<string, string>)?.insurerName || '',
-  );
-  const [tpInsurerPhone, setTpInsurerPhone] = useState(
-    (data.thirdPartyInsuranceDetails as Record<string, string>)?.insurerPhone || '',
-  );
-  const [tpInsurerPolicy, setTpInsurerPolicy] = useState(
-    (data.thirdPartyInsuranceDetails as Record<string, string>)?.policyNumber || '',
-  );
-  const [tpDetails, setTpDetails] = useState(
-    (data.thirdPartyInsuranceDetails as Record<string, string>)?.details || '',
-  );
+  const [tpInsurerName, setTpInsurerName] = useState(initialTpInsurerName);
+  const [tpInsurerPhone, setTpInsurerPhone] = useState(initialTpInsurerPhone);
+  const [tpInsurerPolicy, setTpInsurerPolicy] = useState(initialTpInsurerPolicy);
+  const [tpDetails, setTpDetails] = useState(initialTpDetails);
   const [saving, setSaving] = useState(false);
 
   const saveInsurance = useCallback(async () => {
     setSaving(true);
     try {
+      const normalizedThirdPartyFields = {
+        insurerName: tpInsurerName.trim(),
+        insurerPhone: tpInsurerPhone.trim(),
+        policyNumber: tpInsurerPolicy.trim(),
+        details: tpDetails.trim(),
+      };
+      const changedFields = {
+        insurerName: normalizedThirdPartyFields.insurerName !== initialTpInsurerName.trim(),
+        insurerPhone: normalizedThirdPartyFields.insurerPhone !== initialTpInsurerPhone.trim(),
+        policyNumber: normalizedThirdPartyFields.policyNumber !== initialTpInsurerPolicy.trim(),
+        details: normalizedThirdPartyFields.details !== initialTpDetails.trim(),
+      };
+      const thirdPartyFieldsChanged = Object.values(changedFields).some(Boolean);
+
       const body: Record<string, unknown> = {
-        insuranceClaimReference: claimRef || null,
+        insuranceClaimReference: claimRef.trim() || null,
         insuranceNotified: notified,
         policeReportFiled: policeFiled,
       };
 
-      // Build third-party details object if any TP fields are filled
-      if (tpInsurerName || tpInsurerPhone || tpInsurerPolicy || tpDetails) {
-        body.thirdPartyInsuranceDetails = {
-          insurerName: tpInsurerName,
-          insurerPhone: tpInsurerPhone,
-          policyNumber: tpInsurerPolicy,
-          details: tpDetails,
-        };
+      if (thirdPartyFieldsChanged) {
+        const nextThirdPartyDetails: Record<string, unknown> = { ...storedThirdPartyDetails };
+
+        if (changedFields.insurerName) {
+          replaceFieldGroup(
+            nextThirdPartyDetails,
+            THIRD_PARTY_FIELD_GROUPS.insurerName,
+            'insurerName',
+            normalizedThirdPartyFields.insurerName,
+          );
+        }
+        if (changedFields.insurerPhone) {
+          replaceFieldGroup(
+            nextThirdPartyDetails,
+            THIRD_PARTY_FIELD_GROUPS.insurerPhone,
+            'insurerPhone',
+            normalizedThirdPartyFields.insurerPhone,
+          );
+        }
+        if (changedFields.policyNumber) {
+          replaceFieldGroup(
+            nextThirdPartyDetails,
+            THIRD_PARTY_FIELD_GROUPS.policyNumber,
+            'policyNumber',
+            normalizedThirdPartyFields.policyNumber,
+          );
+        }
+        if (changedFields.details) {
+          replaceFieldGroup(
+            nextThirdPartyDetails,
+            THIRD_PARTY_FIELD_GROUPS.details,
+            'details',
+            normalizedThirdPartyFields.details,
+          );
+        }
+
+        body.thirdPartyInsuranceDetails = Object.keys(nextThirdPartyDetails).length
+          ? nextThirdPartyDetails
+          : null;
       }
 
       const res = await fetch(`/api/incidents/${incidentId}/insurance`, {
@@ -92,7 +172,23 @@ export function InsuranceTrackingPanel({ incidentId, data, onUpdate }: Props) {
     } finally {
       setSaving(false);
     }
-  }, [incidentId, claimRef, notified, policeFiled, tpInsurerName, tpInsurerPhone, tpInsurerPolicy, tpDetails, toast, onUpdate]);
+  }, [
+    incidentId,
+    claimRef,
+    notified,
+    policeFiled,
+    tpInsurerName,
+    tpInsurerPhone,
+    tpInsurerPolicy,
+    tpDetails,
+    initialTpInsurerName,
+    initialTpInsurerPhone,
+    initialTpInsurerPolicy,
+    initialTpDetails,
+    storedThirdPartyDetails,
+    toast,
+    onUpdate,
+  ]);
 
   return (
     <Card>
@@ -106,7 +202,6 @@ export function InsuranceTrackingPanel({ incidentId, data, onUpdate }: Props) {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* Notified status */}
         <div className="flex items-center gap-3">
           <label className="flex items-center gap-2 text-sm">
             <input
@@ -125,7 +220,6 @@ export function InsuranceTrackingPanel({ incidentId, data, onUpdate }: Props) {
           )}
         </div>
 
-        {/* Police report */}
         <div className="flex items-center gap-3">
           <label className="flex items-center gap-2 text-sm">
             <input
@@ -139,7 +233,6 @@ export function InsuranceTrackingPanel({ incidentId, data, onUpdate }: Props) {
           </label>
         </div>
 
-        {/* Claim reference */}
         <div className="space-y-1">
           <Label className="text-sm font-medium">Claim reference</Label>
           <Input
@@ -149,7 +242,6 @@ export function InsuranceTrackingPanel({ incidentId, data, onUpdate }: Props) {
           />
         </div>
 
-        {/* Third-party insurance details */}
         <div className="border-t border-border pt-4 mt-4">
           <h4 className="text-sm font-semibold text-ink-700 mb-3">Third-party insurance</h4>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -189,7 +281,6 @@ export function InsuranceTrackingPanel({ incidentId, data, onUpdate }: Props) {
           </div>
         </div>
 
-        {/* Save */}
         <div className="flex justify-end">
           <Button
             variant="primary"
