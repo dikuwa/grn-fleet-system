@@ -18,6 +18,7 @@ import { Permissions } from '@/lib/permissions';
 import { createIncident } from '@/lib/incidents/create-incident';
 import { getIncidentCategory } from '@/lib/incidents/categories';
 import { canAcceptLateOfflineIncident } from '@/lib/incidents/offline-incident-window';
+import { getDatabaseErrorDetails } from '@/lib/database-error-details';
 import { eq, and, desc, type SQL } from 'drizzle-orm';
 import { tripScopeCondition } from '@/lib/record-scope';
 
@@ -219,9 +220,6 @@ export async function POST(req: NextRequest) {
       .limit(1);
     if (!trip) return NextResponse.json({ error: 'Trip not found' }, { status: 404 });
 
-    // Recover an already-committed offline report before mutable lifecycle checks.
-    // The lookup is restricted to the authorised trip, tenant and original reporter,
-    // so a sync token cannot disclose another user's incident.
     if (syncId) {
       const [existing] = await db
         .select()
@@ -300,24 +298,7 @@ export async function POST(req: NextRequest) {
       { status: result.idempotent ? 200 : 201 },
     );
   } catch (error) {
-    const errorRecord = error && typeof error === 'object'
-      ? (error as { code?: unknown; message?: unknown; cause?: unknown })
-      : null;
-    const causeRecord = errorRecord?.cause && typeof errorRecord.cause === 'object'
-      ? (errorRecord.cause as { code?: unknown; message?: unknown })
-      : null;
-    const message = [
-      typeof errorRecord?.message === 'string' ? errorRecord.message : '',
-      typeof causeRecord?.message === 'string' ? causeRecord.message : '',
-      String(error || ''),
-    ]
-      .filter(Boolean)
-      .join(' ');
-    const code = typeof errorRecord?.code === 'string'
-      ? errorRecord.code
-      : typeof causeRecord?.code === 'string'
-        ? causeRecord.code
-        : null;
+    const { code, message } = getDatabaseErrorDetails(error);
     if (code === '23514' && message.includes('trip_progress_lifecycle_conflict')) {
       return NextResponse.json(
         {
