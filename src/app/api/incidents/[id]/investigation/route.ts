@@ -10,6 +10,7 @@ import { requireAnyPermission, requirePermission, requireRequestAuth } from '@/l
 import { Permissions } from '@/lib/permissions';
 import { refreshIncidentTripCompletionIfClosed } from '@/lib/incidents/document-refresh';
 import {
+  INVESTIGATION_STATUSES,
   updateInvestigation,
   getTenantIncident,
 } from '@/lib/incidents/mva';
@@ -73,6 +74,37 @@ export async function PATCH(
 
     const { id } = await params;
     const body = await req.json();
+
+    if (
+      body.status !== undefined &&
+      (typeof body.status !== 'string' || !INVESTIGATION_STATUSES.includes(body.status))
+    ) {
+      return NextResponse.json({ error: 'Select a valid investigation status' }, { status: 422 });
+    }
+    if (body.notes !== undefined && body.notes !== null && typeof body.notes !== 'string') {
+      return NextResponse.json({ error: 'Investigation notes must be text or null' }, { status: 422 });
+    }
+    if (
+      body.accidentReportNumber !== undefined &&
+      body.accidentReportNumber !== null &&
+      typeof body.accidentReportNumber !== 'string'
+    ) {
+      return NextResponse.json({ error: 'Accident report number must be text or null' }, { status: 422 });
+    }
+    if (
+      body.addedWitnesses !== undefined &&
+      (!Array.isArray(body.addedWitnesses) ||
+        body.addedWitnesses.some(
+          (witness: unknown) =>
+            !witness || typeof witness !== 'object' || Array.isArray(witness),
+        ))
+    ) {
+      return NextResponse.json(
+        { error: 'Added witnesses must be a list of witness objects' },
+        { status: 422 },
+      );
+    }
+
     const isClosing = body.status === 'closed';
 
     const permCheck = await requirePermission(
@@ -123,9 +155,15 @@ export async function PATCH(
       session.user.id,
       {
         status: body.status,
-        notes: body.notes,
+        notes:
+          typeof body.notes === 'string'
+            ? body.notes.trim() || null
+            : body.notes,
         addedWitnesses: body.addedWitnesses,
-        accidentReportNumber: body.accidentReportNumber,
+        accidentReportNumber:
+          typeof body.accidentReportNumber === 'string'
+            ? body.accidentReportNumber.trim() || undefined
+            : undefined,
       },
     );
 
