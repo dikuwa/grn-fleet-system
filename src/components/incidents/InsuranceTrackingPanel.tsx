@@ -13,10 +13,6 @@ import {
 } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
 interface InsuranceData {
   insuranceClaimReference: string | null;
   insuranceNotified: boolean;
@@ -30,10 +26,6 @@ interface Props {
   data: InsuranceData;
   onUpdate: () => void;
 }
-
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
 
 export function InsuranceTrackingPanel({ incidentId, data, onUpdate }: Props) {
   const { toast } = useToast();
@@ -58,21 +50,25 @@ export function InsuranceTrackingPanel({ incidentId, data, onUpdate }: Props) {
   const saveInsurance = useCallback(async () => {
     setSaving(true);
     try {
+      const hasThirdPartyInsuranceDetails = Boolean(
+        tpInsurerName.trim() ||
+          tpInsurerPhone.trim() ||
+          tpInsurerPolicy.trim() ||
+          tpDetails.trim(),
+      );
       const body: Record<string, unknown> = {
-        insuranceClaimReference: claimRef || null,
+        insuranceClaimReference: claimRef.trim() || null,
         insuranceNotified: notified,
         policeReportFiled: policeFiled,
+        thirdPartyInsuranceDetails: hasThirdPartyInsuranceDetails
+          ? {
+              insurerName: tpInsurerName.trim(),
+              insurerPhone: tpInsurerPhone.trim(),
+              policyNumber: tpInsurerPolicy.trim(),
+              details: tpDetails.trim(),
+            }
+          : null,
       };
-
-      // Build third-party details object if any TP fields are filled
-      if (tpInsurerName || tpInsurerPhone || tpInsurerPolicy || tpDetails) {
-        body.thirdPartyInsuranceDetails = {
-          insurerName: tpInsurerName,
-          insurerPhone: tpInsurerPhone,
-          policyNumber: tpInsurerPolicy,
-          details: tpDetails,
-        };
-      }
 
       const res = await fetch(`/api/incidents/${incidentId}/insurance`, {
         method: 'PATCH',
@@ -106,7 +102,6 @@ export function InsuranceTrackingPanel({ incidentId, data, onUpdate }: Props) {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* Notified status */}
         <div className="flex items-center gap-3">
           <label className="flex items-center gap-2 text-sm">
             <input
@@ -125,7 +120,6 @@ export function InsuranceTrackingPanel({ incidentId, data, onUpdate }: Props) {
           )}
         </div>
 
-        {/* Police report */}
         <div className="flex items-center gap-3">
           <label className="flex items-center gap-2 text-sm">
             <input
@@ -139,7 +133,6 @@ export function InsuranceTrackingPanel({ incidentId, data, onUpdate }: Props) {
           </label>
         </div>
 
-        {/* Claim reference */}
         <div className="space-y-1">
           <Label className="text-sm font-medium">Claim reference</Label>
           <Input
@@ -149,7 +142,6 @@ export function InsuranceTrackingPanel({ incidentId, data, onUpdate }: Props) {
           />
         </div>
 
-        {/* Third-party insurance details */}
         <div className="border-t border-border pt-4 mt-4">
           <h4 className="text-sm font-semibold text-ink-700 mb-3">Third-party insurance</h4>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
@@ -189,7 +181,6 @@ export function InsuranceTrackingPanel({ incidentId, data, onUpdate }: Props) {
           </div>
         </div>
 
-        {/* Save */}
         <div className="flex justify-end">
           <Button
             variant="primary"
