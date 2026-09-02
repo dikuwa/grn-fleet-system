@@ -53,7 +53,9 @@ describe('incident terminal action confirmation contract', () => {
     expect(mvaSource).toContain('await refreshIncidentOperationalDocuments({');
     expect(mvaSource).toContain("console.error('[mva] Incident document refresh failed:', err)");
     expect(documentRefreshSource).toContain("if (trip?.status !== 'closed') return [];");
-    expect(documentRefreshSource).toContain('return Promise.allSettled([');
+    expect(documentRefreshSource).toContain('const results = await Promise.allSettled([');
+    expect(documentRefreshSource).toContain("logRejectedRefreshes('Trip Completion refresh', results);");
+    expect(documentRefreshSource).toContain('return results;');
     expect(documentRefreshSource).toContain("documentType: 'trip_completion'");
   });
 });
