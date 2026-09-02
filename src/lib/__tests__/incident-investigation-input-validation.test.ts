@@ -23,10 +23,12 @@ describe('incident investigation input validation contract', () => {
     expect(routeSource).toContain('Accident report number must be text or null');
   });
 
-  it('requires added witnesses to be an array of non-array objects', () => {
+  it('requires added witnesses to be objects with render-safe text fields', () => {
     expect(routeSource).toContain('!Array.isArray(body.addedWitnesses)');
-    expect(routeSource).toContain('body.addedWitnesses.some(');
-    expect(routeSource).toContain('Array.isArray(witness)');
+    expect(routeSource).toContain('body.addedWitnesses.some((witness: unknown) => {');
+    expect(routeSource).toContain("const witnessTextFields = ['name', 'phone', 'statement'] as const;");
+    expect(routeSource).toContain("typeof witnessRecord[field] !== 'string'");
+    expect(routeSource).toContain('name, phone and statement fields must contain text or null values');
   });
 
   it('normalizes text without turning explicit null notes into omitted data', () => {
