@@ -9,6 +9,14 @@ const source = readFileSync(
   ),
   'utf8',
 );
+const investigationRouteSource = readFileSync(
+  resolve(process.cwd(), 'src/app/api/incidents/[id]/investigation/route.ts'),
+  'utf8',
+);
+const documentRefreshSource = readFileSync(
+  resolve(process.cwd(), 'src/lib/incidents/document-refresh.ts'),
+  'utf8',
+);
 
 describe('incident terminal action confirmation contract', () => {
   it('requires explicit confirmation for consequential terminal actions', () => {
@@ -34,5 +42,12 @@ describe('incident terminal action confirmation contract', () => {
 
   it('explains the server-side safety rechecks before return to service', () => {
     expect(source).toContain('The server will recheck blocking defects, active trips and unresolved safety incidents');
+  });
+
+  it('refreshes Trip Completion after dedicated closure without duplicating the MVA refresh', () => {
+    expect(investigationRouteSource).toContain('refreshIncidentTripCompletionIfClosed');
+    expect(investigationRouteSource).toContain('tripId: incident.tripId');
+    expect(documentRefreshSource).toContain("if (trip?.status !== 'closed') return null;");
+    expect(documentRefreshSource).toContain("documentType: 'trip_completion'");
   });
 });
