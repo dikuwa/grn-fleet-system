@@ -32,11 +32,16 @@ describe('incident safety and injury evidence parity', () => {
     expect(incidentRouteSource).toContain('numberInjured: normalizedInjuryCount');
   });
 
-  it('preserves committed dedicated-endpoint sync replays before new evidence validation', () => {
-    const replayIndex = incidentRouteSource.indexOf('if (syncId) {');
+  it('authorizes current trip scope before replaying committed sync IDs and validates new evidence afterward', () => {
+    const tripScopeIndex = incidentRouteSource.indexOf('const tripConditions: SQL[] =');
+    const tripLookupIndex = incidentRouteSource.indexOf('const [trip] = await db');
+    const replayIndex = incidentRouteSource.indexOf('if (syncId) {', tripLookupIndex);
     const injuryValidationIndex = incidentRouteSource.indexOf("if (typeof injuries !== 'boolean')");
-    expect(replayIndex).toBeGreaterThan(-1);
+    expect(tripScopeIndex).toBeGreaterThan(-1);
+    expect(tripLookupIndex).toBeGreaterThan(tripScopeIndex);
+    expect(replayIndex).toBeGreaterThan(tripLookupIndex);
     expect(injuryValidationIndex).toBeGreaterThan(replayIndex);
+    expect(incidentRouteSource).toContain("if (!trip) return NextResponse.json({ error: 'Trip not found' }, { status: 404 });");
     expect(incidentRouteSource).toContain('idempotent: true');
   });
 
@@ -66,7 +71,7 @@ describe('incident safety and injury evidence parity', () => {
     expect(operationsRouteSource).toContain(
       "if (body.injuries !== undefined && typeof body.injuries !== 'boolean')",
     );
-    expect(operationsRouteSource).toContain("const injuries = body.injuries === true;");
+    expect(operationsRouteSource).toContain('const injuries = body.injuries === true;');
     expect(operationsRouteSource).not.toContain(
       "body.injuries !== null && body.injuries !== undefined && typeof body.injuries !== 'boolean'",
     );
