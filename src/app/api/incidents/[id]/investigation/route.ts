@@ -8,6 +8,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
+import { refreshIncidentTripCompletionIfClosed } from '@/lib/incidents/document-refresh';
 import {
   updateInvestigation,
   getTenantIncident,
@@ -144,6 +145,14 @@ export async function PATCH(
         );
       }
       return NextResponse.json({ error: result.error }, { status: 400 });
+    }
+
+    if (isClosing) {
+      await refreshIncidentTripCompletionIfClosed({
+        tenantId: session.tenantId,
+        tripId: incident.tripId,
+        actorUserId: session.user.id,
+      });
     }
 
     return NextResponse.json({ data: result.data, alreadyClosed: false });
