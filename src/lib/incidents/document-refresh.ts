@@ -1,4 +1,4 @@
-import { and, eq, inArray } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { generatedDocuments } from '@/db/schema/documents';
 import { tripIncidents, trips } from '@/db/schema/trips';
@@ -7,6 +7,39 @@ import { getIncidentCategory } from '@/lib/incidents/categories';
 import { requiresMvaForm, type CreateIncidentInput } from '@/lib/incidents/create-incident';
 
 const INCIDENT_DOCUMENT_TYPES: DocumentType[] = ['trip_incident_report', 'accident_report'];
+
+type DocumentRefreshPayload = Parameters<typeof generateDocument>[0];
+
+async function generateSerializedDocument(payload: DocumentRefreshPayload) {
+  const db = getDb();
+  const lockKey = [
+    payload.tenantId,
+    payload.entityType,
+    payload.entityId,
+    payload.documentType,
+  ].join(':');
+
+  // A transaction-scoped PostgreSQL advisory lock serializes refreshes for the
+  // same mutable draft across requests and serverless instances. The document
+  // generator uses ordinary Neon HTTP reads/writes while this session lock is
+  // held, so a slower snapshot cannot overwrite evidence produced by a newer
+  // mutation that targeted the same document key.
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))`);
+    return generateDocument(payload);
+  });
+}
+
+function logRejectedRefreshes(
+  label: string,
+  results: PromiseSettledResult<unknown>[],
+) {
+  for (const result of results) {
+    if (result.status === 'rejected') {
+      console.error(`[incidents/document-refresh] ${label} failed:`, result.reason);
+    }
+  }
+}
 
 export async function refreshIncidentTripCompletionIfClosed(input: {
   tenantId: string;
@@ -23,8 +56,8 @@ export async function refreshIncidentTripCompletionIfClosed(input: {
 
     if (trip?.status !== 'closed') return [];
 
-    return Promise.allSettled([
-      generateDocument({
+    const results = await Promise.allSettled([
+      generateSerializedDocument({
         documentType: 'trip_completion',
         entityType: 'trip',
         entityId: input.tripId,
@@ -32,6 +65,8 @@ export async function refreshIncidentTripCompletionIfClosed(input: {
         generatedByUserId: input.actorUserId,
       }),
     ]);
+    logRejectedRefreshes('Trip Completion refresh', results);
+    return results;
   } catch (error) {
     console.error('[incidents/document-refresh] Trip Completion refresh failed:', error);
     return [];
@@ -113,7 +148,7 @@ export async function refreshIncidentOperationalDocuments(input: {
   ];
 
   const effects = documentTypes.map((documentType) =>
-    generateDocument({
+    generateSerializedDocument({
       documentType,
       entityType: 'trip_incident',
       entityId: input.incidentId,
@@ -124,7 +159,7 @@ export async function refreshIncidentOperationalDocuments(input: {
 
   if (trip?.status === 'closed') {
     effects.push(
-      generateDocument({
+      generateSerializedDocument({
         documentType: 'trip_completion',
         entityType: 'trip',
         entityId: input.tripId,
@@ -134,5 +169,7 @@ export async function refreshIncidentOperationalDocuments(input: {
     );
   }
 
-  return Promise.allSettled(effects);
+  const results = await Promise.allSettled(effects);
+  logRejectedRefreshes('Operational document refresh', results);
+  return results;
 }
