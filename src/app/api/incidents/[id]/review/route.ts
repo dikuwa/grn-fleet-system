@@ -140,10 +140,38 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     }
 
     if (action === 'insurance_update') {
-      const insuranceNotified = body.insuranceNotified === true;
+      if (
+        body.insuranceNotified !== undefined &&
+        typeof body.insuranceNotified !== 'boolean'
+      ) {
+        return NextResponse.json(
+          { error: 'Insurance notified must be true or false' },
+          { status: 422 },
+        );
+      }
+      if (
+        body.insuranceClaimReference !== undefined &&
+        body.insuranceClaimReference !== null &&
+        typeof body.insuranceClaimReference !== 'string'
+      ) {
+        return NextResponse.json(
+          { error: 'Insurance claim reference must be text or null' },
+          { status: 422 },
+        );
+      }
+
+      const insuranceNotified = typeof body.insuranceNotified === 'boolean'
+        ? body.insuranceNotified
+        : context.incident.insuranceNotified;
+      const insuranceClaimReference = body.insuranceClaimReference === undefined
+        ? context.incident.insuranceClaimReference
+        : typeof body.insuranceClaimReference === 'string'
+          ? body.insuranceClaimReference.trim() || null
+          : null;
+
       await runAtomicMutations((tx) => [
         tx.update(tripIncidents).set({
-          insuranceClaimReference: body.insuranceClaimReference ? String(body.insuranceClaimReference).trim() : null,
+          insuranceClaimReference,
           insuranceNotified,
           insuranceNotifiedAt: insuranceNotified ? context.incident.insuranceNotifiedAt || now : null,
           updatedAt: now,
@@ -153,7 +181,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
           eventType: 'incident_insurance_updated',
           action: 'incident.insurance.update',
           summary: `${context.incident.officialNumber || id}: insurance details updated`,
-          after: { insuranceNotified, insuranceClaimReference: body.insuranceClaimReference || null },
+          after: { insuranceNotified, insuranceClaimReference },
         }),
       ]);
       return NextResponse.json({ success: true });
