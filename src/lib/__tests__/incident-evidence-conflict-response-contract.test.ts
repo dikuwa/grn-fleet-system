@@ -18,11 +18,19 @@ const migrationSource = readFileSync(
 describe('incident evidence conflict response contract', () => {
   it('maps authoritative incident evidence/lifecycle claim conflicts to HTTP 409 on both reporting APIs', () => {
     expect(migrationSource).toContain('trip_progress_lifecycle_conflict');
-    expect(incidentRouteSource).toContain("databaseError.code === '23514'");
-    expect(incidentRouteSource).toContain("databaseError.message?.includes('trip_progress_lifecycle_conflict')");
+    expect(incidentRouteSource).toContain("errorRecord?.cause && typeof errorRecord.cause === 'object'");
+    expect(incidentRouteSource).toContain('causeRecord?.code');
+    expect(incidentRouteSource).toContain('causeRecord?.message');
+    expect(incidentRouteSource).toContain("code === '23514'");
+    expect(incidentRouteSource).toContain("message.includes('trip_progress_lifecycle_conflict')");
     expect(incidentRouteSource).toContain('{ status: 409 }');
     expect(operationsRouteSource).toContain("message.includes('trip_progress_lifecycle_conflict')");
     expect(operationsRouteSource).toContain('{ status: 409 }');
+  });
+
+  it('preserves duplicate offline sync handling for wrapped database errors', () => {
+    expect(incidentRouteSource).toContain("code === '23505'");
+    expect(incidentRouteSource).toContain('This offline incident sync ID is already used by another incident');
   });
 
   it('keeps unexpected database failures behind the generic 500 response', () => {
