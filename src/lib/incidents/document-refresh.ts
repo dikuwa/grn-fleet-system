@@ -8,6 +8,29 @@ import { requiresMvaForm, type CreateIncidentInput } from '@/lib/incidents/creat
 
 const INCIDENT_DOCUMENT_TYPES: DocumentType[] = ['trip_incident_report', 'accident_report'];
 
+export async function refreshIncidentTripCompletionIfClosed(input: {
+  tenantId: string;
+  tripId: string;
+  actorUserId: string;
+}) {
+  const db = getDb();
+  const [trip] = await db
+    .select({ status: trips.status })
+    .from(trips)
+    .where(and(eq(trips.id, input.tripId), eq(trips.tenantId, input.tenantId)))
+    .limit(1);
+
+  if (trip?.status !== 'closed') return null;
+
+  return generateDocument({
+    documentType: 'trip_completion',
+    entityType: 'trip',
+    entityId: input.tripId,
+    tenantId: input.tenantId,
+    generatedByUserId: input.actorUserId,
+  });
+}
+
 /**
  * Refresh the established incident document family after an operational review
  * changes fields printed on that report. If the original document side effect
