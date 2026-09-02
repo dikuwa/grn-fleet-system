@@ -46,6 +46,16 @@ describe('incident safety and injury evidence parity', () => {
     expect(operationsRouteSource).not.toContain('passengerSafe: body.passengerSafe !== false');
   });
 
+  it('rejects explicit null injury declarations while retaining omission as the false default', () => {
+    expect(operationsRouteSource).toContain(
+      "if (body.injuries !== undefined && typeof body.injuries !== 'boolean')",
+    );
+    expect(operationsRouteSource).toContain("const injuries = body.injuries === true;");
+    expect(operationsRouteSource).not.toContain(
+      "body.injuries !== null && body.injuries !== undefined && typeof body.injuries !== 'boolean'",
+    );
+  });
+
   it('validates operation injury counts before coercion and preserves the normalized count', () => {
     expect(operationsRouteSource).toContain('injuryCountHasValidRawType');
     expect(operationsRouteSource).toContain('Number injured must be a numeric whole number');
