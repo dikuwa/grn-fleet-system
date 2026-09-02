@@ -18,13 +18,18 @@ const migrationSource = readFileSync(
   resolve(process.cwd(), 'src/db/migrations/0110_active_trip_evidence_claim_guard.sql'),
   'utf8',
 );
+const errorDetailsSource = readFileSync(
+  resolve(process.cwd(), 'src/lib/database-error-details.ts'),
+  'utf8',
+);
 
 describe('incident evidence conflict response contract', () => {
   it('maps authoritative incident evidence/lifecycle claim conflicts to HTTP 409 on both reporting APIs', () => {
     expect(migrationSource).toContain('trip_progress_lifecycle_conflict');
-    expect(incidentRouteSource).toContain("errorRecord?.cause && typeof errorRecord.cause === 'object'");
-    expect(incidentRouteSource).toContain('causeRecord?.code');
-    expect(incidentRouteSource).toContain('causeRecord?.message');
+    expect(incidentRouteSource).toContain("import { getDatabaseErrorDetails } from '@/lib/database-error-details'");
+    expect(incidentRouteSource).toContain('const { code, message } = getDatabaseErrorDetails(error);');
+    expect(errorDetailsSource).toContain('depth < 4');
+    expect(errorDetailsSource).toContain('visited.has(current)');
     expect(incidentRouteSource).toContain("code === '23514'");
     expect(incidentRouteSource).toContain("message.includes('trip_progress_lifecycle_conflict')");
     expect(incidentRouteSource).toContain('{ status: 409 }');
