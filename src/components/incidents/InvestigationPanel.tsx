@@ -1,11 +1,12 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Input, Label, Textarea } from '@/components/ui/input';
 import { StyledSelect } from '@/components/ui/styled-select';
+import { ConfirmDialog } from '@/components/ui/confirm-dialog';
 import {
   Search,
   Save,
@@ -13,14 +14,11 @@ import {
   Loader2,
   FileText,
   CheckCircle2,
+  LockKeyhole,
 } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 import { INVESTIGATION_STATUSES } from '@/lib/incidents/mva-constants';
 import type { InvestigationStatus } from '@/lib/incidents/mva-constants';
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
 
 interface InvestigationData {
   investigationStatus: InvestigationStatus;
@@ -44,6 +42,10 @@ const STATUS_BADGE: Record<InvestigationStatus, 'info' | 'success' | 'warning' |
   no_action: 'default',
 };
 
+const EDITABLE_INVESTIGATION_STATUSES = INVESTIGATION_STATUSES.filter(
+  (status) => status !== 'closed',
+);
+
 interface Props {
   incidentId: string;
   tripId: string;
@@ -51,18 +53,16 @@ interface Props {
   onUpdate: () => void;
 }
 
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
-
 export function InvestigationPanel({ incidentId, data, onUpdate }: Props) {
   const { toast } = useToast();
   const [status, setStatus] = useState<InvestigationStatus>(data.investigationStatus);
   const [notes, setNotes] = useState(data.investigationNotes || '');
   const [reportNumber, setReportNumber] = useState(data.accidentReportNumber || '');
   const [saving, setSaving] = useState(false);
+  const [canCloseInvestigation, setCanCloseInvestigation] = useState(false);
+  const [closeCapabilityResolved, setCloseCapabilityResolved] = useState(false);
+  const [confirmCloseOpen, setConfirmCloseOpen] = useState(false);
 
-  // Witness form
   const [witnessName, setWitnessName] = useState('');
   const [witnessPhone, setWitnessPhone] = useState('');
   const [witnessStatement, setWitnessStatement] = useState('');
@@ -71,17 +71,51 @@ export function InvestigationPanel({ incidentId, data, onUpdate }: Props) {
   const witnesses = Array.isArray(data.witnessStatements) ? data.witnessStatements : [];
   const isClosed = data.investigationStatus === 'closed';
 
-  const saveInvestigation = useCallback(async () => {
+  useEffect(() => {
+    let active = true;
+
+    async function resolveCloseCapability() {
+      try {
+        const response = await fetch(`/api/incidents/${incidentId}/investigation`);
+        const json = await response.json().catch(() => ({}));
+        if (!active) return;
+        setCanCloseInvestigation(
+          response.ok && json.capabilities?.canCloseInvestigation === true,
+        );
+      } catch {
+        if (active) setCanCloseInvestigation(false);
+      } finally {
+        if (active) setCloseCapabilityResolved(true);
+      }
+    }
+
+    void resolveCloseCapability();
+    return () => {
+      active = false;
+    };
+  }, [incidentId]);
+
+  const saveInvestigation = useCallback(async (
+    requestedStatus: InvestigationStatus = status,
+  ) => {
+    if (requestedStatus === 'closed' && !canCloseInvestigation) return;
     setSaving(true);
     try {
       const res = await fetch(`/api/incidents/${incidentId}/investigation`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status, notes, accidentReportNumber: reportNumber || undefined }),
+        body: JSON.stringify({
+          status: requestedStatus,
+          notes,
+          accidentReportNumber: reportNumber.trim() || undefined,
+        }),
       });
       const json = await res.json();
       if (!res.ok) throw new Error(json.error || 'Update failed');
-      toast({ title: 'Investigation updated', variant: 'success' });
+      toast({
+        title: requestedStatus === 'closed' ? 'Investigation closed' : 'Investigation updated',
+        variant: 'success',
+      });
       onUpdate();
     } catch (err) {
       toast({
@@ -92,7 +126,7 @@ export function InvestigationPanel({ incidentId, data, onUpdate }: Props) {
     } finally {
       setSaving(false);
     }
-  }, [incidentId, status, notes, reportNumber, toast, onUpdate]);
+  }, [incidentId, status, notes, reportNumber, canCloseInvestigation, toast, onUpdate]);
 
   const addWitness = useCallback(async () => {
     if (!witnessName.trim()) return;
@@ -137,7 +171,6 @@ export function InvestigationPanel({ incidentId, data, onUpdate }: Props) {
         </CardTitle>
       </CardHeader>
       <CardContent className="space-y-4">
-        {/* Accident report number */}
         <div className="space-y-1">
           <Label className="text-sm font-medium">Accident Report Number</Label>
           <Input
@@ -148,7 +181,6 @@ export function InvestigationPanel({ incidentId, data, onUpdate }: Props) {
           />
         </div>
 
-        {/* Status */}
         <div className="space-y-1">
           <Label className="text-sm font-medium">Status</Label>
           <StyledSelect
@@ -156,13 +188,17 @@ export function InvestigationPanel({ incidentId, data, onUpdate }: Props) {
             onChange={(e) => setStatus(e.target.value as InvestigationStatus)}
             disabled={isClosed}
           >
-            {INVESTIGATION_STATUSES.map((s) => (
+            {(isClosed ? INVESTIGATION_STATUSES : EDITABLE_INVESTIGATION_STATUSES).map((s) => (
               <option key={s} value={s}>{STATUS_LABELS[s]}</option>
             ))}
           </StyledSelect>
+          {!isClosed ? (
+            <p className="text-ink-500 text-xs">
+              Final closure is a separate governed action and is not performed from the status selector.
+            </p>
+          ) : null}
         </div>
 
-        {/* Notes */}
         <div className="space-y-1">
           <Label className="text-sm font-medium">Investigation Notes</Label>
           <Textarea
@@ -174,18 +210,38 @@ export function InvestigationPanel({ incidentId, data, onUpdate }: Props) {
           />
         </div>
 
-        {/* Save */}
         {!isClosed && (
-          <div className="flex justify-end">
+          <div className="flex flex-wrap justify-end gap-2">
             <Button
               variant="primary"
               size="compact"
-              onClick={saveInvestigation}
+              onClick={() => void saveInvestigation(status)}
               disabled={saving}
             >
               {saving ? <Loader2 className="h-4 w-4 animate-spin mr-1" /> : <Save className="h-4 w-4 mr-1" />}
               Save investigation
             </Button>
+            {!closeCapabilityResolved ? (
+              <Button size="compact" variant="secondary" disabled>
+                <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                Checking close access
+              </Button>
+            ) : canCloseInvestigation ? (
+              <Button
+                size="compact"
+                variant="secondary"
+                onClick={() => setConfirmCloseOpen(true)}
+                disabled={saving || !notes.trim()}
+              >
+                <CheckCircle2 className="mr-1 h-4 w-4" />
+                Close investigation
+              </Button>
+            ) : (
+              <span className="text-ink-500 inline-flex items-center gap-1 text-xs">
+                <LockKeyhole className="h-3.5 w-3.5" />
+                Closure requires an authorised closing officer.
+              </span>
+            )}
           </div>
         )}
 
@@ -199,7 +255,6 @@ export function InvestigationPanel({ incidentId, data, onUpdate }: Props) {
           </div>
         )}
 
-        {/* Witnesses */}
         <div className="border-t border-border pt-4 mt-4">
           <h4 className="text-sm font-semibold text-ink-700 mb-3">
             Witness Statements ({witnesses.length})
@@ -262,6 +317,15 @@ export function InvestigationPanel({ incidentId, data, onUpdate }: Props) {
           )}
         </div>
       </CardContent>
+
+      <ConfirmDialog
+        open={confirmCloseOpen}
+        onOpenChange={setConfirmCloseOpen}
+        title="Close investigation?"
+        description="This is a final investigation decision. Closed incident evidence cannot be reopened through ordinary investigation editing, and vehicle-safety incidents must already have technical clearance."
+        confirmLabel="Close investigation"
+        onConfirm={() => saveInvestigation('closed')}
+      />
     </Card>
   );
 }
