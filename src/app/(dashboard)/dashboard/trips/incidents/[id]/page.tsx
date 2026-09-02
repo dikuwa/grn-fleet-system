@@ -10,8 +10,10 @@ import { Breadcrumbs, PageHeader } from '@/components/layout/page-header';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { getSessionPermissions } from '@/lib/auth-helpers';
+import { getSessionPermissions, getSessionRoleNames } from '@/lib/auth-helpers';
+import { resolveDashboardAccess } from '@/lib/dashboard-access';
 import { Permissions } from '@/lib/permissions';
+import { vehicleScopeCondition } from '@/lib/record-scope';
 import { getServerSession } from '@/lib/session';
 import { formatDateTime } from '@/lib/utils';
 import { notFound } from 'next/navigation';
@@ -22,7 +24,18 @@ export default async function MvaReviewPage({ params }: { params: Promise<{ id: 
   if (!session) notFound();
   const { id } = await params;
   const db = getDb();
-  const permissions = await getSessionPermissions(session);
+  const [permissions, roleNames] = await Promise.all([
+    getSessionPermissions(session),
+    getSessionRoleNames(session),
+  ]);
+  const routeAccess = resolveDashboardAccess('/dashboard/trips/incidents', roleNames);
+  if (!routeAccess.allowed || !routeAccess.recordScope) notFound();
+
+  const vehicleScope = vehicleScopeCondition({
+    tenantId: session.tenantId,
+    userId: session.user.id,
+    recordScope: routeAccess.recordScope,
+  });
 
   const [row] = await db
     .select({
@@ -41,7 +54,7 @@ export default async function MvaReviewPage({ params }: { params: Promise<{ id: 
     .innerJoin(trips, and(eq(trips.id, tripIncidents.tripId), eq(trips.tenantId, session.tenantId)))
     .innerJoin(vehicles, and(eq(vehicles.id, trips.vehicleId), eq(vehicles.tenantId, session.tenantId)))
     .leftJoin(transportRequests, and(eq(transportRequests.id, trips.requestId), eq(transportRequests.tenantId, session.tenantId)))
-    .where(and(eq(tripIncidents.id, id), eq(tripIncidents.tenantId, session.tenantId)))
+    .where(and(eq(tripIncidents.id, id), eq(tripIncidents.tenantId, session.tenantId), vehicleScope))
     .limit(1);
   if (!row) notFound();
 
@@ -71,13 +84,15 @@ export default async function MvaReviewPage({ params }: { params: Promise<{ id: 
     incident.vehicleDamage || incident.vehicleSafe === false || incident.severity === 'critical';
   const thirdPartyDetails = incident.thirdPartyDetails as Record<string, unknown> | null;
   const witnessStatements = Array.isArray(incident.witnessStatements) ? incident.witnessStatements : [];
+  const canOpenGenericTrip = routeAccess.recordScope !== 'related';
+  const canOpenDocuments = routeAccess.recordScope !== 'related';
 
   return (
     <div className="space-y-6">
-      <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Trips', href: '/dashboard/trips' }, { label: 'MVA & Incidents', href: '/dashboard/trips/incidents' }, { label: incident.officialNumber || 'MVA review' }]} />
+      <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'MVA & Incidents', href: '/dashboard/trips/incidents' }, { label: incident.officialNumber || 'MVA review' }]} />
       <PageHeader title={incident.officialNumber || 'MVA Review'} description={`${incident.incidentType.replaceAll('_', ' ')} · ${formatDateTime(incident.occurredAt)}`}>
         <Button variant="secondary" size="sm" asChild><Link href="/dashboard/trips/incidents"><ArrowLeft className="h-4 w-4" /> Back to workspace</Link></Button>
-        <Button variant="secondary" size="sm" asChild><Link href={`/dashboard/trips/${incident.tripId}`}><CarFront className="h-4 w-4" /> Open trip</Link></Button>
+        {canOpenGenericTrip && <Button variant="secondary" size="sm" asChild><Link href={`/dashboard/trips/${incident.tripId}`}><CarFront className="h-4 w-4" /> Open trip</Link></Button>}
       </PageHeader>
 
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1.4fr)_minmax(320px,0.6fr)]">
@@ -173,7 +188,7 @@ export default async function MvaReviewPage({ params }: { params: Promise<{ id: 
             </Card>
           )}
 
-          <Card>
+          {canOpenDocuments && <Card>
             <CardHeader><CardTitle className="flex items-center gap-2"><FileText className="h-4 w-4" /> Official documents</CardTitle></CardHeader>
             <CardContent className="space-y-2">
               {documents.length === 0 ? <p className="text-ink-500 text-xs">No official MVA document has been generated yet.</p> : documents.map((document) => (
@@ -183,7 +198,7 @@ export default async function MvaReviewPage({ params }: { params: Promise<{ id: 
                 </Link>
               ))}
             </CardContent>
-          </Card>
+          </Card>}
 
           <div className="border-brand-200 bg-brand-50/50 dark:border-brand-900 dark:bg-brand-950/20 rounded-[10px] border p-4">
             <div className="flex items-start gap-3"><ShieldCheck className="text-brand-700 mt-0.5 h-5 w-5 shrink-0" /><p className="text-ink-700 text-xs leading-5">A vehicle cannot be returned to available service from this incident until technical clearance is granted where required, all blocking defects are resolved, no active trip still owns the vehicle, and no other unresolved vehicle-safety incident remains uncleared.</p></div>
