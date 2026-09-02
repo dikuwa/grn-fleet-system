@@ -33,7 +33,10 @@ export default async function MvaWorkspacePage({ searchParams }: { searchParams:
   const allowed = [
     Permissions.TRIP_INCIDENT_MANAGE,
     Permissions.INCIDENT_INVESTIGATE,
+    Permissions.INCIDENT_CLOSE_INVESTIGATION,
+    Permissions.INCIDENT_INSURANCE_UPDATE,
     Permissions.INCIDENT_TECHNICAL_CLEARANCE,
+    Permissions.MAINTENANCE_MANAGE,
     Permissions.AUDIT_READ,
   ].some((permission) => permissions.includes(permission));
   if (!allowed) notFound();
