@@ -155,16 +155,38 @@ export async function POST(req: NextRequest) {
     }
 
     const db = getDb();
+    const tripConditions: SQL[] = [eq(trips.id, tripId), eq(trips.tenantId, session.tenantId)];
+    if (!access.canManage) {
+      tripConditions.push(
+        tripScopeCondition({ tenantId: session.tenantId, userId: session.user.id, recordScope: 'assigned' }),
+      );
+    }
+
+    const [trip] = await db
+      .select({
+        id: trips.id,
+        status: trips.status,
+        startedAt: trips.startedAt,
+        returnedAt: trips.returnedAt,
+        closedAt: trips.closedAt,
+      })
+      .from(trips)
+      .where(and(...tripConditions))
+      .limit(1);
+    if (!trip) return NextResponse.json({ error: 'Trip not found' }, { status: 404 });
+
     if (syncId) {
       const [existing] = await db
         .select()
         .from(tripIncidents)
-        .where(and(
-          eq(tripIncidents.tenantId, session.tenantId),
-          eq(tripIncidents.tripId, tripId),
-          eq(tripIncidents.reportedByUserId, session.user.id),
-          eq(tripIncidents.clientSyncId, syncId),
-        ))
+        .where(
+          and(
+            eq(tripIncidents.tenantId, session.tenantId),
+            eq(tripIncidents.tripId, tripId),
+            eq(tripIncidents.reportedByUserId, session.user.id),
+            eq(tripIncidents.clientSyncId, syncId),
+          ),
+        )
         .limit(1);
       if (existing) {
         return NextResponse.json(
@@ -230,7 +252,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Journey continuation safety does not match the selected continuation state' }, { status: 422 });
     }
     if (severity === 'critical' && requestedContinuation) {
-      return NextResponse.json({ error: 'Critical safety events require Transport Office or technical clearance before the journey can continue' }, { status: 422 });
+      return NextResponse.json(
+        { error: 'Critical safety events require Transport Office or technical clearance before the journey can continue' },
+        { status: 422 },
+      );
     }
     if (vehicleSafe === false && requestedContinuation) {
       return NextResponse.json({ error: 'A vehicle declared unsafe cannot be marked as continuing the journey' }, { status: 422 });
@@ -252,9 +277,10 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Offline creation time cannot be in the future' }, { status: 422 });
     }
 
-    const odometer = odometerReading === null || odometerReading === undefined || odometerReading === ''
-      ? null
-      : Number(odometerReading);
+    const odometer =
+      odometerReading === null || odometerReading === undefined || odometerReading === ''
+        ? null
+        : Number(odometerReading);
     if (odometer !== null && (!Number.isInteger(odometer) || odometer < 0)) {
       return NextResponse.json({ error: 'Odometer reading must be a non-negative whole number' }, { status: 422 });
     }
@@ -262,30 +288,18 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Attachments must be a list' }, { status: 422 });
     }
 
-    const tripConditions: SQL[] = [eq(trips.id, tripId), eq(trips.tenantId, session.tenantId)];
-    if (!access.canManage) {
-      tripConditions.push(
-        tripScopeCondition({ tenantId: session.tenantId, userId: session.user.id, recordScope: 'assigned' }),
-      );
-    }
-
-    const [trip] = await db
-      .select({ id: trips.id, status: trips.status, startedAt: trips.startedAt, returnedAt: trips.returnedAt, closedAt: trips.closedAt })
-      .from(trips)
-      .where(and(...tripConditions))
-      .limit(1);
-    if (!trip) return NextResponse.json({ error: 'Trip not found' }, { status: 404 });
-
     const activeForJourney = ['in_progress', 'return_due'].includes(trip.status);
-    const acceptedLateOfflineIncident = !activeForJourney && canAcceptLateOfflineIncident({
-      tripStatus: trip.status,
-      startedAt: trip.startedAt,
-      returnedAt: trip.returnedAt,
-      closedAt: trip.closedAt,
-      occurredAt: eventDate,
-      offlineCreatedAt: offlineDate,
-      clientSyncId: syncId,
-    });
+    const acceptedLateOfflineIncident =
+      !activeForJourney &&
+      canAcceptLateOfflineIncident({
+        tripStatus: trip.status,
+        startedAt: trip.startedAt,
+        returnedAt: trip.returnedAt,
+        closedAt: trip.closedAt,
+        occurredAt: eventDate,
+        offlineCreatedAt: offlineDate,
+        clientSyncId: syncId,
+      });
     if (!activeForJourney && !acceptedLateOfflineIncident) {
       return NextResponse.json(
         {
