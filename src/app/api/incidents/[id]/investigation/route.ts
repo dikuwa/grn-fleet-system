@@ -24,6 +24,11 @@ export async function GET(
 
     const permCheck = await requirePermission(session, Permissions.INCIDENT_INVESTIGATE);
     if (permCheck instanceof NextResponse) return permCheck;
+    const closePermission = await requirePermission(
+      session,
+      Permissions.INCIDENT_CLOSE_INVESTIGATION,
+    );
+    const canCloseInvestigation = !(closePermission instanceof NextResponse);
 
     const { id } = await params;
     const incident = await getTenantIncident(session.tenantId, id);
@@ -38,6 +43,9 @@ export async function GET(
         investigationClosedAt: incident.investigationClosedAt,
         accidentReportNumber: incident.accidentReportNumber,
         witnessStatements: incident.witnessStatements,
+      },
+      capabilities: {
+        canCloseInvestigation,
       },
     });
   } catch (error) {
