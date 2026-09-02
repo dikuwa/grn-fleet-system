@@ -15,7 +15,7 @@ const createIncidentSource = readFileSync(
   'utf8',
 );
 
-describe('incident passenger safety parity', () => {
+describe('incident safety and injury evidence parity', () => {
   it('accepts explicit passenger safety on the dedicated incident API', () => {
     expect(incidentRouteSource).toContain('passengerSafe,');
     expect(incidentRouteSource).toContain("typeof passengerSafe !== 'boolean'");
@@ -24,11 +24,20 @@ describe('incident passenger safety parity', () => {
     );
   });
 
-  it('preserves the existing inference only when passenger safety is omitted', () => {
+  it('preserves explicit injury counts and validates their relationship with the injury flag', () => {
+    expect(incidentRouteSource).toContain('numberInjured,');
+    expect(incidentRouteSource).toContain('Number injured must be a non-negative whole number');
+    expect(incidentRouteSource).toContain('Number injured must be at least 1 when injuries are reported');
+    expect(incidentRouteSource).toContain('Number injured must be 0 when no injuries are reported');
+    expect(incidentRouteSource).toContain('numberInjured: normalizedInjuryCount');
+  });
+
+  it('preserves the existing passenger inference only when passenger safety is omitted', () => {
     expect(createIncidentSource).toContain('passengerSafe: input.passengerSafe ?? !input.injuries');
   });
 
-  it('matches the operational trip reporting path that already records passenger safety', () => {
+  it('matches the operational trip reporting path that already records safety and injury evidence', () => {
     expect(operationsRouteSource).toContain('passengerSafe: body.passengerSafe !== false');
+    expect(operationsRouteSource).toContain('numberInjured: body.injuries === true');
   });
 });
