@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
@@ -31,22 +31,39 @@ interface Props {
   incidentId: string;
   data: TechnicalClearanceData;
   onUpdate: () => void;
-  canTechnicalClearance: boolean;
 }
 
-export function TechnicalClearanceForm({
-  incidentId,
-  data,
-  onUpdate,
-  canTechnicalClearance,
-}: Props) {
+export function TechnicalClearanceForm({ incidentId, data, onUpdate }: Props) {
   const { toast } = useToast();
   const [saving, setSaving] = useState(false);
   const [pendingDecision, setPendingDecision] = useState<'cleared' | 'not_cleared' | null>(null);
+  const [canTechnicalClearance, setCanTechnicalClearance] = useState(false);
+  const [clearanceAccessResolved, setClearanceAccessResolved] = useState(false);
 
   const status = data.technicalClearanceStatus;
   const isAlreadyCleared = status === 'cleared';
   const isNotCleared = status === 'not_cleared';
+
+  useEffect(() => {
+    let active = true;
+
+    async function resolveClearanceAccess() {
+      try {
+        const response = await fetch(`/api/incidents/${incidentId}/technical-clearance`);
+        if (!active) return;
+        setCanTechnicalClearance(response.ok);
+      } catch {
+        if (active) setCanTechnicalClearance(false);
+      } finally {
+        if (active) setClearanceAccessResolved(true);
+      }
+    }
+
+    void resolveClearanceAccess();
+    return () => {
+      active = false;
+    };
+  }, [incidentId]);
 
   const issueClearance = useCallback(
     async (decision: 'cleared' | 'not_cleared') => {
@@ -149,7 +166,12 @@ export function TechnicalClearanceForm({
               </p>
             ) : null}
 
-            {canTechnicalClearance ? (
+            {!clearanceAccessResolved ? (
+              <p className="text-ink-500 flex items-center gap-2 text-xs">
+                <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                Checking technical-clearance access…
+              </p>
+            ) : canTechnicalClearance ? (
               <div className="flex flex-wrap gap-3">
                 <Button
                   variant="primary"
