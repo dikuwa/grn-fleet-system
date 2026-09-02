@@ -300,7 +300,34 @@ export async function POST(req: NextRequest) {
       { status: result.idempotent ? 200 : 201 },
     );
   } catch (error) {
-    if ((error as { code?: string })?.code === '23505') {
+    const errorRecord = error && typeof error === 'object'
+      ? (error as { code?: unknown; message?: unknown; cause?: unknown })
+      : null;
+    const causeRecord = errorRecord?.cause && typeof errorRecord.cause === 'object'
+      ? (errorRecord.cause as { code?: unknown; message?: unknown })
+      : null;
+    const message = [
+      typeof errorRecord?.message === 'string' ? errorRecord.message : '',
+      typeof causeRecord?.message === 'string' ? causeRecord.message : '',
+      String(error || ''),
+    ]
+      .filter(Boolean)
+      .join(' ');
+    const code = typeof errorRecord?.code === 'string'
+      ? errorRecord.code
+      : typeof causeRecord?.code === 'string'
+        ? causeRecord.code
+        : null;
+    if (code === '23514' && message.includes('trip_progress_lifecycle_conflict')) {
+      return NextResponse.json(
+        {
+          error:
+            'The incident could not be recorded because the trip or its uploaded evidence changed. Refresh the trip and retry with newly uploaded evidence.',
+        },
+        { status: 409 },
+      );
+    }
+    if (code === '23505') {
       return NextResponse.json(
         {
           error:
