@@ -25,6 +25,10 @@ const workspaceSource = readFileSync(
   resolve(process.cwd(), 'src/app/(dashboard)/dashboard/trips/incidents/page.tsx'),
   'utf8',
 );
+const dashboardAccessSource = readFileSync(
+  resolve(process.cwd(), 'src/lib/dashboard-access.ts'),
+  'utf8',
+);
 
 describe('incident investigation status parity', () => {
   it('keeps both historically supported open statuses in the shared vocabulary', () => {
@@ -58,5 +62,19 @@ describe('incident investigation status parity', () => {
     expect(workspaceSource).toContain('Permissions.INCIDENT_INSURANCE_UPDATE');
     expect(workspaceSource).toContain('Permissions.INCIDENT_TECHNICAL_CLEARANCE');
     expect(workspaceSource).toContain('Permissions.MAINTENANCE_MANAGE');
+  });
+
+  it('registers incident review narrowly for Maintenance without widening the Trips workspace', () => {
+    expect(dashboardAccessSource).toContain("id: 'trip-incidents'");
+    expect(dashboardAccessSource).toContain("path: '/dashboard/trips/incidents'");
+    expect(dashboardAccessSource).toContain(
+      'workspaces: [W.MAINTENANCE, W.TRANSPORT_ADMIN, W.AUDIT]',
+    );
+    expect(dashboardAccessSource).toContain('[W.MAINTENANCE]: relatedRead()');
+    expect(dashboardAccessSource).toContain("label: 'Incident Review'");
+    expect(dashboardAccessSource).toContain('navigationVisible: true');
+    expect(dashboardAccessSource).toContain(
+      "workspaces: [W.DRIVER, W.TRANSPORT_ADMIN, W.AUDIT]",
+    );
   });
 });
