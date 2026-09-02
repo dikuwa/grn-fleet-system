@@ -467,7 +467,45 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (forcedCriticalTypes.has(incidentType) || /\b(brake|brakes|steering|fuel leak|fire|structural damage)\b/i.test(description)) {
       severity = 'critical';
     }
-    if (body.injuries === true && severity === 'minor') severity = 'moderate';
+
+    if (body.injuries !== null && body.injuries !== undefined && typeof body.injuries !== 'boolean') {
+      return NextResponse.json({ error: 'Injuries must be true or false' }, { status: 422 });
+    }
+    const injuries = body.injuries === true;
+    if (injuries && severity === 'minor') severity = 'moderate';
+
+    if (body.passengerSafe !== null && body.passengerSafe !== undefined && typeof body.passengerSafe !== 'boolean') {
+      return NextResponse.json(
+        { error: 'Passenger safety must be true, false, or omitted when unknown' },
+        { status: 422 },
+      );
+    }
+
+    const hasSuppliedInjuryCount =
+      body.numberInjured !== null && body.numberInjured !== undefined && body.numberInjured !== '';
+    const injuryCountHasValidRawType =
+      typeof body.numberInjured === 'number' ||
+      (typeof body.numberInjured === 'string' &&
+        body.numberInjured.trim() !== '' &&
+        Number.isFinite(Number(body.numberInjured)));
+    if (hasSuppliedInjuryCount && !injuryCountHasValidRawType) {
+      return NextResponse.json({ error: 'Number injured must be a numeric whole number' }, { status: 422 });
+    }
+    const suppliedInjuryCount = hasSuppliedInjuryCount ? Number(body.numberInjured) : null;
+    if (
+      suppliedInjuryCount !== null &&
+      (!Number.isInteger(suppliedInjuryCount) || suppliedInjuryCount < 0)
+    ) {
+      return NextResponse.json({ error: 'Number injured must be a non-negative whole number' }, { status: 422 });
+    }
+    if (injuries && suppliedInjuryCount === 0) {
+      return NextResponse.json({ error: 'Number injured must be at least 1 when injuries are reported' }, { status: 422 });
+    }
+    if (!injuries && suppliedInjuryCount !== null && suppliedInjuryCount > 0) {
+      return NextResponse.json({ error: 'Number injured must be 0 when no injuries are reported' }, { status: 422 });
+    }
+    const normalizedInjuryCount = injuries ? suppliedInjuryCount ?? 1 : 0;
+
     const continuationState = continuationStates.includes(
       String(body.continuationState) as (typeof continuationStates)[number],
     )
@@ -505,7 +543,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       location: body.location ? String(body.location).trim() : null,
       odometerReading: odometer,
       description,
-      injuries: body.injuries === true,
+      injuries,
       vehicleDamage: body.vehicleDamage === true,
       thirdPartyInvolvement: body.thirdPartyInvolvement === true,
       policeReference: body.policeReference ? String(body.policeReference).trim() : null,
@@ -513,8 +551,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       safeToContinue: requestedContinuation,
       continuationState,
       vehicleSafe: typeof body.vehicleSafe === 'boolean' ? body.vehicleSafe : null,
-      passengerSafe: body.passengerSafe !== false,
-      numberInjured: body.injuries === true ? Math.max(1, Number(body.numberInjured) || 1) : 0,
+      passengerSafe: typeof body.passengerSafe === 'boolean' ? body.passengerSafe : undefined,
+      numberInjured: normalizedInjuryCount,
       detailsRequired: body.rapidReport === true,
       dailyLogEntryId: body.dailyLogEntryId ? String(body.dailyLogEntryId) : null,
       journeyLegReference: body.journeyLegReference ? String(body.journeyLegReference) : null,
