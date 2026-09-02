@@ -16,6 +16,7 @@ import {
   MapPin,
   Car,
   CheckCircle2,
+  Shield,
 } from 'lucide-react';
 import { useToast } from '@/lib/use-toast';
 import { ConfirmDialog } from '@/components/ui/confirm-dialog';
@@ -36,6 +37,8 @@ interface Incident {
   injuries: boolean;
   numberInjured: number;
   vehicleDamage: boolean;
+  vehicleSafe: boolean | null;
+  passengerSafe: boolean | null;
   thirdPartyInvolvement: boolean;
   policeReference: string | null;
   emergencyServicesContacted: boolean;
@@ -86,6 +89,12 @@ const SEVERITY_BADGE: Record<string, 'default' | 'info' | 'warning' | 'error'> =
   serious: 'warning',
   critical: 'error',
 };
+
+function formatSafety(value: boolean | null) {
+  if (value === true) return 'Yes';
+  if (value === false) return 'No';
+  return 'Not recorded';
+}
 
 function IncidentDetailInner() {
   const params = useParams();
@@ -243,16 +252,20 @@ function IncidentDetailInner() {
     incident.insuranceClaimReference ||
     incident.policeReportFiled ||
     incident.technicalClearanceStatus !== 'pending';
-  const hasMvaAccess =
+  const hasMvaReadOrActionAccess =
+    capabilities.canManage ||
     capabilities.canInvestigate ||
+    capabilities.canCloseInvestigation ||
     capabilities.canInsuranceUpdate ||
     capabilities.canTechnicalClearance;
   const showMvaWorkspace =
-    hasMvaAccess &&
+    hasMvaReadOrActionAccess &&
     (hasMvaFields ||
       incident.incidentType.includes('accident') ||
       incident.severity === 'critical' ||
       incident.severity === 'serious');
+  const showInvestigationEvidence =
+    capabilities.canManage || capabilities.canInvestigate || capabilities.canCloseInvestigation;
 
   return (
     <div className="space-y-6">
@@ -351,11 +364,11 @@ function IncidentDetailInner() {
             <div className="flex items-center gap-2">
               <Car className="text-ink-400 h-4 w-4" />
               <span className="text-ink-600">Vehicle safe:</span>
-              <span className="font-medium">{incident.safeToContinue ? 'Yes' : 'No'}</span>
+              <span className="font-medium">{formatSafety(incident.vehicleSafe)}</span>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-ink-600">Passengers safe:</span>
-              <span className="font-medium">{!incident.injuries ? 'Yes' : 'No'}</span>
+              <span className="font-medium">{formatSafety(incident.passengerSafe)}</span>
             </div>
             <div className="flex items-center gap-2">
               <span className="text-ink-600">Injuries:</span>
@@ -368,6 +381,9 @@ function IncidentDetailInner() {
               <span className="font-medium">{incident.thirdPartyInvolvement ? 'Yes' : 'No'}</span>
             </div>
           </div>
+          <p className="text-ink-500 mt-3 text-xs">
+            Journey continuation: {incident.continuationState.replace(/_/g, ' ')}
+          </p>
         </CardContent>
       </Card>
 
@@ -435,7 +451,7 @@ function IncidentDetailInner() {
             Motor Vehicle Accident Report
           </h2>
 
-          {capabilities.canInvestigate && (
+          {showInvestigationEvidence && (
             <InvestigationPanel
               incidentId={incidentId}
               tripId={tripId}
@@ -446,11 +462,13 @@ function IncidentDetailInner() {
                 accidentReportNumber: incident.accidentReportNumber,
                 witnessStatements: incident.witnessStatements as Array<Record<string, unknown>> | null,
               }}
+              canInvestigate={capabilities.canInvestigate}
+              canCloseInvestigation={capabilities.canCloseInvestigation}
               onUpdate={fetchIncident}
             />
           )}
 
-          {capabilities.canInsuranceUpdate && (
+          {capabilities.canInsuranceUpdate ? (
             <InsuranceTrackingPanel
               incidentId={incidentId}
               data={{
@@ -462,9 +480,48 @@ function IncidentDetailInner() {
               }}
               onUpdate={fetchIncident}
             />
-          )}
+          ) : capabilities.canManage ? (
+            <Card>
+              <CardHeader>
+                <CardTitle className="flex items-center gap-2 text-base font-semibold">
+                  <Shield className="h-4 w-4" />
+                  Insurance & Police
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="grid gap-3 text-sm sm:grid-cols-2">
+                <div>
+                  <p className="text-ink-500 text-xs">Claim reference</p>
+                  <p className="mt-1 font-medium">{incident.insuranceClaimReference || 'Not recorded'}</p>
+                </div>
+                <div>
+                  <p className="text-ink-500 text-xs">Insurer notified</p>
+                  <p className="mt-1 font-medium">{incident.insuranceNotified ? 'Yes' : 'No'}</p>
+                </div>
+                <div>
+                  <p className="text-ink-500 text-xs">Police report filed</p>
+                  <p className="mt-1 font-medium">{incident.policeReportFiled ? 'Yes' : 'No'}</p>
+                </div>
+                <div>
+                  <p className="text-ink-500 text-xs">Notification date</p>
+                  <p className="mt-1 font-medium">
+                    {incident.insuranceNotifiedAt
+                      ? new Date(incident.insuranceNotifiedAt).toLocaleDateString()
+                      : 'Not recorded'}
+                  </p>
+                </div>
+                {incident.thirdPartyInsuranceDetails ? (
+                  <div className="sm:col-span-2">
+                    <p className="text-ink-500 text-xs">Third-party insurance details</p>
+                    <pre className="border-border bg-muted/30 mt-1 overflow-x-auto rounded-lg border p-3 text-xs">
+                      {JSON.stringify(incident.thirdPartyInsuranceDetails, null, 2)}
+                    </pre>
+                  </div>
+                ) : null}
+              </CardContent>
+            </Card>
+          ) : null}
 
-          {capabilities.canTechnicalClearance && (
+          {capabilities.canTechnicalClearance ? (
             <TechnicalClearanceForm
               incidentId={incidentId}
               data={{
@@ -474,7 +531,27 @@ function IncidentDetailInner() {
               }}
               onUpdate={fetchIncident}
             />
-          )}
+          ) : capabilities.canManage ? (
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-base font-semibold">Technical Clearance</CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-2 text-sm">
+                <Badge
+                  variant={incident.technicalClearanceStatus === 'cleared' ? 'success' : 'warning'}
+                  size="sm"
+                  className="capitalize"
+                >
+                  {incident.technicalClearanceStatus.replace(/_/g, ' ')}
+                </Badge>
+                <p className="text-ink-500 text-xs">
+                  {incident.technicalClearanceAt
+                    ? `Decision recorded ${new Date(incident.technicalClearanceAt).toLocaleString()}`
+                    : 'No technical-clearance decision has been recorded.'}
+                </p>
+              </CardContent>
+            </Card>
+          ) : null}
         </div>
       )}
 
