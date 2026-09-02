@@ -8,10 +8,20 @@ const source = readFileSync(
 );
 
 describe('incident insurance clearing contract', () => {
-  it('sends explicit null when all third-party insurance fields are cleared', () => {
-    expect(source).toContain('const hasThirdPartyInsuranceDetails = Boolean(');
-    expect(source).toContain('thirdPartyInsuranceDetails: hasThirdPartyInsuranceDetails');
-    expect(source).toContain(': null,');
+  it('clears represented third-party fields only when the officer changes them', () => {
+    expect(source).toContain('const thirdPartyFieldsChanged =');
+    expect(source).toContain('if (thirdPartyFieldsChanged)');
+    expect(source).toContain('body.thirdPartyInsuranceDetails = Object.keys(nextThirdPartyDetails).length');
+    expect(source).toContain(': null;');
+  });
+
+  it('preserves hidden custom metadata while normalizing known legacy aliases', () => {
+    expect(source).toContain("'insurer'");
+    expect(source).toContain("'phone'");
+    expect(source).toContain("'policy'");
+    expect(source).toContain("'description'");
+    expect(source).toContain('preservedHiddenDetails');
+    expect(source).toContain('!THIRD_PARTY_FORM_KEYS.has(key)');
   });
 
   it('normalizes saved insurance strings before persistence', () => {
