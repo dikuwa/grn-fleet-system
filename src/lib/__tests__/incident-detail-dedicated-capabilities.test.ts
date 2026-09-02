@@ -28,8 +28,9 @@ describe('legacy incident detail dedicated capability contract', () => {
     expect(capabilityRouteSource).toContain('Permissions.FILE_VIEW');
   });
 
-  it('fails closed instead of treating generic incident management as every mutation capability', () => {
-    expect(pageSource).toContain("fetch('/api/incidents/capabilities')");
+  it('fails closed for actions without converting a capability network failure into incident-not-found', () => {
+    expect(pageSource).toContain("fetch('/api/incidents/capabilities').catch(() => null)");
+    expect(pageSource).toContain('if (capabilityRes?.ok)');
     expect(pageSource).toContain('setCapabilities(EMPTY_CAPABILITIES)');
     expect(pageSource).not.toContain('if (!canManage) return;');
   });
