@@ -13,24 +13,29 @@ export async function refreshIncidentTripCompletionIfClosed(input: {
   tripId: string;
   actorUserId: string;
 }) {
-  const db = getDb();
-  const [trip] = await db
-    .select({ status: trips.status })
-    .from(trips)
-    .where(and(eq(trips.id, input.tripId), eq(trips.tenantId, input.tenantId)))
-    .limit(1);
+  try {
+    const db = getDb();
+    const [trip] = await db
+      .select({ status: trips.status })
+      .from(trips)
+      .where(and(eq(trips.id, input.tripId), eq(trips.tenantId, input.tenantId)))
+      .limit(1);
 
-  if (trip?.status !== 'closed') return [];
+    if (trip?.status !== 'closed') return [];
 
-  return Promise.allSettled([
-    generateDocument({
-      documentType: 'trip_completion',
-      entityType: 'trip',
-      entityId: input.tripId,
-      tenantId: input.tenantId,
-      generatedByUserId: input.actorUserId,
-    }),
-  ]);
+    return Promise.allSettled([
+      generateDocument({
+        documentType: 'trip_completion',
+        entityType: 'trip',
+        entityId: input.tripId,
+        tenantId: input.tenantId,
+        generatedByUserId: input.actorUserId,
+      }),
+    ]);
+  } catch (error) {
+    console.error('[incidents/document-refresh] Trip Completion refresh failed:', error);
+    return [];
+  }
 }
 
 /**
