@@ -27,48 +27,80 @@ interface Props {
   onUpdate: () => void;
 }
 
+const THIRD_PARTY_FORM_KEYS = new Set([
+  'insurerName',
+  'insurer',
+  'insurerPhone',
+  'phone',
+  'policyNumber',
+  'policy',
+  'details',
+  'description',
+]);
+
+function firstStringValue(
+  details: Record<string, unknown>,
+  keys: readonly string[],
+): string {
+  for (const key of keys) {
+    const value = details[key];
+    if (typeof value === 'string' && value.trim()) return value;
+  }
+  return '';
+}
+
 export function InsuranceTrackingPanel({ incidentId, data, onUpdate }: Props) {
   const { toast } = useToast();
+  const storedThirdPartyDetails = data.thirdPartyInsuranceDetails || {};
+  const initialTpInsurerName = firstStringValue(storedThirdPartyDetails, ['insurerName', 'insurer']);
+  const initialTpInsurerPhone = firstStringValue(storedThirdPartyDetails, ['insurerPhone', 'phone']);
+  const initialTpInsurerPolicy = firstStringValue(storedThirdPartyDetails, ['policyNumber', 'policy']);
+  const initialTpDetails = firstStringValue(storedThirdPartyDetails, ['details', 'description']);
 
   const [claimRef, setClaimRef] = useState(data.insuranceClaimReference || '');
   const [notified, setNotified] = useState(data.insuranceNotified);
   const [policeFiled, setPoliceFiled] = useState(data.policeReportFiled);
-  const [tpInsurerName, setTpInsurerName] = useState(
-    (data.thirdPartyInsuranceDetails as Record<string, string>)?.insurerName || '',
-  );
-  const [tpInsurerPhone, setTpInsurerPhone] = useState(
-    (data.thirdPartyInsuranceDetails as Record<string, string>)?.insurerPhone || '',
-  );
-  const [tpInsurerPolicy, setTpInsurerPolicy] = useState(
-    (data.thirdPartyInsuranceDetails as Record<string, string>)?.policyNumber || '',
-  );
-  const [tpDetails, setTpDetails] = useState(
-    (data.thirdPartyInsuranceDetails as Record<string, string>)?.details || '',
-  );
+  const [tpInsurerName, setTpInsurerName] = useState(initialTpInsurerName);
+  const [tpInsurerPhone, setTpInsurerPhone] = useState(initialTpInsurerPhone);
+  const [tpInsurerPolicy, setTpInsurerPolicy] = useState(initialTpInsurerPolicy);
+  const [tpDetails, setTpDetails] = useState(initialTpDetails);
   const [saving, setSaving] = useState(false);
 
   const saveInsurance = useCallback(async () => {
     setSaving(true);
     try {
-      const hasThirdPartyInsuranceDetails = Boolean(
-        tpInsurerName.trim() ||
-          tpInsurerPhone.trim() ||
-          tpInsurerPolicy.trim() ||
-          tpDetails.trim(),
-      );
+      const normalizedThirdPartyFields = {
+        insurerName: tpInsurerName.trim(),
+        insurerPhone: tpInsurerPhone.trim(),
+        policyNumber: tpInsurerPolicy.trim(),
+        details: tpDetails.trim(),
+      };
+      const thirdPartyFieldsChanged =
+        normalizedThirdPartyFields.insurerName !== initialTpInsurerName.trim() ||
+        normalizedThirdPartyFields.insurerPhone !== initialTpInsurerPhone.trim() ||
+        normalizedThirdPartyFields.policyNumber !== initialTpInsurerPolicy.trim() ||
+        normalizedThirdPartyFields.details !== initialTpDetails.trim();
+
       const body: Record<string, unknown> = {
         insuranceClaimReference: claimRef.trim() || null,
         insuranceNotified: notified,
         policeReportFiled: policeFiled,
-        thirdPartyInsuranceDetails: hasThirdPartyInsuranceDetails
-          ? {
-              insurerName: tpInsurerName.trim(),
-              insurerPhone: tpInsurerPhone.trim(),
-              policyNumber: tpInsurerPolicy.trim(),
-              details: tpDetails.trim(),
-            }
-          : null,
       };
+
+      if (thirdPartyFieldsChanged) {
+        const preservedHiddenDetails = Object.fromEntries(
+          Object.entries(storedThirdPartyDetails).filter(([key]) => !THIRD_PARTY_FORM_KEYS.has(key)),
+        );
+        const nextThirdPartyDetails: Record<string, unknown> = { ...preservedHiddenDetails };
+
+        for (const [key, value] of Object.entries(normalizedThirdPartyFields)) {
+          if (value) nextThirdPartyDetails[key] = value;
+        }
+
+        body.thirdPartyInsuranceDetails = Object.keys(nextThirdPartyDetails).length
+          ? nextThirdPartyDetails
+          : null;
+      }
 
       const res = await fetch(`/api/incidents/${incidentId}/insurance`, {
         method: 'PATCH',
@@ -88,7 +120,23 @@ export function InsuranceTrackingPanel({ incidentId, data, onUpdate }: Props) {
     } finally {
       setSaving(false);
     }
-  }, [incidentId, claimRef, notified, policeFiled, tpInsurerName, tpInsurerPhone, tpInsurerPolicy, tpDetails, toast, onUpdate]);
+  }, [
+    incidentId,
+    claimRef,
+    notified,
+    policeFiled,
+    tpInsurerName,
+    tpInsurerPhone,
+    tpInsurerPolicy,
+    tpDetails,
+    initialTpInsurerName,
+    initialTpInsurerPhone,
+    initialTpInsurerPolicy,
+    initialTpDetails,
+    storedThirdPartyDetails,
+    toast,
+    onUpdate,
+  ]);
 
   return (
     <Card>
