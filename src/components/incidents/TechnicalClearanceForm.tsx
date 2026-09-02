@@ -31,9 +31,15 @@ interface Props {
   incidentId: string;
   data: TechnicalClearanceData;
   onUpdate: () => void;
+  canTechnicalClearance: boolean;
 }
 
-export function TechnicalClearanceForm({ incidentId, data, onUpdate }: Props) {
+export function TechnicalClearanceForm({
+  incidentId,
+  data,
+  onUpdate,
+  canTechnicalClearance,
+}: Props) {
   const { toast } = useToast();
   const [saving, setSaving] = useState(false);
   const [pendingDecision, setPendingDecision] = useState<'cleared' | 'not_cleared' | null>(null);
@@ -44,6 +50,7 @@ export function TechnicalClearanceForm({ incidentId, data, onUpdate }: Props) {
 
   const issueClearance = useCallback(
     async (decision: 'cleared' | 'not_cleared') => {
+      if (!canTechnicalClearance) return;
       setSaving(true);
       try {
         const res = await fetch(`/api/incidents/${incidentId}/technical-clearance`, {
@@ -68,10 +75,11 @@ export function TechnicalClearanceForm({ incidentId, data, onUpdate }: Props) {
         setSaving(false);
       }
     },
-    [incidentId, toast, onUpdate],
+    [canTechnicalClearance, incidentId, toast, onUpdate],
   );
 
   const requestClearance = (decision: 'cleared' | 'not_cleared') => {
+    if (!canTechnicalClearance) return;
     setPendingDecision(decision);
   };
 
@@ -118,7 +126,7 @@ export function TechnicalClearanceForm({ incidentId, data, onUpdate }: Props) {
                   <p>Vehicle is not cleared and must remain out of service.</p>
                   <p className="text-xs opacity-80">
                     After the blocking defect is resolved and the vehicle is re-inspected, technical
-                    clearance can be issued here.
+                    clearance can be issued by an authorised clearance officer.
                   </p>
                 </div>
                 {data.technicalClearanceAt ? (
@@ -141,59 +149,67 @@ export function TechnicalClearanceForm({ incidentId, data, onUpdate }: Props) {
               </p>
             ) : null}
 
-            <div className="flex flex-wrap gap-3">
-              <Button
-                variant="primary"
-                size="compact"
-                onClick={() => requestClearance('cleared')}
-                disabled={saving}
-              >
-                {saving ? (
-                  <Loader2 className="mr-1 h-4 w-4 animate-spin" />
-                ) : (
-                  <CheckCircle2 className="mr-1 h-4 w-4" />
-                )}
-                {isNotCleared ? 'Issue clearance after re-inspection' : 'Issue clearance (vehicle safe)'}
-              </Button>
-              {!isNotCleared ? (
+            {canTechnicalClearance ? (
+              <div className="flex flex-wrap gap-3">
                 <Button
-                  variant="destructive"
+                  variant="primary"
                   size="compact"
-                  onClick={() => requestClearance('not_cleared')}
+                  onClick={() => requestClearance('cleared')}
                   disabled={saving}
                 >
                   {saving ? (
                     <Loader2 className="mr-1 h-4 w-4 animate-spin" />
                   ) : (
-                    <XCircle className="mr-1 h-4 w-4" />
+                    <CheckCircle2 className="mr-1 h-4 w-4" />
                   )}
-                  Not cleared
+                  {isNotCleared ? 'Issue clearance after re-inspection' : 'Issue clearance (vehicle safe)'}
                 </Button>
-              ) : null}
-            </div>
+                {!isNotCleared ? (
+                  <Button
+                    variant="destructive"
+                    size="compact"
+                    onClick={() => requestClearance('not_cleared')}
+                    disabled={saving}
+                  >
+                    {saving ? (
+                      <Loader2 className="mr-1 h-4 w-4 animate-spin" />
+                    ) : (
+                      <XCircle className="mr-1 h-4 w-4" />
+                    )}
+                    Not cleared
+                  </Button>
+                ) : null}
+              </div>
+            ) : (
+              <p className="text-ink-500 text-xs">
+                Technical clearance actions are available only to authorised clearance officers.
+              </p>
+            )}
           </div>
         )}
       </CardContent>
 
-      <ConfirmDialog
-        open={pendingDecision !== null}
-        onOpenChange={(open) => !open && setPendingDecision(null)}
-        title={
-          pendingDecision === 'cleared'
-            ? 'Issue technical clearance?'
-            : 'Mark vehicle as not cleared?'
-        }
-        description={
-          pendingDecision === 'cleared'
-            ? 'This confirms the vehicle has been re-inspected, all blocking defects are resolved, and it is safe for the clearance stage.'
-            : 'The vehicle must remain out of service. Clearance can be issued later after the blocking defect is resolved and the vehicle is re-inspected.'
-        }
-        confirmLabel={pendingDecision === 'cleared' ? 'Issue clearance' : 'Not cleared'}
-        variant={pendingDecision === 'not_cleared' ? 'destructive' : 'default'}
-        onConfirm={() => {
-          if (pendingDecision) return issueClearance(pendingDecision);
-        }}
-      />
+      {canTechnicalClearance ? (
+        <ConfirmDialog
+          open={pendingDecision !== null}
+          onOpenChange={(open) => !open && setPendingDecision(null)}
+          title={
+            pendingDecision === 'cleared'
+              ? 'Issue technical clearance?'
+              : 'Mark vehicle as not cleared?'
+          }
+          description={
+            pendingDecision === 'cleared'
+              ? 'This confirms the vehicle has been re-inspected, all blocking defects are resolved, and it is safe for the clearance stage.'
+              : 'The vehicle must remain out of service. Clearance can be issued later after the blocking defect is resolved and the vehicle is re-inspected.'
+          }
+          confirmLabel={pendingDecision === 'cleared' ? 'Issue clearance' : 'Not cleared'}
+          variant={pendingDecision === 'not_cleared' ? 'destructive' : 'default'}
+          onConfirm={() => {
+            if (pendingDecision) return issueClearance(pendingDecision);
+          }}
+        />
+      ) : null}
     </Card>
   );
 }
