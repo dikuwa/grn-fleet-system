@@ -15,6 +15,14 @@ describe('incident investigation read capability contract', () => {
     expect(routeSource).toContain('if (readPermission instanceof NextResponse) return readPermission;');
   });
 
+  it('does not regress GET back to an investigate-only permission gate', () => {
+    const getSection = routeSource.split('export async function PATCH', 1)[0];
+    expect(getSection).toContain('requireAnyPermission(session, [');
+    expect(getSection).not.toContain(
+      'requirePermission(\n      session,\n      Permissions.INCIDENT_INVESTIGATE,\n    )',
+    );
+  });
+
   it('keeps the close capability independently resolved and PATCH mutations permission-specific', () => {
     expect(routeSource).toContain('const closePermission = await requirePermission(');
     expect(routeSource).toContain('const canCloseInvestigation = !(closePermission instanceof NextResponse);');
