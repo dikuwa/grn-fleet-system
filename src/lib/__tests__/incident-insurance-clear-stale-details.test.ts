@@ -8,20 +8,31 @@ const source = readFileSync(
 );
 
 describe('incident insurance clearing contract', () => {
-  it('clears represented third-party fields only when the officer changes them', () => {
-    expect(source).toContain('const thirdPartyFieldsChanged =');
-    expect(source).toContain('if (thirdPartyFieldsChanged)');
-    expect(source).toContain('body.thirdPartyInsuranceDetails = Object.keys(nextThirdPartyDetails).length');
-    expect(source).toContain(': null;');
+  it('updates only represented third-party field groups the officer changed', () => {
+    expect(source).toContain('const changedFields = {');
+    expect(source).toContain('const thirdPartyFieldsChanged = Object.values(changedFields).some(Boolean)');
+    expect(source).toContain('const nextThirdPartyDetails: Record<string, unknown> = { ...storedThirdPartyDetails }');
+    expect(source).toContain('if (changedFields.insurerName)');
+    expect(source).toContain('if (changedFields.insurerPhone)');
+    expect(source).toContain('if (changedFields.policyNumber)');
+    expect(source).toContain('if (changedFields.details)');
   });
 
-  it('preserves hidden custom metadata while normalizing known legacy aliases', () => {
-    expect(source).toContain("'insurer'");
-    expect(source).toContain("'phone'");
-    expect(source).toContain("'policy'");
-    expect(source).toContain("'description'");
-    expect(source).toContain('preservedHiddenDetails');
-    expect(source).toContain('!THIRD_PARTY_FORM_KEYS.has(key)');
+  it('preserves untouched legacy/custom values and supports scalar display normalization', () => {
+    expect(source).toContain("insurerName: ['insurerName', 'insurer']");
+    expect(source).toContain("insurerPhone: ['insurerPhone', 'phone']");
+    expect(source).toContain("policyNumber: ['policyNumber', 'policy']");
+    expect(source).toContain("details: ['details', 'description']");
+    expect(source).toContain("typeof value === 'number'");
+    expect(source).toContain("typeof value === 'boolean'");
+    expect(source).toContain('return String(value)');
+  });
+
+  it('removes only aliases for a field that is explicitly replaced or cleared', () => {
+    expect(source).toContain('for (const alias of aliases) delete target[alias]');
+    expect(source).toContain('if (value) target[canonicalKey] = value');
+    expect(source).toContain('body.thirdPartyInsuranceDetails = Object.keys(nextThirdPartyDetails).length');
+    expect(source).toContain(': null;');
   });
 
   it('normalizes saved insurance strings before persistence', () => {
