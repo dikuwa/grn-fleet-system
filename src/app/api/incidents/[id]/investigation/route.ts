@@ -15,6 +15,8 @@ import {
   getTenantIncident,
 } from '@/lib/incidents/mva';
 
+const witnessTextFields = ['name', 'phone', 'statement'] as const;
+
 export async function GET(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -94,13 +96,19 @@ export async function PATCH(
     if (
       body.addedWitnesses !== undefined &&
       (!Array.isArray(body.addedWitnesses) ||
-        body.addedWitnesses.some(
-          (witness: unknown) =>
-            !witness || typeof witness !== 'object' || Array.isArray(witness),
-        ))
+        body.addedWitnesses.some((witness: unknown) => {
+          if (!witness || typeof witness !== 'object' || Array.isArray(witness)) return true;
+          const witnessRecord = witness as Record<string, unknown>;
+          return witnessTextFields.some(
+            (field) =>
+              witnessRecord[field] !== undefined &&
+              witnessRecord[field] !== null &&
+              typeof witnessRecord[field] !== 'string',
+          );
+        }))
     ) {
       return NextResponse.json(
-        { error: 'Added witnesses must be a list of witness objects' },
+        { error: 'Added witnesses and their name, phone and statement fields must contain text or null values' },
         { status: 422 },
       );
     }
