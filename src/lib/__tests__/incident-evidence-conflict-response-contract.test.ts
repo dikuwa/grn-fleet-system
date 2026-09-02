@@ -10,6 +10,10 @@ const operationsRouteSource = readFileSync(
   resolve(process.cwd(), 'src/app/api/trips/[id]/operations/route.ts'),
   'utf8',
 );
+const createIncidentSource = readFileSync(
+  resolve(process.cwd(), 'src/lib/incidents/create-incident.ts'),
+  'utf8',
+);
 const migrationSource = readFileSync(
   resolve(process.cwd(), 'src/db/migrations/0110_active_trip_evidence_claim_guard.sql'),
   'utf8',
@@ -28,7 +32,18 @@ describe('incident evidence conflict response contract', () => {
     expect(operationsRouteSource).toContain('{ status: 409 }');
   });
 
-  it('preserves duplicate offline sync handling for wrapped database errors', () => {
+  it('recovers same-sync incident races when Neon wraps the unique violation', () => {
+    expect(createIncidentSource).toContain('function getDatabaseErrorCode(error: unknown)');
+    expect(createIncidentSource).toContain("typeof causeRecord.code === 'string'");
+    expect(createIncidentSource).toContain("syncId && getDatabaseErrorCode(error) === '23505'");
+    expect(createIncidentSource).toContain('eq(tripIncidents.tenantId, input.tenantId)');
+    expect(createIncidentSource).toContain('eq(tripIncidents.tripId, input.tripId)');
+    expect(createIncidentSource).toContain('eq(tripIncidents.clientSyncId, syncId)');
+    expect(createIncidentSource).toContain('eq(tripIncidents.reportedByUserId, input.reportedByUserId)');
+    expect(createIncidentSource).toContain('idempotent: true');
+  });
+
+  it('preserves genuine duplicate offline sync collision handling after scoped recovery fails', () => {
     expect(incidentRouteSource).toContain("code === '23505'");
     expect(incidentRouteSource).toContain('This offline incident sync ID is already used by another incident');
   });
