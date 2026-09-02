@@ -9,18 +9,11 @@ const routeSource = readFileSync(
 
 describe('incident investigation read capability contract', () => {
   it('allows either investigation editors or authorised closers to read evidence', () => {
-    expect(routeSource).toContain('requireAnyPermission(session, [');
-    expect(routeSource).toContain('Permissions.INCIDENT_INVESTIGATE,');
-    expect(routeSource).toContain('Permissions.INCIDENT_CLOSE_INVESTIGATION,');
-    expect(routeSource).toContain('if (readPermission instanceof NextResponse) return readPermission;');
-  });
-
-  it('does not regress GET back to an investigate-only permission gate', () => {
     const getSection = routeSource.split('export async function PATCH', 1)[0];
-    expect(getSection).toContain('requireAnyPermission(session, [');
-    expect(getSection).not.toContain(
-      'requirePermission(\n      session,\n      Permissions.INCIDENT_INVESTIGATE,\n    )',
+    expect(getSection).toMatch(
+      /const readPermission = await requireAnyPermission\(session, \[\s*Permissions\.INCIDENT_INVESTIGATE,\s*Permissions\.INCIDENT_CLOSE_INVESTIGATION,\s*\]\);/,
     );
+    expect(getSection).toContain('if (readPermission instanceof NextResponse) return readPermission;');
   });
 
   it('keeps the close capability independently resolved and PATCH mutations permission-specific', () => {
