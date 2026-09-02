@@ -468,7 +468,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       severity = 'critical';
     }
 
-    if (body.injuries !== null && body.injuries !== undefined && typeof body.injuries !== 'boolean') {
+    if (body.injuries !== undefined && typeof body.injuries !== 'boolean') {
       return NextResponse.json({ error: 'Injuries must be true or false' }, { status: 422 });
     }
     const injuries = body.injuries === true;
