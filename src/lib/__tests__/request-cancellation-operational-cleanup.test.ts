@@ -18,6 +18,14 @@ describe('request cancellation operational cleanup', () => {
     expect(routeSource).toContain("driver_type = 'nominated'");
   });
 
+  it('retires an external nomination even when no assignment record was created yet', () => {
+    const resetStart = routeSource.indexOf('external_request_driver_reset AS (');
+    const resetEnd = routeSource.indexOf('trip_cancel AS (');
+    const resetSql = routeSource.slice(resetStart, resetEnd);
+    expect(resetSql).toContain('EXISTS (SELECT 1 FROM request_claim)');
+    expect(resetSql).not.toContain('EXISTS (SELECT 1 FROM external_assignment_cancel)');
+  });
+
   it('retires governed Trip Authority documents tied to cancelled allocations', () => {
     expect(routeSource).toContain('generated_authority_cancel AS (');
     expect(routeSource).toContain("gd.entity_type = 'vehicle_allocation'");
