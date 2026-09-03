@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { importBatches, importRows } from '@/db/schema/notifications';
-import { vehicles } from '@/db/schema/fleet';
+import { vehicleOdometerEvents, vehicles } from '@/db/schema/fleet';
 import { eq, and, sql, inArray, count } from 'drizzle-orm';
 import { requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
@@ -34,6 +34,7 @@ interface VehicleImportRow {
 
 const MAX_IMPORT_ROWS = 1000;
 const IMPORTABLE_STATUSES = new Set(['available', 'provisional', 'maintenance', 'out_of_service']);
+const EXISTING_VEHICLE_IMPORT_CONFLICT = 'existing_vehicle_import_conflict';
 
 function optionalNonNegativeInteger(value: string | undefined, label: string) {
   if (!value?.trim()) return null;
@@ -167,6 +168,7 @@ export async function POST(request: NextRequest) {
             id: vehicles.id,
             status: vehicles.status,
             currentOdometer: vehicles.currentOdometer,
+            updatedAt: vehicles.updatedAt,
           })
           .from(vehicles)
           .where(
@@ -178,101 +180,129 @@ export async function POST(request: NextRequest) {
           )
           .limit(1);
 
+        const rowNumber = validCount + errorCount + 1;
+
         if (existing) {
-          if (
-            importedStatus &&
-            importedStatus !== existing.status &&
-            ['allocated', 'issued'].includes(existing.status)
-          ) {
+          if (importedStatus && importedStatus !== existing.status) {
             throw new Error(
-              `Vehicle is currently ${existing.status}; its status cannot be overridden by an import while the operational workflow is active.`,
+              'Existing vehicle status cannot be changed by bulk import. Use the dedicated allocation, maintenance, return-to-service, or decommission workflow.',
             );
           }
 
-          await db
-            .update(vehicles)
-            .set({
-              vehicleRegisterNumber: row.vehicle_register_number?.trim() || null,
-              vin: row.vin?.trim() || null,
-              engineNumber: row.engine_number?.trim() || null,
-              make,
-              model,
-              seriesName: row.series_name?.trim() || null,
-              manufactureYear,
-              colour: row.colour?.trim() || null,
-              fuelType: row.fuel_type?.trim() || 'petrol',
-              transmission: row.transmission?.trim() || 'manual',
-              vehicleCategory: row.vehicle_category?.trim() || null,
-              vehicleDescription: row.vehicle_description?.trim() || null,
-              tareKg,
-              grossVehicleMassKg,
-              seatedCapacity,
-              standingCapacity,
-              status: importedStatus || existing.status,
-              currentOdometer:
-                importedOdometer === null
-                  ? existing.currentOdometer
-                  : Math.max(existing.currentOdometer, importedOdometer),
-              notes: row.notes?.trim() || null,
-              updatedBy: userId,
-              updatedAt: sql`now()`,
-            })
-            .where(and(eq(vehicles.id, existing.id), eq(vehicles.tenantId, tenantId)));
+          const nextOdometer =
+            importedOdometer === null
+              ? existing.currentOdometer
+              : Math.max(existing.currentOdometer, importedOdometer);
 
-          await db.insert(importRows).values({
-            batchId: batch.id,
-            rowNumber: validCount + errorCount + 1,
-            rawData: row as unknown as Record<string, unknown>,
-            isCommitted: true,
-            commitEntityId: existing.id,
+          await db.transaction(async (tx) => {
+            const [updated] = await tx
+              .update(vehicles)
+              .set({
+                vehicleRegisterNumber: row.vehicle_register_number?.trim() || null,
+                vin: row.vin?.trim() || null,
+                engineNumber: row.engine_number?.trim() || null,
+                make,
+                model,
+                seriesName: row.series_name?.trim() || null,
+                manufactureYear,
+                colour: row.colour?.trim() || null,
+                fuelType: row.fuel_type?.trim() || 'petrol',
+                transmission: row.transmission?.trim() || 'manual',
+                vehicleCategory: row.vehicle_category?.trim() || null,
+                vehicleDescription: row.vehicle_description?.trim() || null,
+                tareKg,
+                grossVehicleMassKg,
+                seatedCapacity,
+                standingCapacity,
+                status: existing.status,
+                currentOdometer: nextOdometer,
+                notes: row.notes?.trim() || null,
+                updatedBy: userId,
+                updatedAt: sql`now()`,
+              })
+              .where(
+                and(
+                  eq(vehicles.id, existing.id),
+                  eq(vehicles.tenantId, tenantId),
+                  eq(vehicles.status, existing.status),
+                  sql`date_trunc('milliseconds', ${vehicles.updatedAt}) = ${existing.updatedAt.toISOString()}::timestamptz`,
+                ),
+              )
+              .returning({ id: vehicles.id });
+
+            if (!updated) throw new Error(EXISTING_VEHICLE_IMPORT_CONFLICT);
+
+            if (nextOdometer > existing.currentOdometer) {
+              await tx.insert(vehicleOdometerEvents).values({
+                vehicleId: existing.id,
+                odometerValue: nextOdometer,
+                source: 'manual_correction',
+                recordedByUserId: userId,
+                notes: `Fleet import correction from ${existing.currentOdometer} km to ${nextOdometer} km`,
+              });
+            }
+
+            await tx.insert(importRows).values({
+              batchId: batch.id,
+              rowNumber,
+              rawData: row as unknown as Record<string, unknown>,
+              isCommitted: true,
+              commitEntityId: existing.id,
+            });
           });
         } else {
-          const [vehicle] = await db
-            .insert(vehicles)
-            .values({
-              tenantId,
-              licenceNumber,
-              vehicleRegisterNumber: row.vehicle_register_number?.trim() || null,
-              vin: row.vin?.trim() || null,
-              engineNumber: row.engine_number?.trim() || null,
-              make,
-              model,
-              seriesName: row.series_name?.trim() || null,
-              manufactureYear,
-              colour: row.colour?.trim() || null,
-              fuelType: row.fuel_type?.trim() || 'petrol',
-              transmission: row.transmission?.trim() || 'manual',
-              vehicleCategory: row.vehicle_category?.trim() || null,
-              vehicleDescription: row.vehicle_description?.trim() || null,
-              tareKg,
-              grossVehicleMassKg,
-              seatedCapacity,
-              standingCapacity,
-              status: importedStatus || 'available',
-              currentOdometer: importedOdometer ?? 0,
-              notes: row.notes?.trim() || null,
-              createdBy: userId,
-              updatedBy: userId,
-            })
-            .returning();
+          await db.transaction(async (tx) => {
+            const [vehicle] = await tx
+              .insert(vehicles)
+              .values({
+                tenantId,
+                licenceNumber,
+                vehicleRegisterNumber: row.vehicle_register_number?.trim() || null,
+                vin: row.vin?.trim() || null,
+                engineNumber: row.engine_number?.trim() || null,
+                make,
+                model,
+                seriesName: row.series_name?.trim() || null,
+                manufactureYear,
+                colour: row.colour?.trim() || null,
+                fuelType: row.fuel_type?.trim() || 'petrol',
+                transmission: row.transmission?.trim() || 'manual',
+                vehicleCategory: row.vehicle_category?.trim() || null,
+                vehicleDescription: row.vehicle_description?.trim() || null,
+                tareKg,
+                grossVehicleMassKg,
+                seatedCapacity,
+                standingCapacity,
+                status: importedStatus || 'available',
+                currentOdometer: importedOdometer ?? 0,
+                notes: row.notes?.trim() || null,
+                createdBy: userId,
+                updatedBy: userId,
+              })
+              .returning();
 
-          await db.insert(importRows).values({
-            batchId: batch.id,
-            rowNumber: validCount + errorCount + 1,
-            rawData: row as unknown as Record<string, unknown>,
-            isCommitted: true,
-            commitEntityId: vehicle.id,
+            await tx.insert(importRows).values({
+              batchId: batch.id,
+              rowNumber,
+              rawData: row as unknown as Record<string, unknown>,
+              isCommitted: true,
+              commitEntityId: vehicle.id,
+            });
           });
         }
 
         validCount++;
       } catch (rowError) {
         errorCount++;
+        const message =
+          rowError instanceof Error && rowError.message.includes(EXISTING_VEHICLE_IMPORT_CONFLICT)
+            ? 'Vehicle changed while this import row was being applied. Review the latest fleet record and retry this row.'
+            : String(rowError);
         await db.insert(importRows).values({
           batchId: batch.id,
           rowNumber: validCount + errorCount,
           rawData: row as unknown as Record<string, unknown>,
-          validationErrors: [String(rowError)],
+          validationErrors: [message],
           isCommitted: false,
         });
       }
