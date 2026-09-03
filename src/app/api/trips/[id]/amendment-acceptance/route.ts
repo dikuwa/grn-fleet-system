@@ -18,6 +18,7 @@ import {
   requireRequestAuth,
 } from '@/lib/auth-helpers';
 import { recordAuditEvent } from '@/lib/audit-event';
+import { getDatabaseErrorDetails } from '@/lib/database-error-details';
 import { resolveDashboardAccess } from '@/lib/dashboard-access';
 import { onTripIssued } from '@/lib/document-generator';
 import { namibiaLicenceClassCovers } from '@/lib/namibia-licence';
@@ -611,7 +612,8 @@ export async function POST(request: NextRequest, context: RouteContext) {
     });
   } catch (error) {
     console.error('[amendment-acceptance] POST failed:', error);
-    if (String(error).includes('atomic_amendment_acknowledgement_failed')) {
+    const { message } = getDatabaseErrorDetails(error);
+    if (message.includes('atomic_amendment_acknowledgement_failed')) {
       return NextResponse.json(
         { error: 'The revised authority changed or the driver became ineligible while acknowledgement was being recorded. Refresh and review the latest authority.' },
         { status: 409 },
