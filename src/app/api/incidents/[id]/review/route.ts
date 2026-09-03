@@ -104,6 +104,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
               updated_at = ${now}
           WHERE ti.id = ${id}::uuid
             AND ti.tenant_id = ${auth.session.tenantId}::uuid
+            AND ti.updated_at = ${context.incident.updatedAt}::timestamptz
             AND ti.investigation_status <> 'closed'
             AND ti.status <> 'resolved'
           RETURNING id
