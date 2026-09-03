@@ -30,7 +30,9 @@ describe('unified incident insurance validation parity', () => {
 
   it('trims explicit claim references and preserves explicit null', () => {
     expect(reviewRoute).toContain("body.insuranceClaimReference.trim() || null");
-    expect(reviewRoute).toContain('after: { insuranceNotified, insuranceClaimReference }');
+    expect(reviewRoute).toContain("'insuranceNotified', ${insuranceNotified}");
+    expect(reviewRoute).toContain("'insuranceClaimReference', ${insuranceClaimReference}");
+    expect(reviewRoute).not.toContain('after: { insuranceNotified, insuranceClaimReference }');
     expect(reviewRoute).not.toContain('body.insuranceClaimReference ? String(body.insuranceClaimReference).trim() : null');
     expect(reviewRoute).not.toContain('const insuranceNotified = body.insuranceNotified === true;');
   });
