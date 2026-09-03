@@ -9,6 +9,7 @@ import { externalRequestDrivers, transportRequests } from '@/db/schema/requests'
 import { trips, vehicleAllocations } from '@/db/schema/trips';
 import { requireDashboardAction, requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { recordAuditEvent } from '@/lib/audit-event';
+import { getDatabaseErrorDetails } from '@/lib/database-error-details';
 import { runAtomicMutations } from '@/lib/db-atomic';
 import { onTripIssued } from '@/lib/document-generator';
 import { namibiaLicenceClassCovers } from '@/lib/namibia-licence';
@@ -25,28 +26,6 @@ const ALLOCATABLE_STATUSES = [
 ];
 const LIVE_ALLOCATION_STATES = ['provisional', 'confirmed'] as const;
 const LIVE_EXTERNAL_ASSIGNMENT_STATES = ['pending_acceptance', 'accepted'] as const;
-
-function databaseErrorCode(error: unknown): string | null {
-  if (!error || typeof error !== 'object') return null;
-  const record = error as { code?: unknown; cause?: unknown };
-  if (typeof record.code === 'string') return record.code;
-  if (record.cause && typeof record.cause === 'object') {
-    const cause = record.cause as { code?: unknown };
-    if (typeof cause.code === 'string') return cause.code;
-  }
-  return null;
-}
-
-function databaseErrorText(error: unknown): string {
-  if (!error || typeof error !== 'object') return String(error || '');
-  const record = error as { message?: unknown; cause?: unknown };
-  const parts = [typeof record.message === 'string' ? record.message : ''];
-  if (record.cause && typeof record.cause === 'object') {
-    const cause = record.cause as { message?: unknown };
-    if (typeof cause.message === 'string') parts.push(cause.message);
-  }
-  return parts.filter(Boolean).join(' ');
-}
 
 export async function POST(request: NextRequest) {
   try {
@@ -483,8 +462,7 @@ export async function POST(request: NextRequest) {
     );
   } catch (error) {
     console.error('[allocations/external] POST failed:', error);
-    const code = databaseErrorCode(error);
-    const message = databaseErrorText(error);
+    const { code, message } = getDatabaseErrorDetails(error);
     if (
       code === '23P01' ||
       message.includes('allocation_vehicle_overlap') ||
