@@ -138,6 +138,7 @@ export async function updateInvestigation(
     const claimConditions = [
       eq(tripIncidents.id, incidentId),
       eq(tripIncidents.tenantId, tenantId),
+      eq(tripIncidents.updatedAt, incident.updatedAt),
       sql`${tripIncidents.investigationStatus} <> 'closed'`,
       sql`${tripIncidents.status} <> 'resolved'`,
     ];
