@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import sharp from 'sharp';
+import { createWorker } from 'tesseract.js';
 import { and, desc, eq, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { externalDriverLicences, externalParties } from '@/db/schema/external-parties';
@@ -6,6 +8,7 @@ import { requireAnyPermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { buildKey, deleteFile, getSignedFileUrl, isStorageConfigured, uploadFile } from '@/lib/storage';
 import { recordAuditEvent } from '@/lib/audit-event';
+import { licenceOcrConfidence, parseNamibianLicenceOcr } from '@/lib/driver-licence-ocr';
 import { createScopedNotifications, resolveActiveRoleRecipients } from '@/lib/notification-service';
 import { SystemRoles, WorkspaceIds } from '@/lib/workspaces';
 
@@ -14,6 +17,61 @@ const MAX_BYTES = 12 * 1024 * 1024;
 
 function validDate(value: string) {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(new Date(`${value}T00:00:00Z`).getTime());
+}
+
+function normaliseComparable(value: string | null | undefined) {
+  return String(value || '')
+    .toUpperCase()
+    .replace(/[^A-Z0-9]/g, '');
+}
+
+async function extractLicenceEvidence(files: File[]) {
+  let rawText = '';
+  let meanConfidence = 0;
+  const qualityWarnings: string[] = [];
+  const images = files.filter((file) => file.type.startsWith('image/'));
+
+  if (images.length) {
+    const worker = await createWorker('eng');
+    try {
+      for (const image of images) {
+        const original = Buffer.from(await image.arrayBuffer());
+        const stats = await sharp(original).stats();
+        const brightness =
+          stats.channels.slice(0, 3).reduce((sum, channel) => sum + channel.mean, 0) / 3;
+        if (brightness < 55) qualityWarnings.push('dark_image');
+        if (brightness > 225) qualityWarnings.push('possible_glare');
+
+        const prepared = await sharp(original)
+          .rotate()
+          .resize({ width: 1800, withoutEnlargement: true })
+          .grayscale()
+          .normalize()
+          .sharpen()
+          .png()
+          .toBuffer();
+        const result = await worker.recognize(prepared);
+        rawText += `\n${result.data.text}`;
+        meanConfidence += result.data.confidence;
+      }
+      meanConfidence /= images.length;
+    } catch (error) {
+      console.warn('[external-party-licences] OCR extraction failed:', error);
+      qualityWarnings.push('ocr_failed_manual_review_required');
+    } finally {
+      await worker.terminate();
+    }
+  } else {
+    qualityWarnings.push('ocr_unavailable_for_pdf_evidence');
+  }
+
+  const extracted = parseNamibianLicenceOcr(rawText);
+  return {
+    rawText,
+    extracted,
+    confidence: licenceOcrConfidence(extracted, meanConfidence),
+    qualityWarnings,
+  };
 }
 
 async function access(request: NextRequest, partyId: string) {
@@ -118,6 +176,32 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       }
     }
 
+    // External drivers remain human-verified. OCR is captured only as review
+    // evidence so a recognition error can never silently overwrite the values
+    // submitted with the licence or make the driver assignment-eligible.
+    const ocr = await extractLicenceEvidence([front, back]);
+    const ocrWarnings = [...ocr.qualityWarnings];
+    if (
+      ocr.extracted.licenceNumber &&
+      normaliseComparable(ocr.extracted.licenceNumber) !== normaliseComparable(licenceNumber)
+    ) {
+      ocrWarnings.push('licence_number_mismatch');
+    }
+    if (
+      ocr.extracted.validUntil &&
+      normaliseComparable(ocr.extracted.validUntil) !== normaliseComparable(expiryDate)
+    ) {
+      ocrWarnings.push('expiry_date_mismatch');
+    }
+    if (
+      ocr.extracted.licenceCodes.length &&
+      !ocr.extracted.licenceCodes.some(
+        (code) => normaliseComparable(code) === normaliseComparable(licenceClass),
+      )
+    ) {
+      ocrWarnings.push('licence_class_mismatch');
+    }
+
     const db = getDb();
     const [versionRow] = await db
       .select({ nextVersion: sql<number>`COALESCE(MAX(${externalDriverLicences.version}), 0) + 1` })
@@ -137,6 +221,20 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     await uploadFile(Buffer.from(await back.arrayBuffer()), backKey, { contentType: back.type, tenantPrefix: prefix });
     uploadedKeys.push(backKey);
 
+    const extractedData = {
+      provider: ocr.rawText ? 'tesseract.js' : null,
+      confidence: ocr.confidence,
+      rawText: ocr.rawText,
+      extracted: ocr.extracted,
+      qualityWarnings: Array.from(new Set(ocrWarnings)),
+      submitted: {
+        licenceNumber,
+        licenceClass,
+        issueDate: issueDate || null,
+        expiryDate,
+      },
+    };
+
     const [created] = await db
       .insert(externalDriverLicences)
       .values({
@@ -150,7 +248,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         frontImageKey: frontKey,
         backImageKey: backKey,
         verificationStatus: 'awaiting_review',
-        extractedData: {},
+        extractedData,
       })
       .returning();
 
@@ -167,6 +265,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         licenceClass: created.licenceClass,
         expiryDate: created.expiryDate,
         verificationStatus: created.verificationStatus,
+        ocrProvider: extractedData.provider,
+        ocrConfidence: extractedData.confidence,
+        ocrQualityWarnings: extractedData.qualityWarnings,
       },
       summary: `External driver licence evidence uploaded for ${auth.party.firstName} ${auth.party.lastName}`,
     }).catch(() => undefined);
@@ -188,7 +289,16 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       }).catch(() => undefined);
     }
 
-    return NextResponse.json({ success: true, data: created }, { status: 201 });
+    return NextResponse.json(
+      {
+        success: true,
+        data: created,
+        extracted: ocr.extracted,
+        confidence: ocr.confidence,
+        qualityWarnings: extractedData.qualityWarnings,
+      },
+      { status: 201 },
+    );
   } catch (error) {
     await Promise.all(uploadedKeys.map((key) => deleteFile(key).catch(() => undefined)));
     console.error('[external-party-licences] POST failed:', error);
