@@ -19,6 +19,7 @@ import {
   requirePermission,
   requireRequestAuth,
 } from '@/lib/auth-helpers';
+import { getDatabaseErrorDetails } from '@/lib/database-error-details';
 import { Permissions } from '@/lib/permissions';
 import { WorkspaceIds } from '@/lib/workspaces';
 import { buildKey, deleteFile, isStorageConfigured, uploadFile } from '@/lib/storage';
@@ -440,7 +441,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         console.warn('[licences] Failed to clean up one or more uncommitted licence uploads');
       }
     }
-    if ((error as { code?: string })?.code === '23505') {
+    const { code } = getDatabaseErrorDetails(error);
+    if (code === '23505') {
       return NextResponse.json(
         { error: 'A newer licence submission was created at the same time. Refresh and upload again.' },
         { status: 409 },
