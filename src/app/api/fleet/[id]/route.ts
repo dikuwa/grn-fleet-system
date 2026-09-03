@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { vehicleCategories, vehicleOdometerEvents, vehicles } from '@/db/schema/fleet';
+import {
+  vehicleCategories,
+  vehicleOdometerEvents,
+  vehicleStatusEvents,
+  vehicles,
+} from '@/db/schema/fleet';
 import {
   getSessionRoleNames,
   requireDashboardAction,
@@ -13,7 +18,7 @@ import { resolveDashboardAccess } from '@/lib/dashboard-access';
 import { vehicleScopeCondition } from '@/lib/record-scope';
 import { recordAuditEvent } from '@/lib/audit-event';
 
-const MANUAL_EDIT_STATUSES = new Set(['available', 'provisional', 'maintenance', 'out_of_service']);
+const MANUAL_EDIT_STATUSES = new Set(['available', 'provisional', 'maintenance']);
 const PROTECTED_REACTIVATION_STATUSES = new Set(['maintenance', 'out_of_service', 'written_off']);
 const VEHICLE_UPDATE_CONFLICT = 'vehicle_update_conflict';
 
@@ -316,6 +321,18 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
           source: 'manual_correction',
           recordedByUserId: session.user.id,
           notes: `Fleet profile correction from ${existing.currentOdometer} km to ${requestedOdometer} km`,
+        });
+      }
+
+      if (requestedStatus !== undefined && requestedStatus !== existing.status) {
+        await tx.insert(vehicleStatusEvents).values({
+          vehicleId: id,
+          previousStatus: existing.status,
+          newStatus: requestedStatus,
+          reason: 'Manual status change through fleet profile editor',
+          changedByUserId: session.user.id,
+          referenceEntityType: 'vehicle_profile',
+          referenceEntityId: id,
         });
       }
 
