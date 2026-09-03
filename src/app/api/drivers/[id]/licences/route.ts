@@ -61,6 +61,23 @@ function correctionEntries(input?: Record<string, string>) {
   return Object.entries(input || {}).filter(([field]) => allowed.has(field));
 }
 
+function licenceReviewRevisionGuard(executor: any, current: typeof driverLicences.$inferSelect) {
+  return executor.execute(sql`
+    SELECT CAST(CASE
+      WHEN EXISTS (
+        SELECT 1
+        FROM driver_licences
+        WHERE id = ${current.id}::uuid
+          AND verification_status = ${current.verificationStatus}
+          AND date_trunc('milliseconds', updated_at) = ${current.updatedAt.toISOString()}::timestamptz
+        FOR UPDATE
+      )
+      THEN '1'
+      ELSE 'driver_licence_review_conflict'
+    END AS integer) AS guard
+  `);
+}
+
 async function notifyTransportAdmins(
   tenantId: string,
   input: { title: string; body: string; entityType: string; entityId: string; actionUrl: string },
@@ -514,7 +531,11 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       action: `driver_licence.${body.action}`,
       entityType: 'driver_licence',
       entityId: current.id,
-      before: { verificationStatus: current.verificationStatus, isActive: current.isActive },
+      before: {
+        verificationStatus: current.verificationStatus,
+        isActive: current.isActive,
+        updatedAt: current.updatedAt.toISOString(),
+      },
       reason: body.reason?.trim() || null,
       sourceChannel: 'web',
     } satisfies typeof auditEvents.$inferInsert;
@@ -531,6 +552,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         return NextResponse.json({ error: 'Corrected licence dates are invalid.' }, { status: 422 });
       }
       await runAtomicMutations((executor) => [
+        licenceReviewRevisionGuard(executor, current),
         executor.insert(driverLicenceCorrections).values(
           corrections.map(([fieldName, correctedValue]) => ({
             licenceId: current.id,
@@ -581,7 +603,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       );
 
       await runAtomicMutations((executor) => {
-        const mutations = [];
+        const mutations = [licenceReviewRevisionGuard(executor, current)];
         if (confirmed.length) {
           mutations.push(
             executor.insert(driverLicenceCorrections).values(
@@ -664,6 +686,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       }
       const verificationStatus = body.action === 'reject' ? 'rejected' : 'needs_correction';
       await runAtomicMutations((executor) => [
+        licenceReviewRevisionGuard(executor, current),
         executor
           .update(driverLicences)
           .set({
@@ -727,6 +750,16 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
     return NextResponse.json({ success: true });
   } catch (error) {
+    const { message, code } = getDatabaseErrorDetails(error);
+    if (
+      message.includes('driver_licence_review_conflict') ||
+      (code === '23505' && message.includes('driver_licence_terminal_review_claims'))
+    ) {
+      return NextResponse.json(
+        { error: 'This licence was changed by another review action. Refresh and review the latest version.' },
+        { status: 409 },
+      );
+    }
     console.error('[licences] review failed:', error);
     return NextResponse.json({ error: 'Licence review could not be completed.' }, { status: 500 });
   }
