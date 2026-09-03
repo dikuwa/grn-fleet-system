@@ -14,6 +14,14 @@ const migration0112 = readFileSync(
   resolve(process.cwd(), 'src/db/migrations/0112_restore_allocation_vehicle_safety_guard.sql'),
   'utf8',
 );
+const availabilityRoute = readFileSync(
+  resolve(process.cwd(), 'src/app/api/vehicles/[id]/availability/route.ts'),
+  'utf8',
+);
+const allocationRoute = readFileSync(
+  resolve(process.cwd(), 'src/app/api/allocations/route.ts'),
+  'utf8',
+);
 
 describe('allocation vehicle safety guard recovery', () => {
   it('documents the later function replacement that dropped 0085 safety clauses', () => {
@@ -49,5 +57,12 @@ describe('allocation vehicle safety guard recovery', () => {
     expect(migration0112).toContain("RAISE EXCEPTION 'allocation_vehicle_overlap'");
     expect(migration0112).toContain("pg_advisory_xact_lock(hashtextextended('allocation-driver:'");
     expect(migration0112).toContain("RAISE EXCEPTION 'allocation_driver_overlap'");
+  });
+
+  it('does not advertise provisional vehicles when allocation requires canonical available status', () => {
+    expect(allocationRoute).toContain("if (vehicle.status !== 'available')");
+    expect(availabilityRoute).toContain("if (vehicle.status !== 'available')");
+    expect(availabilityRoute).toContain('Only available vehicles can be allocated.');
+    expect(availabilityRoute).not.toContain("const availableStatuses = ['available', 'provisional']");
   });
 });
