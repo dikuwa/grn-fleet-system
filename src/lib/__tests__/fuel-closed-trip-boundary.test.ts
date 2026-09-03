@@ -8,7 +8,7 @@ describe('trip-linked fuel lifecycle boundary', () => {
   it('rejects manager fuel entries once the trip is closed', () => {
     expect(routeSource).toContain('status: trips.status');
     expect(routeSource).toContain("if (tenantTrip.status === 'closed')");
-    expect(routeSource).toContain('This trip is already reconciled and closed. Trip-linked fuel can no longer be added.');
+    expect(routeSource).toContain('This trip is already closed. Fuel records linked to a closed trip are immutable.');
     expect(routeSource).toContain('{ status: 409 }');
   });
 
