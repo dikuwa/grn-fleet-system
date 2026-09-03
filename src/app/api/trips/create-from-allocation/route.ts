@@ -1,12 +1,13 @@
 import { randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { auditEvents } from '@/db/schema/audit';
 import { tripAuthorities, trips, vehicleAllocations } from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
 import { transportRequests } from '@/db/schema/requests';
 import { requireDashboardAction, requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
+import { getDatabaseErrorDetails } from '@/lib/database-error-details';
 import { Permissions } from '@/lib/permissions';
 import { runAtomicMutations } from '@/lib/db-atomic';
 import {
@@ -17,6 +18,7 @@ import {
 
 const DUPLICATE_PHYSICAL_NUMBER_MESSAGE =
   'This physical Trip Authority number is already reserved or in use in this organisation. Check the paper document number and try again.';
+const TRIP_CREATION_ALLOCATION_CONFLICT = 'trip_creation_allocation_conflict';
 
 export async function POST(req: NextRequest) {
   try {
@@ -45,6 +47,7 @@ export async function POST(req: NextRequest) {
         requestId: vehicleAllocations.requestId,
         vehicleId: vehicleAllocations.vehicleId,
         state: vehicleAllocations.state,
+        version: vehicleAllocations.version,
         requestStatus: transportRequests.status,
         vehicleRequirements: transportRequests.vehicleRequirements,
         physicalTripAuthorityNumber: transportRequests.physicalTripAuthorityNumber,
@@ -178,6 +181,33 @@ export async function POST(req: NextRequest) {
 
     try {
       await runAtomicMutations((tx) => [
+        tx.execute(sql`
+          SELECT CAST(CASE
+            WHEN EXISTS (
+              SELECT 1
+              FROM vehicle_allocations va
+              INNER JOIN transport_requests tr ON tr.id = va.request_id
+              INNER JOIN vehicles v ON v.id = va.vehicle_id
+              WHERE va.id = ${allocation.id}::uuid
+                AND va.request_id = ${allocation.requestId}::uuid
+                AND va.vehicle_id = ${allocation.vehicleId}::uuid
+                AND va.version = ${allocation.version}
+                AND va.state = 'confirmed'
+                AND tr.tenant_id = ${tenantId}::uuid
+                AND tr.status IN (
+                  'approved',
+                  'approved_emergency',
+                  'authorised',
+                  'ready_for_issue',
+                  'vehicle_allocated'
+                )
+                AND v.tenant_id = ${tenantId}::uuid
+              FOR UPDATE OF va, tr
+            )
+            THEN '1'
+            ELSE ${TRIP_CREATION_ALLOCATION_CONFLICT}
+          END AS integer) AS guard
+        `),
         tx.update(transportRequests)
           .set({
             physicalTripAuthorityNumber: manualAuthorityNumber,
@@ -217,6 +247,7 @@ export async function POST(req: NextRequest) {
           after: {
             allocationId: allocation.id,
             requestId: allocation.requestId,
+            allocationVersion: allocation.version,
             authorityNumberMode: manualAuthorityNumber ? 'manual' : 'automatic',
             physicalTripAuthorityNumber: manualAuthorityNumber,
           },
@@ -224,7 +255,19 @@ export async function POST(req: NextRequest) {
         }),
       ]);
     } catch (error) {
-      if ((error as { code?: string }).code === '23505') {
+      const details = getDatabaseErrorDetails(error);
+      if (details.message.includes(TRIP_CREATION_ALLOCATION_CONFLICT)) {
+        const replay = await replayExistingTrip();
+        if (replay) return replay;
+        return NextResponse.json(
+          {
+            error:
+              'The allocation or transport request changed while the trip was being created. Refresh the allocation and review its current state.',
+          },
+          { status: 409 },
+        );
+      }
+      if (details.code === '23505') {
         const replay = await replayExistingTrip();
         if (replay) return replay;
         if (manualAuthorityNumber) {
