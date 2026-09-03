@@ -319,6 +319,7 @@ export async function completeIncidentDetails(
         and(
           eq(tripIncidents.id, incidentId),
           eq(tripIncidents.tenantId, tenantId),
+          eq(tripIncidents.updatedAt, incident.updatedAt),
           eq(tripIncidents.detailsRequired, true),
           sql`${tripIncidents.investigationStatus} <> 'closed'`,
           sql`${tripIncidents.status} <> 'resolved'`,
@@ -338,6 +339,17 @@ export async function completeIncidentDetails(
         entityId: incidentId,
         summary: `${incident.officialNumber}: incident details completed`,
         sourceChannel: 'web',
+        before: {
+          detailsRequired: incident.detailsRequired,
+          description: incident.description,
+          incidentType: incident.incidentType,
+          updatedAt: incident.updatedAt.toISOString(),
+        },
+        after: {
+          detailsRequired: updated.detailsRequired,
+          description: updated.description,
+          incidentType: updated.incidentType,
+        },
       },
       tx,
     );
