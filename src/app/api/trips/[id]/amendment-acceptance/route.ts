@@ -460,114 +460,117 @@ export async function POST(request: NextRequest, context: RouteContext) {
             and v.professional_authorisation_required = false
         )`;
 
-    await db.execute(sql`
-      WITH allocation_claim AS (
-        UPDATE vehicle_allocations va
-        SET version = version + 1,
-            updated_at = ${nowIso}::timestamptz
-        WHERE va.id = ${record.allocationId}::uuid
-          AND va.version = ${record.allocationVersion}
-          AND va.vehicle_id = ${record.vehicleId}::uuid
-          AND va.state IN ('provisional', 'confirmed')
-          AND EXISTS (
-            SELECT 1
-            FROM trips t
-            WHERE t.id = ${tripId}::uuid
-              AND t.tenant_id = ${tenantId}::uuid
-              AND t.allocation_id = va.id
-              AND t.vehicle_id = va.vehicle_id
-              AND t.status = 'pending'
-              AND t.issued_at IS NULL
-          )
-          AND ${driverEligibilityCurrent}
-        RETURNING id
-      ),
-      amendment_claim AS (
-        UPDATE trip_amendments am
-        SET status = status
-        WHERE am.id = ${pending.amendmentId}::uuid
-          AND am.authority_id = ${record.authorityId}::uuid
-          AND am.amendment_type = ${pending.amendmentType}
-          AND am.status = 'approved'
-          AND EXISTS (SELECT 1 FROM allocation_claim)
-          AND EXISTS (
-            SELECT 1
-            FROM trip_authorities ta
-            WHERE ta.id = am.authority_id
-              AND ta.tenant_id = ${tenantId}::uuid
-              AND ta.accepted_at IS NOT NULL
-              AND COALESCE(am.approved_at, am.created_at) > ta.accepted_at
-          )
-        RETURNING id
-      ),
-      authority_claim AS (
-        UPDATE trip_authorities ta
-        SET accepted_at = ${nowIso}::timestamptz,
-            accepted_by_employee_id = ${record.driverEmployeeId ?? null}::uuid,
-            acceptance_data = COALESCE(ta.acceptance_data, '{}'::jsonb)
-              || jsonb_build_object('latestAmendmentAcceptance', ${acceptanceEvidence}::jsonb),
-            status = 'awaiting_pre_trip_inspection',
-            updated_at = ${nowIso}::timestamptz
-        WHERE ta.id = ${record.authorityId}::uuid
-          AND ta.tenant_id = ${tenantId}::uuid
-          AND ta.trip_id = ${tripId}::uuid
-          AND ta.allocation_id = ${record.allocationId}::uuid
-          AND ta.accepted_at IS NOT NULL
-          AND ta.accepted_at < ${pendingCreatedAtIso}::timestamptz
-          AND EXISTS (SELECT 1 FROM amendment_claim)
-        RETURNING id
-      ),
-      trip_claim AS (
-        UPDATE trips t
-        SET driver_acknowledged_at = ${nowIso}::timestamptz,
-            driver_acknowledged_by_employee_id = ${record.driverEmployeeId ?? null}::uuid,
-            updated_at = ${nowIso}::timestamptz
-        WHERE t.id = ${tripId}::uuid
-          AND t.tenant_id = ${tenantId}::uuid
-          AND t.status = 'pending'
-          AND t.issued_at IS NULL
-          AND t.vehicle_id = ${record.vehicleId}::uuid
-          AND t.allocation_id = ${record.allocationId}::uuid
-          AND EXISTS (SELECT 1 FROM authority_claim)
-        RETURNING id
-      )
-      SELECT CAST(CASE
-        WHEN (SELECT count(*) FROM allocation_claim) = 1
-         AND (SELECT count(*) FROM amendment_claim) = 1
-         AND (SELECT count(*) FROM authority_claim) = 1
-         AND (SELECT count(*) FROM trip_claim) = 1
-        THEN '1'
-        ELSE 'atomic_amendment_acknowledgement_failed_'
-          || (SELECT count(*) FROM allocation_claim)::text
-          || (SELECT count(*) FROM amendment_claim)::text
-          || (SELECT count(*) FROM authority_claim)::text
-          || (SELECT count(*) FROM trip_claim)::text
-      END AS integer) AS committed
-    `);
+    await db.transaction(async (tx) => {
+      await tx.execute(sql`
+        WITH allocation_claim AS (
+          UPDATE vehicle_allocations va
+          SET version = version + 1,
+              updated_at = ${nowIso}::timestamptz
+          WHERE va.id = ${record.allocationId}::uuid
+            AND va.version = ${record.allocationVersion}
+            AND va.vehicle_id = ${record.vehicleId}::uuid
+            AND va.state IN ('provisional', 'confirmed')
+            AND EXISTS (
+              SELECT 1
+              FROM trips t
+              WHERE t.id = ${tripId}::uuid
+                AND t.tenant_id = ${tenantId}::uuid
+                AND t.allocation_id = va.id
+                AND t.vehicle_id = va.vehicle_id
+                AND t.status = 'pending'
+                AND t.issued_at IS NULL
+            )
+            AND ${driverEligibilityCurrent}
+          RETURNING id
+        ),
+        amendment_claim AS (
+          UPDATE trip_amendments am
+          SET status = status
+          WHERE am.id = ${pending.amendmentId}::uuid
+            AND am.authority_id = ${record.authorityId}::uuid
+            AND am.amendment_type = ${pending.amendmentType}
+            AND am.status = 'approved'
+            AND EXISTS (SELECT 1 FROM allocation_claim)
+            AND EXISTS (
+              SELECT 1
+              FROM trip_authorities ta
+              WHERE ta.id = am.authority_id
+                AND ta.tenant_id = ${tenantId}::uuid
+                AND ta.accepted_at IS NOT NULL
+                AND COALESCE(am.approved_at, am.created_at) > ta.accepted_at
+            )
+          RETURNING id
+        ),
+        authority_claim AS (
+          UPDATE trip_authorities ta
+          SET accepted_at = ${nowIso}::timestamptz,
+              accepted_by_employee_id = ${record.driverEmployeeId ?? null}::uuid,
+              acceptance_data = COALESCE(ta.acceptance_data, '{}'::jsonb)
+                || jsonb_build_object('latestAmendmentAcceptance', ${acceptanceEvidence}::jsonb),
+              status = 'awaiting_pre_trip_inspection',
+              updated_at = ${nowIso}::timestamptz
+          WHERE ta.id = ${record.authorityId}::uuid
+            AND ta.tenant_id = ${tenantId}::uuid
+            AND ta.trip_id = ${tripId}::uuid
+            AND ta.allocation_id = ${record.allocationId}::uuid
+            AND ta.accepted_at IS NOT NULL
+            AND ta.accepted_at < ${pendingCreatedAtIso}::timestamptz
+            AND EXISTS (SELECT 1 FROM amendment_claim)
+          RETURNING id
+        ),
+        trip_claim AS (
+          UPDATE trips t
+          SET driver_acknowledged_at = ${nowIso}::timestamptz,
+              driver_acknowledged_by_employee_id = ${record.driverEmployeeId ?? null}::uuid,
+              updated_at = ${nowIso}::timestamptz
+          WHERE t.id = ${tripId}::uuid
+            AND t.tenant_id = ${tenantId}::uuid
+            AND t.status = 'pending'
+            AND t.issued_at IS NULL
+            AND t.vehicle_id = ${record.vehicleId}::uuid
+            AND t.allocation_id = ${record.allocationId}::uuid
+            AND EXISTS (SELECT 1 FROM authority_claim)
+          RETURNING id
+        )
+        SELECT CAST(CASE
+          WHEN (SELECT count(*) FROM allocation_claim) = 1
+           AND (SELECT count(*) FROM amendment_claim) = 1
+           AND (SELECT count(*) FROM authority_claim) = 1
+           AND (SELECT count(*) FROM trip_claim) = 1
+          THEN '1'
+          ELSE 'atomic_amendment_acknowledgement_failed_'
+            || (SELECT count(*) FROM allocation_claim)::text
+            || (SELECT count(*) FROM amendment_claim)::text
+            || (SELECT count(*) FROM authority_claim)::text
+            || (SELECT count(*) FROM trip_claim)::text
+        END AS integer) AS committed
+      `);
 
-    await recordAuditEvent({
-      tenantId,
-      actorUserId: session.user.id,
-      actorEmployeeId: record.driverEmployeeId,
-      action: 'trip_authority.amendment_acknowledged',
-      eventType: 'trip_authority_amendment_acknowledged',
-      entityType: 'trip_amendment',
-      entityId: pending.amendmentId,
-      summary: internalDriver
-        ? `Assigned driver acknowledged the revised Trip Authority (${pending.amendmentType.replaceAll('_', ' ')}).`
-        : `Transport Administration recorded external-driver acceptance of the revised Trip Authority (${pending.amendmentType.replaceAll('_', ' ')}).`,
-      reason: pending.reason,
-      before: {
-        authorityVersion: pending.authorityVersion,
-        allocationVersion: record.allocationVersion,
-        vehicleId: record.vehicleId,
-        acceptedAt: record.authorityAcceptedAt?.toISOString() ?? null,
-        amendmentCreatedAt: pending.createdAt.toISOString(),
-      },
-      after: JSON.parse(acceptanceEvidence),
-    }).catch((error) =>
-      console.warn('[amendment-acceptance] Acknowledgement committed but audit event failed:', error),
-    );
+      await recordAuditEvent(
+        {
+          tenantId,
+          actorUserId: session.user.id,
+          actorEmployeeId: record.driverEmployeeId,
+          action: 'trip_authority.amendment_acknowledged',
+          eventType: 'trip_authority_amendment_acknowledged',
+          entityType: 'trip_amendment',
+          entityId: pending.amendmentId,
+          summary: internalDriver
+            ? `Assigned driver acknowledged the revised Trip Authority (${pending.amendmentType.replaceAll('_', ' ')}).`
+            : `Transport Administration recorded external-driver acceptance of the revised Trip Authority (${pending.amendmentType.replaceAll('_', ' ')}).`,
+          reason: pending.reason,
+          before: {
+            authorityVersion: pending.authorityVersion,
+            allocationVersion: record.allocationVersion,
+            vehicleId: record.vehicleId,
+            acceptedAt: record.authorityAcceptedAt?.toISOString() ?? null,
+            amendmentCreatedAt: pending.createdAt.toISOString(),
+          },
+          after: JSON.parse(acceptanceEvidence),
+        },
+        tx,
+      );
+    });
 
     let documentId: string | null = null;
     try {
