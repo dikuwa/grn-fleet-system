@@ -10,6 +10,7 @@ import { getDb } from '@/db';
 import { trips } from '@/db/schema/trips';
 import { replaceVehicle, VehicleReplaceError } from '@/lib/allocations/vehicle-replacement';
 import { requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { getDatabaseErrorDetails } from '@/lib/database-error-details';
 import {
   createScopedNotifications,
   resolveActiveRoleRecipients,
@@ -92,11 +93,8 @@ export async function POST(
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
 
-    const dbError = error as { code?: string; message?: string; detail?: string; cause?: unknown };
-    const diagnostic = [dbError.message, dbError.detail, String(dbError.cause ?? ''), String(error)]
-      .filter(Boolean)
-      .join(' ');
-    if (dbError.code === '23P01' || diagnostic.includes('allocation_vehicle_overlap')) {
+    const { code, message } = getDatabaseErrorDetails(error);
+    if (code === '23P01' || message.includes('allocation_vehicle_overlap')) {
       return NextResponse.json(
         {
           error: 'The replacement vehicle was allocated elsewhere while this replacement was being saved. Refresh and choose another available vehicle.',

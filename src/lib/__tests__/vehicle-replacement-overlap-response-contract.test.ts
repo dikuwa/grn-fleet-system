@@ -11,15 +11,19 @@ describe('vehicle replacement overlap response contract', () => {
     expect(allocationGuard).toContain("USING ERRCODE = '23P01'");
   });
 
-  it('maps a database vehicle-overlap race to an HTTP 409 response', () => {
-    expect(route).toContain("dbError.code === '23P01'");
-    expect(route).toContain("diagnostic.includes('allocation_vehicle_overlap')");
+  it('maps a database vehicle-overlap race to an HTTP 409 response through the shared parser', () => {
+    expect(route).toContain("import { getDatabaseErrorDetails } from '@/lib/database-error-details';");
+    expect(route).toContain('const { code, message } = getDatabaseErrorDetails(error);');
+    expect(route).toContain("code === '23P01'");
+    expect(route).toContain("message.includes('allocation_vehicle_overlap')");
     expect(route).toContain('while this replacement was being saved');
     expect(route).toContain('{ status: 409 }');
   });
 
   it('preserves existing VehicleReplaceError handling before database fallback classification', () => {
     expect(route).toContain('error instanceof VehicleReplaceError');
-    expect(route.indexOf('error instanceof VehicleReplaceError')).toBeLessThan(route.indexOf("dbError.code === '23P01'"));
+    expect(route.indexOf('error instanceof VehicleReplaceError')).toBeLessThan(
+      route.indexOf('const { code, message } = getDatabaseErrorDetails(error);'),
+    );
   });
 });
