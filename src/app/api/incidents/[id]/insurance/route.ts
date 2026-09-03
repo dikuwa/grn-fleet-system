@@ -120,7 +120,12 @@ export async function PATCH(
     );
 
     if (!result.ok) {
-      return NextResponse.json({ error: result.error }, { status: 400 });
+      const status = result.error === 'insurance_update_conflict'
+        ? 409
+        : result.error === 'Incident not found'
+          ? 404
+          : 400;
+      return NextResponse.json({ error: result.error }, { status });
     }
 
     return NextResponse.json({ data: result.data });

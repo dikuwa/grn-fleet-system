@@ -8,7 +8,6 @@ import { getSessionRoleNames, requireAnyPermission, requireRequestAuth } from '@
 import { resolveDashboardAccess } from '@/lib/dashboard-access';
 import { Permissions } from '@/lib/permissions';
 import { vehicleScopeCondition } from '@/lib/record-scope';
-import { runAtomicMutations } from '@/lib/db-atomic';
 import { getDatabaseErrorDetails } from '@/lib/database-error-details';
 import { refreshIncidentOperationalDocuments } from '@/lib/incidents/document-refresh';
 
@@ -63,14 +62,6 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     if (!context) return NextResponse.json({ error: 'Incident record not found' }, { status: 404 });
 
     const now = new Date();
-    const commonAudit = {
-      tenantId: auth.session.tenantId,
-      tenantSequence: Date.now(),
-      actorUserId: auth.session.user.id,
-      entityType: 'trip_incident',
-      entityId: id,
-      sourceChannel: 'web' as const,
-    };
 
     if (action === 'investigation_update') {
       if (context.incident.investigationStatus === 'closed' || context.incident.status === 'resolved') {
@@ -113,6 +104,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
               updated_at = ${now}
           WHERE ti.id = ${id}::uuid
             AND ti.tenant_id = ${auth.session.tenantId}::uuid
+            AND ti.updated_at = ${context.incident.updatedAt}::timestamptz
             AND ti.investigation_status <> 'closed'
             AND ti.status <> 'resolved'
           RETURNING id
@@ -187,21 +179,55 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
           ? body.insuranceClaimReference.trim() || null
           : null;
 
-      await runAtomicMutations((tx) => [
-        tx.update(tripIncidents).set({
-          insuranceClaimReference,
-          insuranceNotified,
-          insuranceNotifiedAt: insuranceNotified ? context.incident.insuranceNotifiedAt || now : null,
-          updatedAt: now,
-        }).where(and(eq(tripIncidents.id, id), eq(tripIncidents.tenantId, auth.session.tenantId))),
-        tx.insert(auditEvents).values({
-          ...commonAudit,
-          eventType: 'incident_insurance_updated',
-          action: 'incident.insurance.update',
-          summary: `${context.incident.officialNumber || id}: insurance details updated`,
-          after: { insuranceNotified, insuranceClaimReference },
-        }),
-      ]);
+      await db.execute(sql`
+        WITH incident_claim AS (
+          UPDATE trip_incidents ti
+          SET insurance_claim_reference = ${insuranceClaimReference},
+              insurance_notified = ${insuranceNotified},
+              insurance_notified_at = CASE
+                WHEN ${insuranceNotified} THEN COALESCE(ti.insurance_notified_at, ${now})
+                ELSE NULL
+              END,
+              updated_at = ${now}
+          WHERE ti.id = ${id}::uuid
+            AND ti.tenant_id = ${auth.session.tenantId}::uuid
+            AND ti.updated_at = ${context.incident.updatedAt}::timestamptz
+          RETURNING id
+        ),
+        audit_insert AS (
+          INSERT INTO audit_events (
+            tenant_id, tenant_sequence, event_type, actor_user_id,
+            action, entity_type, entity_id, summary, before, after, source_channel
+          )
+          SELECT
+            ${auth.session.tenantId}::uuid,
+            ${Date.now()},
+            'incident_insurance_updated',
+            ${auth.session.user.id},
+            'incident.insurance.update',
+            'trip_incident',
+            ${id}::uuid,
+            ${`${context.incident.officialNumber || id}: insurance details updated`},
+            jsonb_build_object(
+              'insuranceNotified', ${context.incident.insuranceNotified},
+              'insuranceClaimReference', ${context.incident.insuranceClaimReference},
+              'updatedAt', ${context.incident.updatedAt.toISOString()}
+            ),
+            jsonb_build_object(
+              'insuranceNotified', ${insuranceNotified},
+              'insuranceClaimReference', ${insuranceClaimReference}
+            ),
+            'web'
+          FROM incident_claim
+          RETURNING id
+        )
+        SELECT CAST(CASE
+          WHEN (SELECT count(*) FROM incident_claim) = 1
+           AND (SELECT count(*) FROM audit_insert) = 1
+          THEN '1'
+          ELSE 'incident_insurance_update_conflict'
+        END AS integer) AS committed
+      `);
       return NextResponse.json({ success: true });
     }
 
@@ -475,6 +501,12 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     if (message.includes('incident_investigation_update_conflict')) {
       return NextResponse.json(
         { error: 'The investigation was closed or changed while this update was being saved. Refresh the incident before making further changes.' },
+        { status: 409 },
+      );
+    }
+    if (message.includes('incident_insurance_update_conflict')) {
+      return NextResponse.json(
+        { error: 'The incident changed while insurance details were being saved. Refresh the incident and review the latest insurance state.' },
         { status: 409 },
       );
     }

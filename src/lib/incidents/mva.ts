@@ -138,6 +138,7 @@ export async function updateInvestigation(
     const claimConditions = [
       eq(tripIncidents.id, incidentId),
       eq(tripIncidents.tenantId, tenantId),
+      eq(tripIncidents.updatedAt, incident.updatedAt),
       sql`${tripIncidents.investigationStatus} <> 'closed'`,
       sql`${tripIncidents.status} <> 'resolved'`,
     ];
@@ -232,9 +233,12 @@ export async function updateInsurance(
         and(
           eq(tripIncidents.id, incidentId),
           eq(tripIncidents.tenantId, tenantId),
+          eq(tripIncidents.updatedAt, incident.updatedAt),
         ),
       )
       .returning();
+
+    if (!updated) return null;
 
     await recordAuditEvent(
       {
@@ -246,12 +250,29 @@ export async function updateInsurance(
         entityId: incidentId,
         summary: `${incident.officialNumber}: insurance workflow updated`,
         sourceChannel: 'web',
+        before: {
+          insuranceNotified: incident.insuranceNotified,
+          insuranceClaimReference: incident.insuranceClaimReference,
+          policeReportFiled: incident.policeReportFiled,
+          thirdPartyInsuranceDetails: incident.thirdPartyInsuranceDetails,
+          updatedAt: incident.updatedAt.toISOString(),
+        },
+        after: {
+          insuranceNotified: updated.insuranceNotified,
+          insuranceClaimReference: updated.insuranceClaimReference,
+          policeReportFiled: updated.policeReportFiled,
+          thirdPartyInsuranceDetails: updated.thirdPartyInsuranceDetails,
+        },
       },
       tx,
     );
 
     return updated;
   });
+
+  if (!row) {
+    return { ok: false as const, error: 'insurance_update_conflict' };
+  }
 
   await refreshIncidentDocuments(tenantId, incidentId, incident.tripId, actorUserId);
 
