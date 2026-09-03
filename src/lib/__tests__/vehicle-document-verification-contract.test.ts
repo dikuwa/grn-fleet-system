@@ -52,7 +52,7 @@ describe('vehicle document human verification contract', () => {
   it('exposes a deliberate human review control beside vehicle document upload', () => {
     expect(reviewUiSource).toContain('Review Documents');
     expect(reviewUiSource).toContain('Open each uploaded file and verify it only after');
-    expect(reviewUiSource).toContain(`/api/fleet/${vehicleId}/documents/${document.id}/verify`);
+    expect(reviewUiSource).toContain('/api/fleet/${vehicleId}/documents/${document.id}/verify');
     expect(reviewUiSource).toContain('expectedUpdatedAt: document.updatedAt');
     expect(reviewUiSource).toContain('router.refresh()');
   });
