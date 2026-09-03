@@ -12,6 +12,7 @@ import {
 import { employees } from '@/db/schema/people';
 import { auditEvents } from '@/db/schema/audit';
 import { hasPermission, requireDashboardAction, requireRequestAuth } from '@/lib/auth-helpers';
+import { getDatabaseErrorDetails } from '@/lib/database-error-details';
 import { Permissions } from '@/lib/permissions';
 import { tripScopeCondition } from '@/lib/record-scope';
 import { runAtomicMutations } from '@/lib/db-atomic';
@@ -590,24 +591,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       { status: result.idempotent ? 200 : 201 },
     );
   } catch (error) {
-    const errorRecord = error && typeof error === 'object'
-      ? (error as { code?: unknown; message?: unknown; cause?: unknown })
-      : null;
-    const causeRecord = errorRecord?.cause && typeof errorRecord.cause === 'object'
-      ? (errorRecord.cause as { code?: unknown; message?: unknown })
-      : null;
-    const message = [
-      typeof errorRecord?.message === 'string' ? errorRecord.message : '',
-      typeof causeRecord?.message === 'string' ? causeRecord.message : '',
-      String(error || ''),
-    ]
-      .filter(Boolean)
-      .join(' ');
-    const code = typeof errorRecord?.code === 'string'
-      ? errorRecord.code
-      : typeof causeRecord?.code === 'string'
-        ? causeRecord.code
-        : null;
+    const { message, code } = getDatabaseErrorDetails(error);
     if (
       message.includes('trip_progress_lifecycle_conflict') ||
       message.includes('trip_expense_lifecycle_conflict')
