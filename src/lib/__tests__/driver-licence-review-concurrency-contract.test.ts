@@ -14,11 +14,14 @@ const terminalGuardMigration = readFileSync(
 describe('driver licence review concurrency recovery', () => {
   it('serializes every review action against the exact revision that was read', () => {
     expect(routeSource).toContain('function licenceReviewRevisionGuard');
+    expect(routeSource).toContain('SELECT CAST(CASE');
+    expect(routeSource).toContain('WHEN EXISTS (');
     expect(routeSource).toContain('FROM driver_licences');
     expect(routeSource).toContain('verification_status = ${current.verificationStatus}');
     expect(routeSource).toContain('updated_at = ${current.updatedAt.toISOString()}::timestamptz');
     expect(routeSource).toContain('FOR UPDATE');
-    expect(routeSource).toContain("'driver_licence_review_conflict'");
+    expect(routeSource).toContain("ELSE 'driver_licence_review_conflict'");
+    expect(routeSource).not.toContain('CAST(COALESCE((');
     expect(routeSource.match(/licenceReviewRevisionGuard\(executor, current\)/g)?.length).toBe(3);
   });
 
