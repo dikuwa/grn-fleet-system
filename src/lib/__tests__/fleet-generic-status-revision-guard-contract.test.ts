@@ -8,8 +8,9 @@ const routeSource = readFileSync(
 );
 
 describe('generic fleet editor operational status guard', () => {
-  it('claims the exact vehicle revision before any generic update can commit', () => {
+  it('claims the exact vehicle revision and status before any generic update can commit', () => {
     expect(routeSource).toContain('updatedAt: vehicles.updatedAt');
+    expect(routeSource).toContain('eq(vehicles.status, existing.status)');
     expect(routeSource).toContain("date_trunc('milliseconds', ${vehicles.updatedAt})");
     expect(routeSource).toContain('${existing.updatedAt.toISOString()}::timestamptz');
     expect(routeSource).toContain('if (!updated) throw new Error(VEHICLE_UPDATE_CONFLICT);');
@@ -35,6 +36,33 @@ describe('generic fleet editor operational status guard', () => {
     expect(routeSource).toContain(
       'Use the audited decommission workflow to place a vehicle out of service.',
     );
+  });
+
+  it('routes office ownership changes through the audited transfer workflow', () => {
+    expect(routeSource).toContain('officeId: vehicles.officeId');
+    expect(routeSource).toContain('assignedOfficeId: vehicles.assignedOfficeId');
+    expect(routeSource).toContain('requestedOfficeId !== existing.officeId');
+    expect(routeSource).toContain('requestedAssignedOfficeId !== existing.assignedOfficeId');
+    expect(routeSource).toContain(
+      'Use the audited vehicle transfer workflow to change office ownership or assignment.',
+    );
+    expect(routeSource).not.toContain('updateData.officeId =');
+    expect(routeSource).not.toContain('updateData.assignedOfficeId =');
+  });
+
+  it('records upward profile odometer corrections as immutable evidence in the same transaction', () => {
+    const transactionStart = routeSource.indexOf('await db.transaction(async (tx) => {');
+    const updateStart = routeSource.indexOf('.update(vehicles)', transactionStart);
+    const odometerStart = routeSource.indexOf('await tx.insert(vehicleOdometerEvents).values({', updateStart);
+    const transactionEnd = routeSource.indexOf('\n    });', odometerStart);
+
+    expect(routeSource).toContain('requestedOdometer !== existing.currentOdometer');
+    expect(routeSource).toContain("source: 'manual_correction'");
+    expect(routeSource).toContain('recordedByUserId: session.user.id');
+    expect(transactionStart).toBeGreaterThan(-1);
+    expect(updateStart).toBeGreaterThan(transactionStart);
+    expect(odometerStart).toBeGreaterThan(updateStart);
+    expect(transactionEnd).toBeGreaterThan(odometerStart);
   });
 
   it('keeps audit evidence in the same database transaction as the claimed update', () => {
