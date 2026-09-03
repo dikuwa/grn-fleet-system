@@ -69,7 +69,7 @@ function licenceReviewRevisionGuard(executor: any, current: typeof driverLicence
         FROM driver_licences
         WHERE id = ${current.id}::uuid
           AND verification_status = ${current.verificationStatus}
-          AND updated_at = ${current.updatedAt.toISOString()}::timestamptz
+          AND date_trunc('milliseconds', updated_at) = ${current.updatedAt.toISOString()}::timestamptz
         FOR UPDATE
       )
       THEN '1'
