@@ -10,7 +10,12 @@
 // Types
 // ---------------------------------------------------------------------------
 
-export type InvestigationStatus = 'pending' | 'in_progress' | 'closed' | 'no_action';
+export type InvestigationStatus =
+  | 'pending'
+  | 'in_progress'
+  | 'awaiting_information'
+  | 'no_action'
+  | 'closed';
 export type TechnicalClearanceStatus = 'pending' | 'cleared' | 'not_cleared';
 
 // ---------------------------------------------------------------------------
@@ -20,8 +25,9 @@ export type TechnicalClearanceStatus = 'pending' | 'cleared' | 'not_cleared';
 export const INVESTIGATION_STATUSES: InvestigationStatus[] = [
   'pending',
   'in_progress',
-  'closed',
+  'awaiting_information',
   'no_action',
+  'closed',
 ];
 
 export const TECHNICAL_CLEARANCE_STATUSES: TechnicalClearanceStatus[] = [
@@ -33,8 +39,9 @@ export const TECHNICAL_CLEARANCE_STATUSES: TechnicalClearanceStatus[] = [
 export const INVESTIGATION_STATUS_LABELS: Record<InvestigationStatus, string> = {
   pending: 'Pending',
   in_progress: 'In progress',
-  closed: 'Closed',
+  awaiting_information: 'Awaiting information',
   no_action: 'No action required',
+  closed: 'Closed',
 };
 
 export const TECHNICAL_CLEARANCE_STATUS_LABELS: Record<TechnicalClearanceStatus, string> = {

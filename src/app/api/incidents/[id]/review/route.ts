@@ -4,13 +4,20 @@ import { getDb } from '@/db';
 import { tripIncidents, trips } from '@/db/schema/trips';
 import { vehicles, vehicleDefects, vehicleStatusEvents } from '@/db/schema/fleet';
 import { auditEvents } from '@/db/schema/audit';
-import { requireAnyPermission, requireRequestAuth } from '@/lib/auth-helpers';
+import { getSessionRoleNames, requireAnyPermission, requireRequestAuth } from '@/lib/auth-helpers';
+import { resolveDashboardAccess } from '@/lib/dashboard-access';
 import { Permissions } from '@/lib/permissions';
+import { vehicleScopeCondition } from '@/lib/record-scope';
 import { runAtomicMutations } from '@/lib/db-atomic';
 import { getDatabaseErrorDetails } from '@/lib/database-error-details';
 import { refreshIncidentOperationalDocuments } from '@/lib/incidents/document-refresh';
 
-const investigationStatuses = new Set(['pending', 'in_progress', 'awaiting_information']);
+const investigationStatuses = new Set([
+  'pending',
+  'in_progress',
+  'awaiting_information',
+  'no_action',
+]);
 const NON_REVIVABLE_VEHICLE_STATUSES = new Set(['written_off', 'decommissioned']);
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -33,13 +40,24 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     const permission = await requireAnyPermission(auth.session, requiredPermissions);
     if (permission instanceof NextResponse) return permission;
 
+    const roleNames = await getSessionRoleNames(auth.session);
+    const routeAccess = resolveDashboardAccess('/dashboard/trips/incidents', roleNames);
+    if (!routeAccess.allowed || !routeAccess.recordScope) {
+      return NextResponse.json({ error: 'Incident review is not available in this workspace' }, { status: 403 });
+    }
+
     const db = getDb();
+    const vehicleScope = vehicleScopeCondition({
+      tenantId: auth.session.tenantId,
+      userId: auth.session.user.id,
+      recordScope: routeAccess.recordScope,
+    });
     const [context] = await db
       .select({ incident: tripIncidents, vehicleId: trips.vehicleId, tripStatus: trips.status, vehicleStatus: vehicles.status })
       .from(tripIncidents)
       .innerJoin(trips, and(eq(trips.id, tripIncidents.tripId), eq(trips.tenantId, auth.session.tenantId)))
       .innerJoin(vehicles, and(eq(vehicles.id, trips.vehicleId), eq(vehicles.tenantId, auth.session.tenantId)))
-      .where(and(eq(tripIncidents.id, id), eq(tripIncidents.tenantId, auth.session.tenantId)))
+      .where(and(eq(tripIncidents.id, id), eq(tripIncidents.tenantId, auth.session.tenantId), vehicleScope))
       .limit(1);
 
     if (!context) return NextResponse.json({ error: 'Incident record not found' }, { status: 404 });
@@ -65,7 +83,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       const investigationStatus = String(body.investigationStatus || context.incident.investigationStatus);
       if (!investigationStatuses.has(investigationStatus)) {
         return NextResponse.json(
-          { error: 'Select pending, in progress, or awaiting information. Use Close investigation for final closure.' },
+          { error: 'Select pending, in progress, awaiting information, or no action required. Use Close investigation for final closure.' },
           { status: 422 },
         );
       }

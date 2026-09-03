@@ -1,6 +1,6 @@
 import Link from 'next/link';
 import { and, desc, eq, inArray, like, or } from 'drizzle-orm';
-import { AlertTriangle, CarFront, CheckCircle2, FileText, Search } from 'lucide-react';
+import { AlertTriangle, CarFront, CheckCircle2, Search } from 'lucide-react';
 import { getDb } from '@/db';
 import { tripIncidents, trips } from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
@@ -10,8 +10,10 @@ import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent } from '@/components/ui/card';
 import { EmptyState } from '@/components/ui/empty-state';
-import { getSessionPermissions } from '@/lib/auth-helpers';
+import { getSessionPermissions, getSessionRoleNames } from '@/lib/auth-helpers';
+import { resolveDashboardAccess } from '@/lib/dashboard-access';
 import { Permissions } from '@/lib/permissions';
+import { vehicleScopeCondition } from '@/lib/record-scope';
 import { getServerSession } from '@/lib/session';
 import { formatDateTime } from '@/lib/utils';
 import { notFound } from 'next/navigation';
@@ -29,14 +31,21 @@ const MVA_CODES = [
 export default async function MvaWorkspacePage({ searchParams }: { searchParams: Promise<{ status?: string }> }) {
   const session = await getServerSession();
   if (!session) notFound();
-  const permissions = await getSessionPermissions(session);
-  const allowed = [
+  const [permissions, roleNames] = await Promise.all([
+    getSessionPermissions(session),
+    getSessionRoleNames(session),
+  ]);
+  const routeAccess = resolveDashboardAccess('/dashboard/trips/incidents', roleNames);
+  const allowed = routeAccess.allowed && [
     Permissions.TRIP_INCIDENT_MANAGE,
     Permissions.INCIDENT_INVESTIGATE,
+    Permissions.INCIDENT_CLOSE_INVESTIGATION,
+    Permissions.INCIDENT_INSURANCE_UPDATE,
     Permissions.INCIDENT_TECHNICAL_CLEARANCE,
+    Permissions.MAINTENANCE_MANAGE,
     Permissions.AUDIT_READ,
   ].some((permission) => permissions.includes(permission));
-  if (!allowed) notFound();
+  if (!allowed || !routeAccess.recordScope) notFound();
 
   const { status = 'open' } = await searchParams;
   const db = getDb();
@@ -48,7 +57,12 @@ export default async function MvaWorkspacePage({ searchParams }: { searchParams:
     ? eq(tripIncidents.investigationStatus, 'closed')
     : status === 'all'
       ? undefined
-      : inArray(tripIncidents.investigationStatus, ['pending', 'in_progress', 'awaiting_information']);
+      : inArray(tripIncidents.investigationStatus, ['pending', 'in_progress', 'awaiting_information', 'no_action']);
+  const vehicleScope = vehicleScopeCondition({
+    tenantId: session.tenantId,
+    userId: session.user.id,
+    recordScope: routeAccess.recordScope,
+  });
 
   const rows = await db
     .select({
@@ -77,7 +91,7 @@ export default async function MvaWorkspacePage({ searchParams }: { searchParams:
     .innerJoin(trips, and(eq(trips.id, tripIncidents.tripId), eq(trips.tenantId, session.tenantId)))
     .innerJoin(vehicles, and(eq(vehicles.id, trips.vehicleId), eq(vehicles.tenantId, session.tenantId)))
     .leftJoin(transportRequests, and(eq(transportRequests.id, trips.requestId), eq(transportRequests.tenantId, session.tenantId)))
-    .where(and(eq(tripIncidents.tenantId, session.tenantId), mvaCondition, statusCondition))
+    .where(and(eq(tripIncidents.tenantId, session.tenantId), vehicleScope, mvaCondition, statusCondition))
     .orderBy(desc(tripIncidents.occurredAt));
 
   const openCount = rows.filter((row) => row.investigationStatus !== 'closed').length;
@@ -86,7 +100,7 @@ export default async function MvaWorkspacePage({ searchParams }: { searchParams:
 
   return (
     <div className="space-y-6">
-      <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'Trips', href: '/dashboard/trips' }, { label: 'MVA & Incidents' }]} />
+      <Breadcrumbs items={[{ label: 'Dashboard', href: '/dashboard' }, { label: 'MVA & Incidents' }]} />
       <PageHeader title="MVA & Incident Workspace" description="Investigate motor vehicle accidents, track police and insurance follow-up, technical clearance and vehicle return to service." />
 
       <div className="grid gap-3 sm:grid-cols-3">
@@ -137,7 +151,7 @@ export default async function MvaWorkspacePage({ searchParams }: { searchParams:
                   </div>
                 </div>
                 <div className="flex shrink-0 flex-wrap gap-2">
-                  <Button variant="secondary" size="sm" asChild><Link href={`/dashboard/trips/${row.tripId}`}><CarFront className="h-4 w-4" /> Trip</Link></Button>
+                  {routeAccess.recordScope !== 'related' && <Button variant="secondary" size="sm" asChild><Link href={`/dashboard/trips/${row.tripId}`}><CarFront className="h-4 w-4" /> Trip</Link></Button>}
                   <Button size="sm" asChild><Link href={`/dashboard/trips/incidents/${row.id}`}><Search className="h-4 w-4" /> Review MVA</Link></Button>
                 </div>
               </div>
