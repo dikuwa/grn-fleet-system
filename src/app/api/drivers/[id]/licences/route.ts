@@ -63,14 +63,18 @@ function correctionEntries(input?: Record<string, string>) {
 
 function licenceReviewRevisionGuard(executor: any, current: typeof driverLicences.$inferSelect) {
   return executor.execute(sql`
-    SELECT CAST(COALESCE((
-      SELECT '1'
-      FROM driver_licences
-      WHERE id = ${current.id}::uuid
-        AND verification_status = ${current.verificationStatus}
-        AND updated_at = ${current.updatedAt.toISOString()}::timestamptz
-      FOR UPDATE
-    ), 'driver_licence_review_conflict') AS integer) AS guard
+    SELECT CAST(CASE
+      WHEN EXISTS (
+        SELECT 1
+        FROM driver_licences
+        WHERE id = ${current.id}::uuid
+          AND verification_status = ${current.verificationStatus}
+          AND updated_at = ${current.updatedAt.toISOString()}::timestamptz
+        FOR UPDATE
+      )
+      THEN '1'
+      ELSE 'driver_licence_review_conflict'
+    END AS integer) AS guard
   `);
 }
 
