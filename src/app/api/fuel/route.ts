@@ -298,6 +298,7 @@ export async function POST(req: NextRequest) {
       const [tenantTrip] = await db
         .select({
           id: trips.id,
+          status: trips.status,
           allocatedDriverEmployeeId: vehicleAllocations.driverEmployeeId,
         })
         .from(trips)
@@ -312,6 +313,12 @@ export async function POST(req: NextRequest) {
         .limit(1);
       if (!tenantTrip) {
         return NextResponse.json({ error: 'Trip does not match this tenant and vehicle' }, { status: 422 });
+      }
+      if (tenantTrip.status === 'closed') {
+        return NextResponse.json(
+          { error: 'This trip is already closed. Fuel records linked to a closed trip are immutable.' },
+          { status: 409 },
+        );
       }
       if (
         driverEmployeeId &&
