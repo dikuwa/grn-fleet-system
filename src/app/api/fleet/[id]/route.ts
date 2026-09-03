@@ -9,12 +9,14 @@ import {
   requirePermission,
 } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { eq, and, ne } from 'drizzle-orm';
+import { eq, and, ne, sql } from 'drizzle-orm';
 import { resolveDashboardAccess } from '@/lib/dashboard-access';
 import { vehicleScopeCondition } from '@/lib/record-scope';
 import { recordAuditEvent } from '@/lib/audit-event';
 
 const MANUAL_EDIT_STATUSES = new Set(['available', 'provisional', 'maintenance', 'out_of_service']);
+const PROTECTED_REACTIVATION_STATUSES = new Set(['maintenance', 'out_of_service', 'written_off']);
+const VEHICLE_UPDATE_CONFLICT = 'vehicle_update_conflict';
 
 /**
  * GET /api/fleet/[id]
@@ -96,6 +98,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         engineNumber: vehicles.engineNumber,
         status: vehicles.status,
         currentOdometer: vehicles.currentOdometer,
+        updatedAt: vehicles.updatedAt,
       })
       .from(vehicles)
       .where(and(eq(vehicles.id, id), eq(vehicles.tenantId, session.tenantId)))
@@ -171,6 +174,26 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
             error: `Vehicle status is controlled by the active ${existing.status === 'issued' ? 'trip issue/return' : 'allocation'} workflow. Complete or replace that workflow instead of editing status directly.`,
           },
           { status: 409 },
+        );
+      }
+      if (PROTECTED_REACTIVATION_STATUSES.has(existing.status)) {
+        return NextResponse.json(
+          {
+            error:
+              existing.status === 'written_off'
+                ? 'A written-off vehicle cannot be reactivated through the general vehicle editor.'
+                : 'Return this vehicle to service through the maintenance/defect resolution workflow so current safety blockers are rechecked.',
+          },
+          { status: 409 },
+        );
+      }
+      if (requestedStatus === 'out_of_service') {
+        return NextResponse.json(
+          {
+            error:
+              'Use the audited decommission workflow to place a vehicle out of service. The general vehicle editor cannot perform this operational transition.',
+          },
+          { status: 422 },
         );
       }
       if (!MANUAL_EDIT_STATUSES.has(requestedStatus)) {
@@ -283,9 +306,15 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       const [updated] = await tx
         .update(vehicles)
         .set(updateData)
-        .where(and(eq(vehicles.id, id), eq(vehicles.tenantId, session.tenantId)))
+        .where(
+          and(
+            eq(vehicles.id, id),
+            eq(vehicles.tenantId, session.tenantId),
+            sql`date_trunc('milliseconds', ${vehicles.updatedAt}) = ${existing.updatedAt.toISOString()}::timestamptz`,
+          ),
+        )
         .returning();
-      if (!updated) return null;
+      if (!updated) throw new Error(VEHICLE_UPDATE_CONFLICT);
 
       const before = {
         licenceNumber: existing.licenceNumber,
@@ -301,8 +330,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         engineNumber: updated.engineNumber,
         status: updated.status,
       };
-      const changed = (Object.keys(before) as Array<keyof typeof before>)
-        .filter((field) => before[field] !== after[field]);
+      const changed = (Object.keys(before) as Array<keyof typeof before>).filter(
+        (field) => before[field] !== after[field],
+      );
       if (changed.length) {
         const labels: Record<keyof typeof before, string> = {
           licenceNumber: 'registration',
@@ -311,17 +341,25 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
           engineNumber: 'engine number',
           status: 'status',
         };
-        await recordAuditEvent({
-          tenantId: session.tenantId,
-          actorUserId: session.user.id,
-          eventType: 'vehicle_identity_updated',
-          action: 'vehicle.update',
-          entityType: 'vehicle',
-          entityId: id,
-          before,
-          after,
-          summary: changed.map((field) => `${labels[field]} changed from ${before[field] || 'not recorded'} to ${after[field] || 'not recorded'}`).join('; '),
-        }, tx);
+        await recordAuditEvent(
+          {
+            tenantId: session.tenantId,
+            actorUserId: session.user.id,
+            eventType: 'vehicle_identity_updated',
+            action: 'vehicle.update',
+            entityType: 'vehicle',
+            entityId: id,
+            before,
+            after,
+            summary: changed
+              .map(
+                (field) =>
+                  `${labels[field]} changed from ${before[field] || 'not recorded'} to ${after[field] || 'not recorded'}`,
+              )
+              .join('; '),
+          },
+          tx,
+        );
       }
       return updated;
     });
@@ -330,6 +368,15 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     return NextResponse.json({ vehicle });
   } catch (error) {
     console.error('[fleet/:id] PATCH failed:', error);
+    if (error instanceof Error && error.message.includes(VEHICLE_UPDATE_CONFLICT)) {
+      return NextResponse.json(
+        {
+          error:
+            'This vehicle changed while you were editing it. Refresh the fleet record and review the latest operational status before saving again.',
+        },
+        { status: 409 },
+      );
+    }
     return NextResponse.json({ error: 'Failed to update vehicle' }, { status: 500 });
   }
 }
