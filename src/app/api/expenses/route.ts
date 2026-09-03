@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
-import { and, desc, eq, gte, ilike, lte, or } from 'drizzle-orm';
+import { and, desc, eq, gte, ilike, lte, or, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import {
   operationalExpenses,
@@ -380,7 +380,53 @@ export async function POST(request: NextRequest) {
     const expenseId = randomUUID();
     const fleetTransactionId = resolvedPayment ? randomUUID() : null;
     await runAtomicMutations((executor) => {
-      const mutations = [
+      const mutations = [];
+      if (tripId) {
+        mutations.push(
+          executor.execute(sql`
+            SELECT CAST(CASE
+              WHEN EXISTS (
+                SELECT 1
+                FROM trips t
+                WHERE t.id = ${tripId}::uuid
+                  AND t.tenant_id = ${session.tenantId}::uuid
+                  AND t.vehicle_id = ${vehicleId}::uuid
+                  AND (
+                    (${permission.canManage}::boolean AND t.status <> 'closed')
+                    OR (
+                      NOT ${permission.canManage}::boolean
+                      AND t.status IN ('in_progress', 'return_due')
+                      AND (
+                        EXISTS (
+                          SELECT 1
+                          FROM vehicle_allocations va
+                          INNER JOIN employees e ON e.id = va.driver_employee_id
+                          WHERE va.id = t.allocation_id
+                            AND e.tenant_id = ${session.tenantId}::uuid
+                            AND e.user_id = ${session.user.id}
+                        )
+                        OR EXISTS (
+                          SELECT 1
+                          FROM request_drivers rd
+                          INNER JOIN employees e ON e.id = rd.employee_id
+                          WHERE rd.request_id = t.request_id
+                            AND e.tenant_id = ${session.tenantId}::uuid
+                            AND e.user_id = ${session.user.id}
+                            AND rd.driver_type IN ('assigned', 'additional')
+                        )
+                      )
+                    )
+                  )
+                FOR UPDATE OF t
+              )
+              THEN '1'
+              ELSE 'operational_expense_trip_lifecycle_conflict'
+            END AS integer) AS guard
+          `),
+        );
+      }
+
+      mutations.push(
         executor.insert(operationalExpenses).values({
           id: expenseId,
           tenantId: session.tenantId,
@@ -402,7 +448,7 @@ export async function POST(request: NextRequest) {
           notes: body.notes ? String(body.notes).trim() : null,
           enteredByUserId: session.user.id,
         }),
-      ];
+      );
 
       if (fleetTransactionId && resolvedPayment) {
         mutations.push(
@@ -480,6 +526,15 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: true, data: expense }, { status: 201 });
   } catch (error) {
     console.error('[expenses] POST failed:', error);
+    if (String(error).includes('operational_expense_trip_lifecycle_conflict')) {
+      return NextResponse.json(
+        {
+          error:
+            'The trip, current vehicle, or driver assignment changed while the expense was being recorded. Refresh the trip and review the latest journey state.',
+        },
+        { status: 409 },
+      );
+    }
     if (String(error).includes('closed_trip_financial_immutable')) {
       return NextResponse.json(
         {
