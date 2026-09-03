@@ -7,6 +7,7 @@ import {
   requirePermission,
   requireRequestAuth,
 } from '@/lib/auth-helpers';
+import { getDatabaseErrorDetails } from '@/lib/database-error-details';
 import { Permissions } from '@/lib/permissions';
 import {
   completeOfficialInspection,
@@ -20,28 +21,6 @@ import {
   resolveActiveRoleRecipients,
 } from '@/lib/notification-service';
 import { SystemRoles, WorkspaceIds } from '@/lib/workspaces';
-
-function postgresErrorCode(error: unknown): string | null {
-  if (!error || typeof error !== 'object') return null;
-  const record = error as { code?: unknown; cause?: unknown };
-  if (typeof record.code === 'string') return record.code;
-  if (record.cause && typeof record.cause === 'object') {
-    const cause = record.cause as { code?: unknown };
-    if (typeof cause.code === 'string') return cause.code;
-  }
-  return null;
-}
-
-function errorText(error: unknown): string {
-  if (!error || typeof error !== 'object') return String(error || '');
-  const record = error as { message?: unknown; cause?: unknown };
-  const parts = [typeof record.message === 'string' ? record.message : ''];
-  if (record.cause && typeof record.cause === 'object') {
-    const cause = record.cause as { message?: unknown };
-    if (typeof cause.message === 'string') parts.push(cause.message);
-  }
-  return parts.filter(Boolean).join(' ');
-}
 
 export async function POST(request: NextRequest) {
   try {
@@ -185,8 +164,7 @@ export async function POST(request: NextRequest) {
     if (error instanceof InspectionServiceError) {
       return NextResponse.json({ error: error.message }, { status: error.status });
     }
-    const code = postgresErrorCode(error);
-    const message = errorText(error);
+    const { code, message } = getDatabaseErrorDetails(error);
     if (code === '23514' && message.includes('inspection_lifecycle_conflict')) {
       return NextResponse.json(
         {
