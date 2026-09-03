@@ -68,7 +68,7 @@ function licenceReviewRevisionGuard(executor: any, current: typeof driverLicence
       FROM driver_licences
       WHERE id = ${current.id}::uuid
         AND verification_status = ${current.verificationStatus}
-        AND updated_at = ${current.updatedAt}::timestamptz
+        AND updated_at = ${current.updatedAt.toISOString()}::timestamptz
       FOR UPDATE
     ), 'driver_licence_review_conflict') AS integer) AS guard
   `);
