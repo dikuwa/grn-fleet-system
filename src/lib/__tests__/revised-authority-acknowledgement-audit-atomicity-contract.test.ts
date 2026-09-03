@@ -26,8 +26,15 @@ describe('revised Trip Authority acknowledgement audit atomicity', () => {
   });
 
   it('does not allow a committed acknowledgement to ignore audit failure', () => {
+    const transactionStart = routeSource.indexOf('await db.transaction(async (tx) => {');
+    const auditStart = routeSource.indexOf('await recordAuditEvent(', transactionStart);
+    const transactionEnd = routeSource.indexOf('\n    });', auditStart);
+    const transactionSource = routeSource.slice(transactionStart, transactionEnd);
+
     expect(routeSource).not.toContain('Acknowledgement committed but audit event failed');
-    expect(routeSource).not.toMatch(/recordAuditEvent\([\s\S]*?\)\.catch\(/);
+    expect(auditStart).toBeGreaterThan(transactionStart);
+    expect(transactionSource).toContain('await recordAuditEvent(');
+    expect(transactionSource).not.toContain('.catch(');
   });
 
   it('retains the existing atomic conflict marker and controlled 409 recovery', () => {
