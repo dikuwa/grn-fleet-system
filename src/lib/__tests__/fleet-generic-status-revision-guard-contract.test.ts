@@ -65,6 +65,19 @@ describe('generic fleet editor operational status guard', () => {
     expect(transactionEnd).toBeGreaterThan(odometerStart);
   });
 
+  it('records allowed manual status changes in the canonical status history', () => {
+    const transactionStart = routeSource.indexOf('await db.transaction(async (tx) => {');
+    const statusEventStart = routeSource.indexOf('await tx.insert(vehicleStatusEvents).values({', transactionStart);
+    const transactionEnd = routeSource.indexOf('\n    });', statusEventStart);
+
+    expect(routeSource).toContain("const MANUAL_EDIT_STATUSES = new Set(['available', 'provisional', 'maintenance']);");
+    expect(routeSource).toContain('previousStatus: existing.status');
+    expect(routeSource).toContain('newStatus: requestedStatus');
+    expect(routeSource).toContain("referenceEntityType: 'vehicle_profile'");
+    expect(statusEventStart).toBeGreaterThan(transactionStart);
+    expect(transactionEnd).toBeGreaterThan(statusEventStart);
+  });
+
   it('keeps audit evidence in the same database transaction as the claimed update', () => {
     const transactionStart = routeSource.indexOf('await db.transaction(async (tx) => {');
     const updateStart = routeSource.indexOf('.update(vehicles)', transactionStart);
