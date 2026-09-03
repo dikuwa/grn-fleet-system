@@ -17,6 +17,7 @@ import { vehicles, vehicleStatusEvents, vehicleDefects } from '@/db/schema/fleet
 import { auditEvents } from '@/db/schema/audit';
 import { externalDriverAssignments } from '@/db/schema/external-driver-assignments';
 import { requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { getDatabaseErrorDetails } from '@/lib/database-error-details';
 import { Permissions } from '@/lib/permissions';
 import { onTripClosed } from '@/lib/document-generator';
 import { eq, and, desc, inArray, isNull, ne, or, sql } from 'drizzle-orm';
@@ -37,28 +38,6 @@ function readReturnDeclaration(data: Record<string, unknown> | null | undefined)
   const value = data?.returnDeclaration;
   if (!value || typeof value !== 'object' || Array.isArray(value)) return null;
   return value as ReturnDeclaration;
-}
-
-function errorText(error: unknown): string {
-  if (!error || typeof error !== 'object') return String(error || '');
-  const record = error as { message?: unknown; cause?: unknown };
-  const parts = [typeof record.message === 'string' ? record.message : ''];
-  if (record.cause && typeof record.cause === 'object') {
-    const cause = record.cause as { message?: unknown };
-    if (typeof cause.message === 'string') parts.push(cause.message);
-  }
-  return parts.filter(Boolean).join(' ');
-}
-
-function postgresErrorCode(error: unknown): string | null {
-  if (!error || typeof error !== 'object') return null;
-  const record = error as { code?: unknown; cause?: unknown };
-  if (typeof record.code === 'string') return record.code;
-  if (record.cause && typeof record.cause === 'object') {
-    const cause = record.cause as { code?: unknown };
-    if (typeof cause.code === 'string') return cause.code;
-  }
-  return null;
 }
 
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -639,8 +618,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     });
   } catch (error) {
     console.error('[trips/close] POST failed:', error);
-    const code = postgresErrorCode(error);
-    const message = errorText(error);
+    const { code, message } = getDatabaseErrorDetails(error);
     if (code === '23505') {
       return NextResponse.json({ error: 'Trip is already closed' }, { status: 409 });
     }
