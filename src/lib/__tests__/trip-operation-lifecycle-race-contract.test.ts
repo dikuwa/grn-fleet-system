@@ -61,7 +61,7 @@ describe('trip operation lifecycle race contract', () => {
     expect(routeSource.indexOf("message.includes('trip_progress_lifecycle_conflict')")).toBeLessThan(
       routeSource.indexOf("if (code === '23505')"),
     );
-    expect(routeSource).toContain('The trip lifecycle changed while this operation was being saved. Refresh and review the latest trip state.');
+    expect(routeSource).toContain('The trip lifecycle or journey odometer sequence changed while this operation was being saved. Refresh and review the latest trip state.');
     expect(routeSource).toContain('{ status: 409 }');
     expect(routeSource).not.toContain('const causeRecord =');
   });

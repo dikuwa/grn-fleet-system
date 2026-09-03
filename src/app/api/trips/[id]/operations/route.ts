@@ -314,18 +314,89 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
       const entryId = randomUUID();
       const deviation = entryType === 'route_deviation';
+      const occurredAtIso = occurredAt.toISOString();
       await runAtomicMutations((executor) => {
         const mutations = [
           executor.execute(sql`
+            SELECT pg_advisory_xact_lock(hashtextextended(${id}::text, 0))
+          `),
+          executor.execute(sql`
             SELECT CAST(CASE
               WHEN EXISTS (
-                SELECT 1 FROM trips
-                WHERE id = ${id}::uuid
-                  AND tenant_id = ${session.tenantId}::uuid
-                  AND status IN ('in_progress', 'return_due')
+                SELECT 1
+                FROM trips t
+                INNER JOIN trip_authorities ta
+                  ON ta.trip_id = t.id
+                 AND ta.tenant_id = ${session.tenantId}::uuid
+                WHERE t.id = ${id}::uuid
+                  AND t.tenant_id = ${session.tenantId}::uuid
+                  AND t.status IN ('in_progress', 'return_due')
+                  AND ta.id = ${context.authorityId}::uuid
+                  AND ta.status <> 'incident_reported'
+                  AND (
+                    ${canManage}::boolean
+                    OR EXISTS (
+                      SELECT 1
+                      FROM vehicle_allocations va
+                      INNER JOIN employees e ON e.id = va.driver_employee_id
+                      WHERE va.id = t.allocation_id
+                        AND e.tenant_id = ${session.tenantId}::uuid
+                        AND e.user_id = ${session.user.id}
+                    )
+                    OR EXISTS (
+                      SELECT 1
+                      FROM request_drivers rd
+                      INNER JOIN employees e ON e.id = rd.employee_id
+                      WHERE rd.request_id = t.request_id
+                        AND e.tenant_id = ${session.tenantId}::uuid
+                        AND e.user_id = ${session.user.id}
+                        AND rd.driver_type IN ('assigned', 'additional')
+                    )
+                  )
+                FOR UPDATE OF t, ta
               )
               THEN '1'
               ELSE 'trip_progress_lifecycle_conflict'
+            END AS integer) AS guard
+          `),
+          executor.execute(sql`
+            SELECT CAST(CASE
+              WHEN ${odometer}::integer IS NULL
+                OR (
+                  NOT EXISTS (
+                    SELECT 1
+                    FROM trip_authorities ta
+                    WHERE ta.id = ${context.authorityId}::uuid
+                      AND ta.tenant_id = ${session.tenantId}::uuid
+                      AND (
+                        ${odometer}::integer < COALESCE(ta.beginning_odometer, 0)
+                        OR (
+                          ta.ending_odometer IS NOT NULL
+                          AND ${odometer}::integer > ta.ending_odometer
+                        )
+                      )
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM trip_progress_entries p
+                    WHERE p.tenant_id = ${session.tenantId}::uuid
+                      AND p.trip_id = ${id}::uuid
+                      AND p.odometer_reading IS NOT NULL
+                      AND p.occurred_at < ${occurredAtIso}::timestamptz
+                      AND p.odometer_reading > ${odometer}::integer
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1
+                    FROM trip_progress_entries p
+                    WHERE p.tenant_id = ${session.tenantId}::uuid
+                      AND p.trip_id = ${id}::uuid
+                      AND p.odometer_reading IS NOT NULL
+                      AND p.occurred_at > ${occurredAtIso}::timestamptz
+                      AND p.odometer_reading < ${odometer}::integer
+                  )
+                )
+              THEN '1'
+              ELSE 'trip_progress_odometer_conflict'
             END AS integer) AS guard
           `),
           executor.insert(tripProgressEntries).values({
@@ -361,7 +432,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
             sourceChannel: clientSyncId ? 'offline_sync' : 'web',
           }),
         ];
-        if (deviation && context.authorityStatus === 'in_progress') {
+        if (deviation) {
           mutations.push(
             executor
               .update(tripAuthorities)
@@ -594,10 +665,11 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const { message, code } = getDatabaseErrorDetails(error);
     if (
       message.includes('trip_progress_lifecycle_conflict') ||
+      message.includes('trip_progress_odometer_conflict') ||
       message.includes('trip_expense_lifecycle_conflict')
     ) {
       return NextResponse.json(
-        { error: 'The trip lifecycle changed while this operation was being saved. Refresh and review the latest trip state.' },
+        { error: 'The trip lifecycle or journey odometer sequence changed while this operation was being saved. Refresh and review the latest trip state.' },
         { status: 409 },
       );
     }
