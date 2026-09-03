@@ -18,7 +18,8 @@ describe('driver licence review concurrency recovery', () => {
     expect(routeSource).toContain('WHEN EXISTS (');
     expect(routeSource).toContain('FROM driver_licences');
     expect(routeSource).toContain('verification_status = ${current.verificationStatus}');
-    expect(routeSource).toContain('updated_at = ${current.updatedAt.toISOString()}::timestamptz');
+    expect(routeSource).toContain("date_trunc('milliseconds', updated_at) = ${current.updatedAt.toISOString()}::timestamptz");
+    expect(routeSource).not.toContain('AND updated_at = ${current.updatedAt.toISOString()}::timestamptz');
     expect(routeSource).toContain('FOR UPDATE');
     expect(routeSource).toContain("ELSE 'driver_licence_review_conflict'");
     expect(routeSource).not.toContain('CAST(COALESCE((');
