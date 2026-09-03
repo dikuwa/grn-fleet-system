@@ -16,7 +16,7 @@ describe('driver licence review concurrency recovery', () => {
     expect(routeSource).toContain('function licenceReviewRevisionGuard');
     expect(routeSource).toContain('FROM driver_licences');
     expect(routeSource).toContain('verification_status = ${current.verificationStatus}');
-    expect(routeSource).toContain('updated_at = ${current.updatedAt}::timestamptz');
+    expect(routeSource).toContain('updated_at = ${current.updatedAt.toISOString()}::timestamptz');
     expect(routeSource).toContain('FOR UPDATE');
     expect(routeSource).toContain("'driver_licence_review_conflict'");
     expect(routeSource.match(/licenceReviewRevisionGuard\(executor, current\)/g)?.length).toBe(3);
