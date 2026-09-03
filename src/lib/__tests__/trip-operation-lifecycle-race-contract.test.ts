@@ -53,10 +53,9 @@ describe('trip operation lifecycle race contract', () => {
     expect(routeSource).toContain("status IN ('in_progress', 'return_due', 'closure_review')");
   });
 
-  it('unwraps nested database errors and maps lifecycle races before generic duplicates', () => {
-    expect(routeSource).toContain('errorRecord?.cause');
-    expect(routeSource).toContain('causeRecord?.message');
-    expect(routeSource).toContain('causeRecord?.code');
+  it('uses the shared nested database parser and maps lifecycle races before generic duplicates', () => {
+    expect(routeSource).toContain("import { getDatabaseErrorDetails } from '@/lib/database-error-details';");
+    expect(routeSource).toContain('const { message, code } = getDatabaseErrorDetails(error);');
     expect(routeSource).toContain("message.includes('trip_progress_lifecycle_conflict')");
     expect(routeSource).toContain("message.includes('trip_expense_lifecycle_conflict')");
     expect(routeSource.indexOf("message.includes('trip_progress_lifecycle_conflict')")).toBeLessThan(
@@ -64,5 +63,6 @@ describe('trip operation lifecycle race contract', () => {
     );
     expect(routeSource).toContain('The trip lifecycle changed while this operation was being saved. Refresh and review the latest trip state.');
     expect(routeSource).toContain('{ status: 409 }');
+    expect(routeSource).not.toContain('const causeRecord =');
   });
 });
