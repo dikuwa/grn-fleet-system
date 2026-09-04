@@ -22,6 +22,8 @@ import { namibiaLicenceClassCovers } from '@/lib/namibia-licence';
 import { eq, and, desc, isNull, sql } from 'drizzle-orm';
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
@@ -67,6 +69,10 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     ]);
     if (permCheck instanceof NextResponse) return permCheck;
 
+    if (!UUID_PATTERN.test(id)) {
+      return NextResponse.json({ error: 'Trip ID is invalid' }, { status: 400 });
+    }
+
     const db = getDb();
     const [trip] = await db
       .select({
@@ -104,7 +110,7 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (!trip) return NextResponse.json({ error: 'Trip not found' }, { status: 404 });
     const tripRecord = trip.trip;
     if (tripRecord.status !== 'pending') {
-      return NextResponse.json({ error: `Cannot start trip with status "${tripRecord.status}".` }, { status: 409 });
+      return NextResponse.json({ error: `Cannot start trip with status \"${tripRecord.status}\".` }, { status: 409 });
     }
     if (trip.allocationState !== 'confirmed') {
       return NextResponse.json({ error: `Allocation must be confirmed before departure (${trip.allocationState})` }, { status: 409 });
