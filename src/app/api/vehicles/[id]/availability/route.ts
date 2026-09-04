@@ -217,12 +217,16 @@ export async function GET(
       }
     }
 
-    const complianceDate = startParam ?? new Date().toISOString().slice(0, 10);
+    // Compliance evidence must remain valid for the whole requested allocation
+    // period, not merely at departure. When no period is supplied, preserve the
+    // current-day compliance check.
+    const complianceDate =
+      requestedEndDateOnly ?? startParam ?? new Date().toISOString().slice(0, 10);
 
     if (vehicle.licenceExpiryDate && vehicle.licenceExpiryDate < complianceDate) {
       blockers.push({
         type: 'vehicle_status',
-        detail: `Vehicle licence expires before the requested period (${vehicle.licenceExpiryDate}).`,
+        detail: `Vehicle licence expires before the requested period ends (${vehicle.licenceExpiryDate}).`,
         severity: 'error',
       });
     }
@@ -244,7 +248,7 @@ export async function GET(
     if (roadworthyDocument?.expiryDate && roadworthyDocument.expiryDate < complianceDate) {
       blockers.push({
         type: 'vehicle_status',
-        detail: `Verified roadworthy document expires before the requested period (${roadworthyDocument.expiryDate}).`,
+        detail: `Verified roadworthy document expires before the requested period ends (${roadworthyDocument.expiryDate}).`,
         severity: 'error',
       });
     }
