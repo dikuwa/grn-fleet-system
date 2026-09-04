@@ -29,6 +29,8 @@ import { SystemRoles, WorkspaceIds } from '@/lib/workspaces';
 
 const ACTIVE_HANDOVER_STATUSES = ['in_progress', 'return_due'] as const;
 const LIVE_ALLOCATION_STATES = ['provisional', 'confirmed', 'issued'] as const;
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function maskLicence(value: string) {
   const clean = value.trim();
@@ -113,6 +115,15 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     }
     if (!Number.isInteger(handoverOdometer) || handoverOdometer < 0) {
       return NextResponse.json({ error: 'Handover odometer must be a non-negative whole number' }, { status: 422 });
+    }
+    if (!UUID_PATTERN.test(tripId)) {
+      return NextResponse.json({ error: 'Trip not found' }, { status: 404 });
+    }
+    if (!UUID_PATTERN.test(newDriverEmployeeId)) {
+      return NextResponse.json(
+        { error: 'The selected relief driver is not active, authorised, or does not have an active verified licence' },
+        { status: 409 },
+      );
     }
 
     const db = getDb();
@@ -444,9 +455,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     });
   } catch (error) {
     console.error('[trips/driver-handover] POST failed:', error);
-    if (String(error).includes('atomic_driver_handover_initiate_failed')) {
+    if (
+      String(error).includes('atomic_driver_handover_initiate_failed') ||
+      String(error).includes('atomic_driver_handover_ack_failed')
+    ) {
       return NextResponse.json(
-        { error: 'The trip, vehicle, allocation, or driver changed while the handover was being prepared. Refresh and review the latest state.' },
+        { error: 'The trip, vehicle, allocation, or driver changed while the handover was being recorded. Refresh and review the latest state.' },
         { status: 409 },
       );
     }
@@ -459,6 +473,9 @@ async function acknowledgeHandover(session: AuthSession, tripId: string, note?: 
   if (routeCheck instanceof NextResponse) return routeCheck;
   const canDrive = await hasPermission(session, Permissions.DRIVER_LOG_CREATE);
   if (!canDrive) return NextResponse.json({ error: 'Driver permission is required' }, { status: 403 });
+  if (!UUID_PATTERN.test(tripId)) {
+    return NextResponse.json({ error: 'Pending handover assignment not found' }, { status: 404 });
+  }
 
   const db = getDb();
   const [employee] = await db
