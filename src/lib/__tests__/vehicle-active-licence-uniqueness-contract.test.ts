@@ -6,8 +6,12 @@ const migrationSource = readFileSync(
   resolve(process.cwd(), 'src/db/migrations/0113_vehicle_active_licence_uniqueness.sql'),
   'utf8',
 );
-const routeSource = readFileSync(
+const createRouteSource = readFileSync(
   resolve(process.cwd(), 'src/app/api/fleet/route.ts'),
+  'utf8',
+);
+const updateRouteSource = readFileSync(
+  resolve(process.cwd(), 'src/app/api/fleet/[id]/route.ts'),
   'utf8',
 );
 
@@ -22,18 +26,30 @@ describe('active vehicle licence uniqueness contract', () => {
     expect(migrationSource).toContain('WHERE is_active = true');
   });
 
-  it('uses the same normalization for the friendly duplicate pre-check', () => {
-    expect(routeSource).toContain(
+  it('uses the same normalization for create and edit duplicate pre-checks', () => {
+    expect(createRouteSource).toContain(
       'lower(btrim(${vehicles.licenceNumber})) = lower(btrim(${licenceNumber}))',
     );
-    expect(routeSource).toContain('eq(vehicles.tenantId, session.tenantId)');
-    expect(routeSource).toContain('eq(vehicles.isActive, true)');
+    expect(updateRouteSource).toContain(
+      'lower(btrim(${vehicles.licenceNumber})) = lower(btrim(${requestedLicenceNumber}))',
+    );
+    expect(createRouteSource).toContain('eq(vehicles.tenantId, session.tenantId)');
+    expect(updateRouteSource).toContain('eq(vehicles.tenantId, session.tenantId)');
+    expect(createRouteSource).toContain('eq(vehicles.isActive, true)');
+    expect(updateRouteSource).toContain('eq(vehicles.isActive, true)');
   });
 
-  it('maps the database uniqueness winner to a controlled conflict', () => {
-    expect(routeSource).toContain("details.code === '23505'");
-    expect(routeSource).toContain('uq_vehicles_tenant_active_licence_normalized');
-    expect(routeSource).toContain('An active vehicle with this licence number already exists in your fleet.');
-    expect(routeSource).toContain('{ status: 409 }');
+  it('maps database uniqueness winners to controlled conflicts on create and edit', () => {
+    for (const routeSource of [createRouteSource, updateRouteSource]) {
+      expect(routeSource).toContain("details.code === '23505'");
+      expect(routeSource).toContain('uq_vehicles_tenant_active_licence_normalized');
+      expect(routeSource).toContain('{ status: 409 }');
+    }
+    expect(createRouteSource).toContain(
+      'An active vehicle with this licence number already exists in your fleet.',
+    );
+    expect(updateRouteSource).toContain(
+      'Another active vehicle already uses this licence number.',
+    );
   });
 });
