@@ -19,6 +19,8 @@ import {
 const DUPLICATE_PHYSICAL_NUMBER_MESSAGE =
   'This physical Trip Authority number is already reserved or in use in this organisation. Check the paper document number and try again.';
 const TRIP_CREATION_ALLOCATION_CONFLICT = 'trip_creation_allocation_conflict';
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function POST(req: NextRequest) {
   try {
@@ -37,6 +39,9 @@ export async function POST(req: NextRequest) {
     if (routeCheck instanceof NextResponse) return routeCheck;
     const permCheck = await requirePermission(session, Permissions.ALLOCATION_MANAGE);
     if (permCheck instanceof NextResponse) return permCheck;
+    if (!UUID_PATTERN.test(allocationId)) {
+      return NextResponse.json({ error: 'Allocation not found' }, { status: 404 });
+    }
 
     const db = getDb();
     const tenantId = session.tenantId;
