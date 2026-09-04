@@ -10,6 +10,8 @@ import { Permissions } from '@/lib/permissions';
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
 import { WorkspaceIds } from '@/lib/workspaces';
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** Cancel an authorised trip before physical issue/departure. */
 export async function POST(
   request: NextRequest,
@@ -32,6 +34,9 @@ export async function POST(
     }
     if (reason.length > 500) {
       return NextResponse.json({ error: 'Cancellation reason must be 500 characters or fewer.' }, { status: 422 });
+    }
+    if (!UUID_PATTERN.test(id)) {
+      return NextResponse.json({ error: 'Trip ID is invalid' }, { status: 400 });
     }
 
     const db = getDb();
