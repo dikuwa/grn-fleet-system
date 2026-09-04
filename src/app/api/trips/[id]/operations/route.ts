@@ -60,6 +60,8 @@ const continuationStates = [
   'trip_terminated',
 ] as const;
 const forcedCriticalTypes = new Set(['fuel_leak_issue', 'fire_smoke']);
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 async function notifyTransportAdministrators(
   tenantId: string,
@@ -114,6 +116,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const offlineCreatedAt = optionalDate(body.offlineCreatedAt);
     if (body.offlineCreatedAt && !offlineCreatedAt) {
       return NextResponse.json({ error: 'Offline creation time is invalid' }, { status: 422 });
+    }
+    if (!UUID_PATTERN.test(id)) {
+      return NextResponse.json({ error: 'Trip not found' }, { status: 404 });
     }
 
     const db = getDb();
@@ -605,6 +610,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (odometer !== null && (!Number.isInteger(odometer) || odometer < (context.beginningOdometer ?? 0))) {
       return NextResponse.json({ error: 'Incident odometer is invalid for this trip' }, { status: 422 });
     }
+    const dailyLogEntryId = body.dailyLogEntryId ? String(body.dailyLogEntryId).trim() : null;
+    if (dailyLogEntryId && !UUID_PATTERN.test(dailyLogEntryId)) {
+      return NextResponse.json({ error: 'Daily log entry ID is invalid' }, { status: 422 });
+    }
     const category = await getIncidentCategory(session.tenantId, incidentType);
     const result = await createIncident({
       tenantId: session.tenantId,
@@ -629,7 +638,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       passengerSafe: typeof body.passengerSafe === 'boolean' ? body.passengerSafe : undefined,
       numberInjured: normalizedInjuryCount,
       detailsRequired: body.rapidReport === true,
-      dailyLogEntryId: body.dailyLogEntryId ? String(body.dailyLogEntryId) : null,
+      dailyLogEntryId,
       journeyLegReference: body.journeyLegReference ? String(body.journeyLegReference) : null,
       origin: body.origin ? String(body.origin) : null,
       destination: body.destination ? String(body.destination) : null,
