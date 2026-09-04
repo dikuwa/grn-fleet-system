@@ -1,11 +1,53 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { and, eq } from 'drizzle-orm';
+import { and, desc, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { vehicleDocuments, vehicles } from '@/db/schema/fleet';
 import { requireDashboardAction, requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { VEHICLE_DOCUMENT_TYPE_SET } from '@/lib/vehicle-documents';
+
+export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  try {
+    const auth = await requireRequestAuth(request);
+    if (!auth.ok) return auth.error;
+    const { session } = auth;
+    const routeCheck = await requireDashboardAction(session, '/dashboard/fleet', 'update');
+    if (routeCheck instanceof NextResponse) return routeCheck;
+    const vehiclePermission = await requirePermission(session, Permissions.VEHICLE_UPDATE);
+    if (vehiclePermission instanceof NextResponse) return vehiclePermission;
+
+    const { id } = await params;
+    const db = getDb();
+    const documents = await db
+      .select({
+        id: vehicleDocuments.id,
+        documentType: vehicleDocuments.documentType,
+        documentName: vehicleDocuments.documentName,
+        referenceNumber: vehicleDocuments.referenceNumber,
+        issueDate: vehicleDocuments.issueDate,
+        expiryDate: vehicleDocuments.expiryDate,
+        fileKey: vehicleDocuments.fileKey,
+        isVerified: vehicleDocuments.isVerified,
+        updatedAt: vehicleDocuments.updatedAt,
+      })
+      .from(vehicleDocuments)
+      .innerJoin(vehicles, eq(vehicleDocuments.vehicleId, vehicles.id))
+      .where(
+        and(
+          eq(vehicleDocuments.vehicleId, id),
+          eq(vehicles.tenantId, session.tenantId),
+          eq(vehicleDocuments.isVerified, false),
+        ),
+      )
+      .orderBy(desc(vehicleDocuments.createdAt));
+
+    return NextResponse.json({ documents });
+  } catch (error) {
+    console.error('[fleet/:id/documents] GET failed:', error);
+    return NextResponse.json({ error: 'Vehicle documents could not be loaded' }, { status: 500 });
+  }
+}
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
