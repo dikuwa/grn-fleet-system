@@ -33,6 +33,7 @@ import { SystemRoles } from '@/lib/workspaces';
 
 const ACCEPTANCE_METHODS = ['in_person', 'phone', 'signed_paper', 'secure_link'] as const;
 type AcceptanceMethod = (typeof ACCEPTANCE_METHODS)[number];
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -234,6 +235,9 @@ export async function GET(request: NextRequest, context: RouteContext) {
     if (!tripAccess.allowed || !tripAccess.actions.includes('view')) {
       return NextResponse.json({ error: 'Trip Authority not found' }, { status: 404 });
     }
+    if (!UUID_PATTERN.test(tripId)) {
+      return NextResponse.json({ error: 'Trip Authority not found' }, { status: 404 });
+    }
 
     const db = getDb();
     const [scopedTrip] = await db
@@ -313,6 +317,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
       acceptanceMethod?: string;
       note?: string;
     };
+    if (!UUID_PATTERN.test(tripId)) {
+      return NextResponse.json({ error: 'Trip Authority not found' }, { status: 404 });
+    }
 
     const db = getDb();
     const tenantId = session.tenantId;
