@@ -35,6 +35,9 @@ import { buildFleetPdfFilename } from '@/lib/pdf/document-filename';
 export const runtime = 'nodejs';
 export const maxDuration = 30;
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const auth = await requireRequestAuth(request);
@@ -49,6 +52,9 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     const roleNames = await getSessionRoleNames(session);
     const access = resolveDashboardAccess('/dashboard/trips', roleNames);
     const { id } = await params;
+    if (!UUID_PATTERN.test(id)) {
+      return NextResponse.json({ error: 'Trip Authority not found' }, { status: 404 });
+    }
     const db = getDb();
     const [authority] = await db
       .select({
