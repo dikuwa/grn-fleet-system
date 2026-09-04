@@ -48,9 +48,16 @@ describe('driver handover UUID guards', () => {
     expect(route).toContain("{ error: 'Pending handover assignment not found' }, { status: 404 }");
   });
 
-  it('preserves both atomic handover conflict families', () => {
-    expect(route).toContain('atomic_driver_handover_initiate_failed');
-    expect(route).toContain('atomic_driver_handover_ack_failed');
-    expect(route).toContain('{ status: 409 }');
+  it('maps both atomic handover conflict families to 409 before the generic 500', () => {
+    const catchIndex = route.indexOf("console.error('[trips/driver-handover] POST failed:', error)");
+    const initiateIndex = route.indexOf("String(error).includes('atomic_driver_handover_initiate_failed')", catchIndex);
+    const acknowledgeIndex = route.indexOf("String(error).includes('atomic_driver_handover_ack_failed')", catchIndex);
+    const conflictStatusIndex = route.indexOf('{ status: 409 }', acknowledgeIndex);
+    const genericIndex = route.indexOf("return NextResponse.json({ error: 'Driver handover could not be saved. Refresh and try again.' }, { status: 500 });", catchIndex);
+
+    expect(initiateIndex).toBeGreaterThan(catchIndex);
+    expect(acknowledgeIndex).toBeGreaterThan(initiateIndex);
+    expect(conflictStatusIndex).toBeGreaterThan(acknowledgeIndex);
+    expect(genericIndex).toBeGreaterThan(conflictStatusIndex);
   });
 });
