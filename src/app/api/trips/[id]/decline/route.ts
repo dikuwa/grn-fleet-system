@@ -9,6 +9,8 @@ import { createScopedNotifications, resolveActionNotifications, resolveActiveRol
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
 import { SystemRoles, WorkspaceIds } from '@/lib/workspaces';
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
  * Driver cannot perform the already-authorised assignment.
  *
@@ -36,6 +38,9 @@ export async function POST(
     }
     if (reason.length > 500) {
       return NextResponse.json({ error: 'Reason must be 500 characters or fewer.' }, { status: 422 });
+    }
+    if (!UUID_PATTERN.test(id)) {
+      return NextResponse.json({ error: 'Trip ID is invalid' }, { status: 400 });
     }
 
     const db = getDb();
