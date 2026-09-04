@@ -11,6 +11,9 @@ import { recordTenantRequestActivity } from '@/lib/tenant-activity';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
  * Transport Office records the physical return of an accepted external-driver
  * trip. External drivers are not tenant users, so they deliberately do not use
@@ -53,6 +56,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
     }
     if (body.returnLocation.trim().length > 240 || (body.comments?.length ?? 0) > 2000) {
       return NextResponse.json({ error: 'Return location or comments are too long' }, { status: 422 });
+    }
+    if (!UUID_PATTERN.test(id)) {
+      return NextResponse.json({ error: 'Active external-driver trip not found' }, { status: 404 });
     }
 
     const db = getDb();
