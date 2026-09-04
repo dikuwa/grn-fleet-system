@@ -6,6 +6,7 @@ import { eq, and, sql, inArray, count } from 'drizzle-orm';
 import { requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { checkEntitlement, getTenantEntitlements } from '@/lib/entitlements';
+import { getDatabaseErrorDetails } from '@/lib/database-error-details';
 
 interface VehicleImportRow {
   licence_number: string;
@@ -35,6 +36,11 @@ interface VehicleImportRow {
 const MAX_IMPORT_ROWS = 1000;
 const IMPORTABLE_STATUSES = new Set(['available', 'provisional', 'maintenance', 'out_of_service']);
 const EXISTING_VEHICLE_IMPORT_CONFLICT = 'existing_vehicle_import_conflict';
+const ACTIVE_LICENCE_UNIQUE_INDEX = 'uq_vehicles_tenant_active_licence_normalized';
+
+function normalizeLicenceNumber(value: string) {
+  return value.trim().toLowerCase();
+}
 
 function optionalNonNegativeInteger(value: string | undefined, label: string) {
   if (!value?.trim()) return null;
@@ -71,14 +77,15 @@ export async function POST(request: NextRequest) {
     const userId = session.user.id;
     const tenantId = session.tenantId;
 
-    const uniqueLicenceNumbers = Array.from(
+    const uniqueNormalizedLicenceNumbers = Array.from(
       new Set(
         rows
           .map((row) => row.licence_number?.trim())
-          .filter((value): value is string => Boolean(value)),
+          .filter((value): value is string => Boolean(value))
+          .map(normalizeLicenceNumber),
       ),
     );
-    const existingLicenceRows = uniqueLicenceNumbers.length
+    const existingLicenceRows = uniqueNormalizedLicenceNumbers.length
       ? await db
           .select({ licenceNumber: vehicles.licenceNumber })
           .from(vehicles)
@@ -86,13 +93,18 @@ export async function POST(request: NextRequest) {
             and(
               eq(vehicles.tenantId, tenantId),
               eq(vehicles.isActive, true),
-              inArray(vehicles.licenceNumber, uniqueLicenceNumbers),
+              inArray(
+                sql<string>`lower(btrim(${vehicles.licenceNumber}))`,
+                uniqueNormalizedLicenceNumbers,
+              ),
             ),
           )
       : [];
-    const existingLicenceNumbers = new Set(existingLicenceRows.map((row) => row.licenceNumber));
-    const incomingVehicleCount = uniqueLicenceNumbers.filter(
-      (licenceNumber) => !existingLicenceNumbers.has(licenceNumber),
+    const existingNormalizedLicenceNumbers = new Set(
+      existingLicenceRows.map((row) => normalizeLicenceNumber(row.licenceNumber)),
+    );
+    const incomingVehicleCount = uniqueNormalizedLicenceNumbers.filter(
+      (licenceNumber) => !existingNormalizedLicenceNumbers.has(licenceNumber),
     ).length;
 
     const entitlements = await getTenantEntitlements(tenantId);
@@ -158,6 +170,7 @@ export async function POST(request: NextRequest) {
           );
         }
 
+        const normalizedLicenceNumber = normalizeLicenceNumber(licenceNumber);
         const [existing] = await db
           .select({
             id: vehicles.id,
@@ -168,7 +181,7 @@ export async function POST(request: NextRequest) {
           .from(vehicles)
           .where(
             and(
-              eq(vehicles.licenceNumber, licenceNumber),
+              sql<boolean>`lower(btrim(${vehicles.licenceNumber})) = ${normalizedLicenceNumber}`,
               eq(vehicles.tenantId, tenantId),
               eq(vehicles.isActive, true),
             ),
@@ -289,10 +302,15 @@ export async function POST(request: NextRequest) {
         validCount++;
       } catch (rowError) {
         errorCount++;
+        const details = getDatabaseErrorDetails(rowError);
         const message =
           rowError instanceof Error && rowError.message.includes(EXISTING_VEHICLE_IMPORT_CONFLICT)
             ? 'Vehicle changed while this import row was being applied. Review the latest fleet record and retry this row.'
-            : String(rowError);
+            : details.code === '23505' || details.message.includes(ACTIVE_LICENCE_UNIQUE_INDEX)
+              ? 'An active vehicle with this licence number already exists. Review duplicate rows or concurrent fleet changes.'
+              : rowError instanceof Error
+                ? rowError.message
+                : String(rowError);
         await db.insert(importRows).values({
           batchId: batch.id,
           rowNumber: validCount + errorCount,
