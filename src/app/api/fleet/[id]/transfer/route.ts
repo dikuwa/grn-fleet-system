@@ -62,21 +62,13 @@ export async function POST(
       return NextResponse.json({ error: 'Target office not found in your tenant' }, { status: 404 });
     }
 
-    // Same-target retries are idempotent and do not append duplicate transfer history.
-    if (vehicle.officeId === targetOfficeId && vehicle.assignedOfficeId === targetOfficeId) {
-      return NextResponse.json({
-        success: true,
-        idempotentReplay: true,
-        data: {
-          vehicle,
-          previousOfficeId: vehicle.officeId,
-          newOfficeId: targetOfficeId,
-          officeName: targetOffice.name,
-        },
-      });
-    }
+    const alreadyAtTarget =
+      vehicle.officeId === targetOfficeId && vehicle.assignedOfficeId === targetOfficeId;
 
-    if (['allocated', 'issued'].includes(vehicle.status)) {
+    // Preserve same-target idempotency even if the vehicle is now operationally
+    // allocated/issued. A no-op retry must not be blocked simply because status
+    // advanced after the original transfer completed.
+    if (!alreadyAtTarget && ['allocated', 'issued'].includes(vehicle.status)) {
       return NextResponse.json(
         {
           error:
@@ -89,15 +81,21 @@ export async function POST(
     const reason = String(body.reason || '').trim() || `Transfer to ${targetOffice.name}`;
     const transferNote = `[TRANSFERRED TO ${targetOffice.name}: ${reason}]`;
 
-    // Lock and re-check vehicle state inside the mutation. The vehicle update and
-    // status-history row are one SQL statement, preventing a false audit event or
-    // an office change racing with a newly-created allocation/issue state.
+    // Claim the exact office/status state that was reviewed above before applying
+    // the transfer. Without the office predicates, two admins can both read the
+    // same old office and a stale request can silently overwrite a newer transfer
+    // after waiting on the row lock. The exact state claim turns that lost update
+    // into the controlled 409 below. Same-target retries remain a no-op and do not
+    // append duplicate transfer history.
     await db.execute(sql`
       WITH candidate AS (
         SELECT id, status, office_id, assigned_office_id, notes
         FROM vehicles
         WHERE id = ${id}::uuid
           AND tenant_id = ${session.tenantId}::uuid
+          AND status = ${vehicle.status}
+          AND office_id IS NOT DISTINCT FROM ${vehicle.officeId}::uuid
+          AND assigned_office_id IS NOT DISTINCT FROM ${vehicle.assignedOfficeId}::uuid
         FOR UPDATE
       ),
       transitioned AS (
@@ -113,6 +111,10 @@ export async function POST(
         FROM candidate AS c
         WHERE v.id = c.id
           AND c.status NOT IN ('allocated', 'issued')
+          AND (
+            c.office_id IS DISTINCT FROM ${targetOfficeId}::uuid
+            OR c.assigned_office_id IS DISTINCT FROM ${targetOfficeId}::uuid
+          )
         RETURNING v.id, c.status AS previous_status
       )
       INSERT INTO vehicle_status_events (
@@ -144,7 +146,7 @@ export async function POST(
       return NextResponse.json(
         {
           error:
-            'Vehicle operational state changed while the transfer was being processed. Refresh and complete the active allocation or trip first.',
+            'Vehicle office assignment or operational state changed while the transfer was being processed. Refresh the vehicle and review the latest assignment before retrying.',
         },
         { status: 409 },
       );
@@ -152,7 +154,7 @@ export async function POST(
 
     return NextResponse.json({
       success: true,
-      idempotentReplay: false,
+      idempotentReplay: alreadyAtTarget,
       data: {
         vehicle: updated,
         previousOfficeId: vehicle.officeId,
