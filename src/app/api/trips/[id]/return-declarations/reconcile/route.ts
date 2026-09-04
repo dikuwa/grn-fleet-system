@@ -15,6 +15,9 @@ import { Permissions } from '@/lib/permissions';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 type ReturnDeclaration = {
   incidentDeclared?: boolean;
   outstandingReceiptsDeclared?: boolean;
@@ -43,6 +46,9 @@ export async function POST(request: NextRequest, context: RouteContext) {
     if (permissionCheck instanceof NextResponse) return permissionCheck;
 
     const { id: tripId } = await context.params;
+    if (!UUID_PATTERN.test(tripId)) {
+      return NextResponse.json({ error: 'Trip Authority not found' }, { status: 404 });
+    }
     const db = getDb();
     const tenantId = session.tenantId;
 
