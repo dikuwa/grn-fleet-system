@@ -17,6 +17,9 @@ import { onTripIssued } from '@/lib/document-generator';
 const supported = ['date_extension', 'route_change', 'purpose_clarification', 'special_authorisation'] as const;
 type AmendmentType = (typeof supported)[number];
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function originalValue(authority: typeof tripAuthorities.$inferSelect, type: AmendmentType) {
   if (type === 'date_extension') return { validFrom: authority.validFrom, validUntil: authority.validUntil };
   if (type === 'route_change') return { origin: authority.origin, destination: authority.destination, approvedRoute: authority.approvedRoute };
@@ -63,6 +66,9 @@ export async function POST(
     }
     if (cleanReason.length > 1000) {
       return NextResponse.json({ error: 'Amendment reason must be 1000 characters or fewer' }, { status: 422 });
+    }
+    if (!UUID_PATTERN.test(id)) {
+      return NextResponse.json({ error: 'Trip Authority not found' }, { status: 404 });
     }
 
     const db = getDb();
@@ -135,6 +141,9 @@ export async function PATCH(
     const comment = body.comment?.trim() || '';
     if (comment.length > 1000) {
       return NextResponse.json({ error: 'Decision comment must be 1000 characters or fewer' }, { status: 422 });
+    }
+    if (!UUID_PATTERN.test(id) || !UUID_PATTERN.test(body.amendmentId)) {
+      return NextResponse.json({ error: 'Amendment not found' }, { status: 404 });
     }
 
     const db = getDb();
