@@ -455,9 +455,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     });
   } catch (error) {
     console.error('[trips/driver-handover] POST failed:', error);
-    if (String(error).includes('atomic_driver_handover_initiate_failed')) {
+    if (
+      String(error).includes('atomic_driver_handover_initiate_failed') ||
+      String(error).includes('atomic_driver_handover_ack_failed')
+    ) {
       return NextResponse.json(
-        { error: 'The trip, vehicle, allocation, or driver changed while the handover was being prepared. Refresh and review the latest state.' },
+        { error: 'The trip, vehicle, allocation, or driver changed while the handover was being recorded. Refresh and review the latest state.' },
         { status: 409 },
       );
     }
