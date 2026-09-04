@@ -7,6 +7,8 @@ import { requireDashboardAction, requirePermission, requireRequestAuth } from '@
 import { Permissions } from '@/lib/permissions';
 import { createScopedNotifications } from '@/lib/notification-service';
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
  * POST /api/defects/[id]/resolve
  * Resolve a tenant-scoped defect assigned to the current Maintenance Officer.
@@ -31,6 +33,10 @@ export async function POST(
     if (roleCheck instanceof NextResponse) return roleCheck;
     const permCheck = await requirePermission(session, Permissions.MAINTENANCE_MANAGE);
     if (permCheck instanceof NextResponse) return permCheck;
+
+    if (!UUID_PATTERN.test(id)) {
+      return NextResponse.json({ error: 'Defect ID is invalid' }, { status: 400 });
+    }
 
     const body = await request.json();
     const resolutionNotes = typeof body.resolutionNotes === 'string' ? body.resolutionNotes.trim() : '';
