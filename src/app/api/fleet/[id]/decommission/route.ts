@@ -54,25 +54,20 @@ export async function POST(
       return NextResponse.json({ error: 'Decommission reason is required' }, { status: 400 });
     }
 
-    // Same-state retries are safe and do not create duplicate history rows.
-    if (vehicle.status === targetStatus) {
-      return NextResponse.json({
-        success: true,
-        idempotentReplay: true,
-        data: { vehicle, event: null },
-      });
-    }
+    const alreadyAtTarget = vehicle.status === targetStatus;
 
-    // Vehicle mutation and status-history creation must succeed together. The
-    // candidate row is locked and the UPDATE re-checks operational status inside
-    // the same statement, so an allocation/issue race cannot be overwritten by
-    // a stale preflight read.
+    // Vehicle mutation and status-history creation must succeed together. Claim
+    // the exact status that was reviewed before applying the transition so a
+    // stale decommission request cannot silently overwrite a newer lifecycle
+    // decision after waiting on the row lock. Same-state retries remain no-op
+    // and do not create duplicate status-history rows.
     await db.execute(sql`
       WITH candidate AS (
         SELECT id, status, notes
         FROM vehicles
         WHERE id = ${id}::uuid
           AND tenant_id = ${session.tenantId}::uuid
+          AND status = ${vehicle.status}
         FOR UPDATE
       ),
       transitioned AS (
@@ -88,6 +83,7 @@ export async function POST(
         FROM candidate AS c
         WHERE v.id = c.id
           AND c.status NOT IN ('issued', 'allocated')
+          AND c.status <> ${targetStatus}
         RETURNING v.id, c.status AS previous_status
       )
       INSERT INTO vehicle_status_events (
@@ -119,7 +115,7 @@ export async function POST(
       return NextResponse.json(
         {
           error:
-            'Cannot decommission a vehicle that is currently on an active trip or allocation. Complete or cancel the operational workflow first.',
+            'Vehicle lifecycle state changed while decommissioning was being processed. Refresh the vehicle and review its current status before retrying.',
         },
         { status: 409 },
       );
@@ -127,10 +123,12 @@ export async function POST(
 
     return NextResponse.json({
       success: true,
-      idempotentReplay: false,
+      idempotentReplay: alreadyAtTarget,
       data: {
         vehicle: updated,
-        event: { previousStatus: vehicle.status, newStatus: targetStatus, reason },
+        event: alreadyAtTarget
+          ? null
+          : { previousStatus: vehicle.status, newStatus: targetStatus, reason },
       },
     });
   } catch (error) {
