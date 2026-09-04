@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { importBatches, importRows } from '@/db/schema/notifications';
-import { vehicleOdometerEvents, vehicles } from '@/db/schema/fleet';
+import { vehicleOdometerEvents, vehicleStatusEvents, vehicles } from '@/db/schema/fleet';
 import { eq, and, sql, inArray, count } from 'drizzle-orm';
 import { requireDashboardAction, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
@@ -260,6 +260,8 @@ export async function POST(request: NextRequest) {
           });
         } else {
           await db.transaction(async (tx) => {
+            const initialStatus = importedStatus || 'available';
+            const initialOdometer = importedOdometer ?? 0;
             const [vehicle] = await tx
               .insert(vehicles)
               .values({
@@ -281,13 +283,33 @@ export async function POST(request: NextRequest) {
                 grossVehicleMassKg,
                 seatedCapacity,
                 standingCapacity,
-                status: importedStatus || 'available',
-                currentOdometer: importedOdometer ?? 0,
+                status: initialStatus,
+                currentOdometer: initialOdometer,
                 notes: row.notes?.trim() || null,
                 createdBy: userId,
                 updatedBy: userId,
               })
               .returning();
+
+            await tx.insert(vehicleStatusEvents).values({
+              vehicleId: vehicle.id,
+              previousStatus: null,
+              newStatus: initialStatus,
+              reason: 'Initial fleet registration via bulk import',
+              changedByUserId: userId,
+              referenceEntityType: 'fleet_import',
+              referenceEntityId: batch.id,
+            });
+
+            if (initialOdometer > 0) {
+              await tx.insert(vehicleOdometerEvents).values({
+                vehicleId: vehicle.id,
+                odometerValue: initialOdometer,
+                source: 'manual_correction',
+                recordedByUserId: userId,
+                notes: `Initial fleet import odometer: ${initialOdometer} km`,
+              });
+            }
 
             await tx.insert(importRows).values({
               batchId: batch.id,
