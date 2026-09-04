@@ -20,6 +20,9 @@ import { recordTenantRequestActivity } from '@/lib/tenant-activity';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function POST(request: NextRequest, context: RouteContext) {
   try {
     const auth = await requireRequestAuth(request);
@@ -60,6 +63,12 @@ export async function POST(request: NextRequest, context: RouteContext) {
       (!Number.isFinite(body.longitude) || body.longitude < -180 || body.longitude > 180)
     ) {
       return NextResponse.json({ error: 'Longitude is invalid' }, { status: 422 });
+    }
+    if (!UUID_PATTERN.test(id)) {
+      return NextResponse.json(
+        { error: 'External-driver trip is not ready for departure or has not been physically issued' },
+        { status: 404 },
+      );
     }
 
     const db = getDb();
