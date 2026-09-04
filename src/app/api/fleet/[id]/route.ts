@@ -17,6 +17,7 @@ import { eq, and, ne, sql } from 'drizzle-orm';
 import { resolveDashboardAccess } from '@/lib/dashboard-access';
 import { vehicleScopeCondition } from '@/lib/record-scope';
 import { recordAuditEvent } from '@/lib/audit-event';
+import { getDatabaseErrorDetails } from '@/lib/database-error-details';
 
 const MANUAL_EDIT_STATUSES = new Set(['available', 'provisional', 'maintenance']);
 const PROTECTED_REACTIVATION_STATUSES = new Set(['maintenance', 'out_of_service', 'written_off']);
@@ -133,7 +134,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
           .where(
             and(
               eq(vehicles.tenantId, session.tenantId),
-              eq(vehicles.licenceNumber, requestedLicenceNumber),
+              sql<boolean>`lower(btrim(${vehicles.licenceNumber})) = lower(btrim(${requestedLicenceNumber}))`,
               eq(vehicles.isActive, true),
               ne(vehicles.id, id),
             ),
@@ -394,6 +395,16 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
           error:
             'This vehicle changed while you were editing it. Refresh the fleet record and review the latest operational status before saving again.',
         },
+        { status: 409 },
+      );
+    }
+    const details = getDatabaseErrorDetails(error);
+    if (
+      details.code === '23505' ||
+      details.message.includes('uq_vehicles_tenant_active_licence_normalized')
+    ) {
+      return NextResponse.json(
+        { error: 'Another active vehicle already uses this licence number.' },
         { status: 409 },
       );
     }

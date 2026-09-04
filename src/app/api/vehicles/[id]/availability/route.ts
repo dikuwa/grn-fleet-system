@@ -16,7 +16,7 @@ import {
   vehicles,
 } from '@/db/schema/fleet';
 import { vehicleAllocations } from '@/db/schema/trips';
-import { and, desc, eq, gt, isNotNull, isNull, lt, ne } from 'drizzle-orm';
+import { and, desc, eq, gt, isNotNull, isNull, lt, ne, sql } from 'drizzle-orm';
 import {
   getSessionRoleNames,
   requireDashboardAction,
@@ -217,34 +217,51 @@ export async function GET(
       }
     }
 
-    const complianceDate = startParam ?? new Date().toISOString().slice(0, 10);
+    // Compliance evidence must remain valid for the whole requested allocation
+    // period, not merely at departure. When no period is supplied, preserve the
+    // current-day compliance check.
+    const complianceDate =
+      requestedEndDateOnly ?? startParam ?? new Date().toISOString().slice(0, 10);
 
     if (vehicle.licenceExpiryDate && vehicle.licenceExpiryDate < complianceDate) {
       blockers.push({
         type: 'vehicle_status',
-        detail: `Vehicle licence expires before the requested period (${vehicle.licenceExpiryDate}).`,
+        detail: `Vehicle licence expires before the requested period ends (${vehicle.licenceExpiryDate}).`,
         severity: 'error',
       });
     }
 
+    // Retained document history must not let an older certificate with a later
+    // expiry override a newer verified roadworthy record. Match compliance-report
+    // semantics by selecting the newest verified evidence by issue date when
+    // present, otherwise by upload chronology. Do not require an expiry here;
+    // the existing policy only evaluates expiry when the current record has one.
     const [roadworthyDocument] = await db
-      .select({ expiryDate: vehicleDocuments.expiryDate })
+      .select({
+        expiryDate: vehicleDocuments.expiryDate,
+        issueDate: vehicleDocuments.issueDate,
+        createdAt: vehicleDocuments.createdAt,
+      })
       .from(vehicleDocuments)
       .where(
         and(
           eq(vehicleDocuments.vehicleId, id),
           eq(vehicleDocuments.documentType, 'roadworthy'),
           eq(vehicleDocuments.isVerified, true),
-          isNotNull(vehicleDocuments.expiryDate),
         ),
       )
-      .orderBy(desc(vehicleDocuments.expiryDate))
+      .orderBy(
+        desc(
+          sql`COALESCE(${vehicleDocuments.issueDate}::timestamptz, ${vehicleDocuments.createdAt})`,
+        ),
+        desc(vehicleDocuments.createdAt),
+      )
       .limit(1);
 
     if (roadworthyDocument?.expiryDate && roadworthyDocument.expiryDate < complianceDate) {
       blockers.push({
         type: 'vehicle_status',
-        detail: `Verified roadworthy document expires before the requested period (${roadworthyDocument.expiryDate}).`,
+        detail: `Verified roadworthy document expires before the requested period ends (${roadworthyDocument.expiryDate}).`,
         severity: 'error',
       });
     }

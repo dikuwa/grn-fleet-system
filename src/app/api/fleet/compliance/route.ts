@@ -45,8 +45,8 @@ export async function GET(req: NextRequest) {
       .orderBy(vehicles.licenceNumber);
 
     // Get all vehicle documents with expiry dates for this tenant's vehicles.
-    // Retained historical records are evidence, but only a verified current
-    // policy may satisfy insurance compliance.
+    // Retained historical records are evidence, but only verified current
+    // documents may supersede legacy profile compliance fields.
     const documentRows = await db
       .select({
         id: vehicleDocuments.id,
@@ -76,6 +76,14 @@ export async function GET(req: NextRequest) {
         status: 'valid' | 'expiring_soon' | 'expired' | 'unknown';
         daysRemaining: number | null;
       }> = [];
+      const newestDocumentFirst = (
+        a: (typeof docItems)[number],
+        b: (typeof docItems)[number],
+      ) => {
+        const aTime = a.issueDate ? new Date(a.issueDate).getTime() : a.createdAt.getTime();
+        const bTime = b.issueDate ? new Date(b.issueDate).getTime() : b.createdAt.getTime();
+        return bTime - aTime;
+      };
 
       // Licence expiry.
       if (v.licenceExpiryDate) {
@@ -98,8 +106,33 @@ export async function GET(req: NextRequest) {
         });
       }
 
-      // Roadworthy.
-      if (v.roadworthyTestDate) {
+      // Roadworthy: prefer the newest verified document evidence when present.
+      // The legacy roadworthyTestDate remains a fallback for older fleet records
+      // that pre-date the vehicle-document verification workflow.
+      const verifiedRoadworthyDocs = docItems
+        .filter((d) => d.documentType === 'roadworthy' && d.isVerified)
+        .sort(newestDocumentFirst);
+      const currentRoadworthy = verifiedRoadworthyDocs[0] ?? null;
+
+      if (currentRoadworthy?.expiryDate) {
+        const expiry = new Date(currentRoadworthy.expiryDate);
+        const days = Math.ceil((expiry.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
+        items.push({
+          type: 'roadworthy',
+          name: currentRoadworthy.documentName,
+          expiryDate: currentRoadworthy.expiryDate,
+          status: days < 0 ? 'expired' : days <= 30 ? 'expiring_soon' : 'valid',
+          daysRemaining: days,
+        });
+      } else if (currentRoadworthy) {
+        items.push({
+          type: 'roadworthy',
+          name: currentRoadworthy.documentName,
+          expiryDate: null,
+          status: 'unknown',
+          daysRemaining: null,
+        });
+      } else if (v.roadworthyTestDate) {
         const expiry = new Date(v.roadworthyTestDate);
         expiry.setFullYear(expiry.getFullYear() + 1);
         const days = Math.ceil((expiry.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
@@ -125,12 +158,9 @@ export async function GET(req: NextRequest) {
       // instead follows the newest verified policy. A newly uploaded renewal does
       // not grant compliance until it has been verified.
       const insuranceDocs = docItems.filter((d) => d.documentType === 'insurance');
-      const newestFirst = (a: (typeof insuranceDocs)[number], b: (typeof insuranceDocs)[number]) => {
-        const aTime = a.issueDate ? new Date(a.issueDate).getTime() : a.createdAt.getTime();
-        const bTime = b.issueDate ? new Date(b.issueDate).getTime() : b.createdAt.getTime();
-        return bTime - aTime;
-      };
-      const verifiedInsuranceDocs = insuranceDocs.filter((d) => d.isVerified).sort(newestFirst);
+      const verifiedInsuranceDocs = insuranceDocs
+        .filter((d) => d.isVerified)
+        .sort(newestDocumentFirst);
       const currentInsurance = verifiedInsuranceDocs[0] ?? null;
 
       if (currentInsurance) {
@@ -154,7 +184,7 @@ export async function GET(req: NextRequest) {
           });
         }
       } else if (insuranceDocs.length > 0) {
-        const pendingInsurance = [...insuranceDocs].sort(newestFirst)[0];
+        const pendingInsurance = [...insuranceDocs].sort(newestDocumentFirst)[0];
         items.push({
           type: 'insurance',
           name: `${pendingInsurance.documentName} (Pending verification)`,
