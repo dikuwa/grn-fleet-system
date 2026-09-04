@@ -9,6 +9,9 @@ import { POST as issueExternalVehicleCore } from './core';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function POST(request: NextRequest, context: RouteContext) {
   const auth = await requireRequestAuth(request);
   if (!auth.ok) return auth.error;
@@ -20,6 +23,10 @@ export async function POST(request: NextRequest, context: RouteContext) {
   if (permissionCheck instanceof NextResponse) return permissionCheck;
 
   const { id } = await context.params;
+  if (!UUID_PATTERN.test(id)) {
+    return NextResponse.json({ error: 'Trip ID is invalid' }, { status: 400 });
+  }
+
   const [trip] = await getDb()
     .select({ requestId: trips.requestId })
     .from(trips)
