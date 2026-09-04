@@ -37,6 +37,7 @@ const MAX_IMPORT_ROWS = 1000;
 const IMPORTABLE_STATUSES = new Set(['available', 'provisional', 'maintenance', 'out_of_service']);
 const EXISTING_VEHICLE_IMPORT_CONFLICT = 'existing_vehicle_import_conflict';
 const ACTIVE_LICENCE_UNIQUE_INDEX = 'uq_vehicles_tenant_active_licence_normalized';
+const VEHICLE_ENTITLEMENT_CONFLICT = 'vehicle_entitlement_conflict:';
 
 function normalizeLicenceNumber(value: string) {
   return value.trim().toLowerCase();
@@ -260,6 +261,27 @@ export async function POST(request: NextRequest) {
           });
         } else {
           await db.transaction(async (tx) => {
+            if (entitlements) {
+              await tx.execute(
+                sql`SELECT pg_advisory_xact_lock(hashtextextended(${`fleet-vehicle-entitlement:${tenantId}`}, 0))`,
+              );
+              const [countRow] = await tx
+                .select({ total: count() })
+                .from(vehicles)
+                .where(eq(vehicles.tenantId, tenantId));
+              const rowEntitlementCheck = checkEntitlement(
+                entitlements,
+                'vehicles',
+                countRow?.total ?? 0,
+                1,
+              );
+              if (!rowEntitlementCheck.ok) {
+                throw new Error(
+                  `${VEHICLE_ENTITLEMENT_CONFLICT}${rowEntitlementCheck.message || 'Vehicle limit reached'}`,
+                );
+              }
+            }
+
             const initialStatus = importedStatus || 'available';
             const initialOdometer = importedOdometer ?? 0;
             const [vehicle] = await tx
@@ -328,11 +350,13 @@ export async function POST(request: NextRequest) {
         const message =
           rowError instanceof Error && rowError.message.includes(EXISTING_VEHICLE_IMPORT_CONFLICT)
             ? 'Vehicle changed while this import row was being applied. Review the latest fleet record and retry this row.'
-            : details.code === '23505' || details.message.includes(ACTIVE_LICENCE_UNIQUE_INDEX)
-              ? 'An active vehicle with this licence number already exists. Review duplicate rows or concurrent fleet changes.'
-              : rowError instanceof Error
-                ? rowError.message
-                : String(rowError);
+            : rowError instanceof Error && rowError.message.startsWith(VEHICLE_ENTITLEMENT_CONFLICT)
+              ? rowError.message.slice(VEHICLE_ENTITLEMENT_CONFLICT.length)
+              : details.code === '23505' || details.message.includes(ACTIVE_LICENCE_UNIQUE_INDEX)
+                ? 'An active vehicle with this licence number already exists. Review duplicate rows or concurrent fleet changes.'
+                : rowError instanceof Error
+                  ? rowError.message
+                  : String(rowError);
         await db.insert(importRows).values({
           batchId: batch.id,
           rowNumber: validCount + errorCount,
