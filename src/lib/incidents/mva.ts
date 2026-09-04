@@ -13,6 +13,8 @@ import { recordAuditEvent } from '@/lib/audit-event';
 import { generateDocument } from '@/lib/document-generator';
 import { refreshIncidentOperationalDocuments } from '@/lib/incidents/document-refresh';
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 // Re-export client-safe constants and types
 export {
   INVESTIGATION_STATUSES,
@@ -33,6 +35,8 @@ import {
 
 /** Load an incident scoped to a tenant. Returns null if not found. */
 export async function getTenantIncident(tenantId: string, incidentId: string) {
+  if (!UUID_PATTERN.test(incidentId)) return null;
+
   const db = getDb();
   const [row] = await db
     .select()
