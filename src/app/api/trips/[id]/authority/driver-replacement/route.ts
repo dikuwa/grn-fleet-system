@@ -17,6 +17,9 @@ const AUTHORISER_PERMISSIONS = [
   Permissions.TRIP_AUTHORIZE_NATIONAL,
 ] as const;
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 type AuthoriserResult =
   | { ok: true; session: AuthSession }
   | { ok: false; error: NextResponse };
@@ -46,6 +49,10 @@ export async function GET(
     if (!auth.ok) return auth.error;
     const { session } = auth;
     const { id: tripId } = await params;
+    if (!UUID_PATTERN.test(tripId)) {
+      return NextResponse.json({ pending: false, amendment: null });
+    }
+
     const db = getDb();
 
     const [pending] = await db
@@ -144,6 +151,12 @@ export async function PATCH(
     const comment = body.comment?.trim() || '';
     if (comment.length > 1000) {
       return NextResponse.json({ error: 'Decision comment must be 1000 characters or fewer.' }, { status: 422 });
+    }
+    if (!UUID_PATTERN.test(id) || !UUID_PATTERN.test(body.amendmentId)) {
+      return NextResponse.json(
+        { error: 'Driver replacement amendment not found.' },
+        { status: 404 },
+      );
     }
 
     return decidePostAuthorisationDriverReplacement({
