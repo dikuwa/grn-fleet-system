@@ -11,6 +11,7 @@ import { vehicleScopeCondition } from '@/lib/record-scope';
 import { getDatabaseErrorDetails } from '@/lib/database-error-details';
 import { refreshIncidentOperationalDocuments } from '@/lib/incidents/document-refresh';
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const investigationStatuses = new Set([
   'pending',
   'in_progress',
@@ -43,6 +44,10 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     const routeAccess = resolveDashboardAccess('/dashboard/trips/incidents', roleNames);
     if (!routeAccess.allowed || !routeAccess.recordScope) {
       return NextResponse.json({ error: 'Incident review is not available in this workspace' }, { status: 403 });
+    }
+
+    if (!UUID_PATTERN.test(id)) {
+      return NextResponse.json({ error: 'Incident ID is invalid' }, { status: 400 });
     }
 
     const db = getDb();
