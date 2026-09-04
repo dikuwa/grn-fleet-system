@@ -21,6 +21,7 @@ import { getTenantEntitlements, checkEntitlement } from '@/lib/entitlements';
 import { getDatabaseErrorDetails } from '@/lib/database-error-details';
 
 const INITIAL_VEHICLE_STATUSES = new Set(['available', 'provisional', 'maintenance', 'out_of_service']);
+const VEHICLE_ENTITLEMENT_CONFLICT = 'vehicle_entitlement_conflict:';
 
 /**
  * GET /api/fleet
@@ -195,26 +196,10 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Enforce the tenant's subscription vehicle limit before creating.
+    // Resolve the entitlement before the transaction, but make the capacity
+    // decision authoritative only under the shared per-tenant advisory lock
+    // immediately before inserting the new vehicle.
     const entitlements = await getTenantEntitlements(session.tenantId);
-    if (entitlements) {
-      const [countRow] = await db
-        .select({ total: count() })
-        .from(vehicles)
-        .where(eq(vehicles.tenantId, session.tenantId));
-      const vehicleCheck = checkEntitlement(
-        entitlements,
-        'vehicles',
-        countRow?.total ?? 0,
-        1,
-      );
-      if (!vehicleCheck.ok) {
-        return NextResponse.json(
-          { error: vehicleCheck.message || 'Vehicle limit reached' },
-          { status: 409 },
-        );
-      }
-    }
 
     // Friendly pre-check uses the same normalisation as the database unique
     // invariant. The unique index remains authoritative under concurrency.
@@ -238,6 +223,27 @@ export async function POST(req: NextRequest) {
     }
 
     const vehicle = await db.transaction(async (tx) => {
+      if (entitlements) {
+        await tx.execute(
+          sql`SELECT pg_advisory_xact_lock(hashtextextended(${`fleet-vehicle-entitlement:${session.tenantId}`}, 0))`,
+        );
+        const [countRow] = await tx
+          .select({ total: count() })
+          .from(vehicles)
+          .where(eq(vehicles.tenantId, session.tenantId));
+        const vehicleCheck = checkEntitlement(
+          entitlements,
+          'vehicles',
+          countRow?.total ?? 0,
+          1,
+        );
+        if (!vehicleCheck.ok) {
+          throw new Error(
+            `${VEHICLE_ENTITLEMENT_CONFLICT}${vehicleCheck.message || 'Vehicle limit reached'}`,
+          );
+        }
+      }
+
       const [created] = await tx
         .insert(vehicles)
         .values({
@@ -315,6 +321,12 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ vehicle }, { status: 201 });
   } catch (error) {
     console.error('[fleet] POST failed:', error);
+    if (error instanceof Error && error.message.startsWith(VEHICLE_ENTITLEMENT_CONFLICT)) {
+      return NextResponse.json(
+        { error: error.message.slice(VEHICLE_ENTITLEMENT_CONFLICT.length) },
+        { status: 409 },
+      );
+    }
     const details = getDatabaseErrorDetails(error);
     if (
       details.code === '23505' ||
