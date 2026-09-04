@@ -10,7 +10,8 @@ const routeSource = readFileSync(
 describe('fleet compliance insurance evidence contract', () => {
   it('requires verified insurance before a policy can satisfy compliance', () => {
     expect(routeSource).toContain('isVerified: vehicleDocuments.isVerified');
-    expect(routeSource).toContain('const verifiedInsuranceDocs = insuranceDocs.filter((d) => d.isVerified)');
+    expect(routeSource).toContain('const verifiedInsuranceDocs = insuranceDocs');
+    expect(routeSource).toContain('.filter((d) => d.isVerified)');
     expect(routeSource).toContain('const currentInsurance = verifiedInsuranceDocs[0] ?? null;');
     expect(routeSource).toContain('(Pending verification)');
     expect(routeSource).toContain("status: 'unknown'");
@@ -19,7 +20,7 @@ describe('fleet compliance insurance evidence contract', () => {
   it('selects one current verified policy instead of evaluating retained insurance history', () => {
     expect(routeSource).toContain('issueDate: vehicleDocuments.issueDate');
     expect(routeSource).toContain('createdAt: vehicleDocuments.createdAt');
-    expect(routeSource).toContain('sort(newestFirst)');
+    expect(routeSource).toContain('.sort(newestDocumentFirst);');
     expect(routeSource).toContain('if (currentInsurance)');
     expect(routeSource).not.toContain('for (const doc of insuranceDocs)');
   });
