@@ -28,6 +28,8 @@ import { processDriverAcknowledgement } from '@/lib/driver-acknowledgement';
 import { namibiaLicenceClassCovers } from '@/lib/namibia-licence';
 import { sendWorkflowOutcomeEmailBestEffort } from '@/lib/workflow-outcome-email';
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function POST(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -84,6 +86,9 @@ export async function POST(
       (!Number.isFinite(body.longitude) || body.longitude < -180 || body.longitude > 180)
     ) {
       return NextResponse.json({ error: 'Longitude is invalid' }, { status: 422 });
+    }
+    if (!UUID_PATTERN.test(id)) {
+      return NextResponse.json({ error: 'Trip ID is invalid' }, { status: 400 });
     }
 
     const db = getDb();
