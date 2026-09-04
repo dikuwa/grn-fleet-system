@@ -10,6 +10,9 @@ import {
   validateManualAuthorityNumber,
 } from '@/lib/trip-authority';
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const auth = await requireRequestAuth(request);
   if (!auth.ok) return auth.error;
@@ -40,6 +43,10 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   }
   if (reason.length > 500) {
     return NextResponse.json({ error: 'Operational reason must be 500 characters or fewer.' }, { status: 422 });
+  }
+
+  if (!UUID_PATTERN.test(tripId)) {
+    return NextResponse.json({ error: 'Trip Authority not found' }, { status: 404 });
   }
 
   const db = getDb();
