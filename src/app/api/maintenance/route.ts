@@ -20,6 +20,10 @@ import {
   validateMaintenanceServiceDate,
   validateNextServiceOdometer,
 } from '@/lib/maintenance-record-validation';
+import {
+  parseOptionalIsoDate,
+  VehicleInputValidationError,
+} from '@/lib/vehicle-input-validation';
 
 const SERVICE_TYPES = new Set(['scheduled', 'repair', 'inspection']);
 
@@ -81,17 +85,23 @@ export async function POST(req: NextRequest) {
 
     const body = await req.json();
     const vehicleId = typeof body.vehicleId === 'string' ? body.vehicleId : '';
-    const serviceDate = typeof body.serviceDate === 'string' ? body.serviceDate : '';
+    const serviceDateInput = typeof body.serviceDate === 'string' ? body.serviceDate : '';
     const serviceType = typeof body.serviceType === 'string' ? body.serviceType : '';
     const description = typeof body.description === 'string' ? body.description.trim() : '';
     const vendorName = typeof body.vendorName === 'string' ? body.vendorName.trim() : '';
     const notes = typeof body.notes === 'string' ? body.notes.trim() : '';
-    const nextServiceDate = typeof body.nextServiceDate === 'string' && body.nextServiceDate ? body.nextServiceDate : null;
 
     if (!vehicleId) return NextResponse.json({ error: 'Vehicle ID is required' }, { status: 400 });
-    if (!serviceDate || Number.isNaN(Date.parse(`${serviceDate}T00:00:00Z`))) {
+    if (!serviceDateInput) {
       return NextResponse.json({ error: 'A valid service date is required' }, { status: 400 });
     }
+
+    const serviceDate = parseOptionalIsoDate(serviceDateInput, 'Service date');
+    if (!serviceDate) {
+      return NextResponse.json({ error: 'A valid service date is required' }, { status: 400 });
+    }
+    const nextServiceDate = parseOptionalIsoDate(body.nextServiceDate, 'Next service date');
+
     const serviceDateError = validateMaintenanceServiceDate(serviceDate);
     if (serviceDateError) {
       return NextResponse.json({ error: serviceDateError }, { status: 400 });
@@ -100,9 +110,6 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: 'Service type must be scheduled, repair, or inspection' }, { status: 400 });
     }
     if (!description) return NextResponse.json({ error: 'Description is required' }, { status: 400 });
-    if (nextServiceDate && Number.isNaN(Date.parse(`${nextServiceDate}T00:00:00Z`))) {
-      return NextResponse.json({ error: 'Next service date is invalid' }, { status: 400 });
-    }
     if (nextServiceDate && nextServiceDate < serviceDate) {
       return NextResponse.json({ error: 'Next service date cannot be before the service date' }, { status: 400 });
     }
@@ -240,6 +247,9 @@ export async function POST(req: NextRequest) {
     const [event] = await db.select().from(maintenanceEvents).where(eq(maintenanceEvents.id, eventId)).limit(1);
     return NextResponse.json({ data: event }, { status: 201 });
   } catch (error) {
+    if (error instanceof VehicleInputValidationError) {
+      return NextResponse.json({ error: error.message }, { status: 422 });
+    }
     const { code, message } = postgresErrorDetails(error);
     if (code === '23514' && message.includes('vehicle_odometer_regression')) {
       return NextResponse.json(
