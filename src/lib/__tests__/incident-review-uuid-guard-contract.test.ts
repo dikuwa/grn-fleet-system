@@ -14,7 +14,7 @@ describe('incident review UUID guard contract', () => {
     expect(reviewRoute).toContain("{ error: 'Incident ID is invalid' }");
     expect(reviewRoute).toContain('{ status: 400 }');
 
-    const permissionIndex = reviewRoute.indexOf('requireAnyPermission');
+    const permissionIndex = reviewRoute.indexOf('const permission = await requireAnyPermission');
     const guardIndex = reviewRoute.indexOf('if (!UUID_PATTERN.test(id))');
     const dbIndex = reviewRoute.indexOf('const db = getDb()');
 
