@@ -6,6 +6,9 @@ import { requireDashboardAction, requirePermission, requireRequestAuth } from '@
 import { Permissions } from '@/lib/permissions';
 import { evaluateTripReleaseGate, type TripReleaseGateStage } from '@/lib/trip-release-gate';
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const auth = await requireRequestAuth(req);
@@ -39,6 +42,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     }
 
     const { id } = await params;
+    if (!UUID_PATTERN.test(id)) {
+      return NextResponse.json({ error: 'Trip ID is invalid' }, { status: 400 });
+    }
+
     const db = getDb();
     const [trip] = await db
       .select({ id: trips.id, requestId: trips.requestId })
