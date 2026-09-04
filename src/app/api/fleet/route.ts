@@ -9,10 +9,11 @@ import {
   requirePermission,
 } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { eq, and, ilike, or, count, type SQL } from 'drizzle-orm';
+import { eq, and, ilike, or, count, sql, type SQL } from 'drizzle-orm';
 import { resolveDashboardAccess } from '@/lib/dashboard-access';
 import { vehicleScopeCondition } from '@/lib/record-scope';
 import { getTenantEntitlements, checkEntitlement } from '@/lib/entitlements';
+import { getDatabaseErrorDetails } from '@/lib/database-error-details';
 
 const INITIAL_VEHICLE_STATUSES = new Set(['available', 'provisional', 'maintenance', 'out_of_service']);
 
@@ -209,13 +210,14 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // Check for duplicate active licence number within tenant.
+    // Friendly pre-check uses the same normalisation as the database unique
+    // invariant. The unique index remains authoritative under concurrency.
     const [existing] = await db
       .select({ id: vehicles.id })
       .from(vehicles)
       .where(
         and(
-          eq(vehicles.licenceNumber, licenceNumber),
+          sql<boolean>`lower(btrim(${vehicles.licenceNumber})) = lower(btrim(${licenceNumber}))`,
           eq(vehicles.tenantId, session.tenantId),
           eq(vehicles.isActive, true),
         ),
@@ -283,6 +285,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ vehicle }, { status: 201 });
   } catch (error) {
     console.error('[fleet] POST failed:', error);
+    const details = getDatabaseErrorDetails(error);
+    if (
+      details.code === '23505' ||
+      details.message.includes('uq_vehicles_tenant_active_licence_normalized')
+    ) {
+      return NextResponse.json(
+        { error: 'An active vehicle with this licence number already exists in your fleet.' },
+        { status: 409 },
+      );
+    }
     return NextResponse.json({ error: 'Failed to create vehicle' }, { status: 500 });
   }
 }
