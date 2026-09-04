@@ -106,11 +106,14 @@ export async function GET(
 
     const blockers: Blocker[] = [];
 
-    const availableStatuses = ['available', 'provisional'];
-    if (!availableStatuses.includes(vehicle.status)) {
+    // Fresh allocation creation requires exactly the canonical "available"
+    // status in both /api/allocations and the database concurrency guard. Do
+    // not advertise provisional vehicles as allocatable here and then fail the
+    // actual reservation with a 409.
+    if (vehicle.status !== 'available') {
       blockers.push({
         type: 'vehicle_status',
-        detail: `Vehicle is currently "${vehicle.status}". Only available or provisional vehicles can be allocated.`,
+        detail: `Vehicle is currently "${vehicle.status}". Only available vehicles can be allocated.`,
         severity: 'error',
       });
     }
