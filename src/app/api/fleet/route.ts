@@ -19,6 +19,11 @@ import { resolveDashboardAccess } from '@/lib/dashboard-access';
 import { vehicleScopeCondition } from '@/lib/record-scope';
 import { getTenantEntitlements, checkEntitlement } from '@/lib/entitlements';
 import { getDatabaseErrorDetails } from '@/lib/database-error-details';
+import {
+  parseOptionalIsoDate,
+  parseOptionalNonNegativeInteger,
+  VehicleInputValidationError,
+} from '@/lib/vehicle-input-validation';
 
 const INITIAL_VEHICLE_STATUSES = new Set(['available', 'provisional', 'maintenance', 'out_of_service']);
 const VEHICLE_ENTITLEMENT_CONFLICT = 'vehicle_entitlement_conflict:';
@@ -168,6 +173,20 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    const manufactureYear = parseOptionalNonNegativeInteger(body.manufactureYear, 'Manufacture year');
+    const tareKg = parseOptionalNonNegativeInteger(body.tareKg, 'Tare weight');
+    const grossVehicleMassKg = parseOptionalNonNegativeInteger(
+      body.grossVehicleMassKg,
+      'Gross vehicle mass',
+    );
+    const seatedCapacity = parseOptionalNonNegativeInteger(body.seatedCapacity, 'Seated capacity');
+    const standingCapacity = parseOptionalNonNegativeInteger(
+      body.standingCapacity,
+      'Standing capacity',
+    );
+    const roadworthyTestDate = parseOptionalIsoDate(body.roadworthyTestDate, 'Roadworthy test date');
+    const licenceExpiryDate = parseOptionalIsoDate(body.licenceExpiryDate, 'Licence expiry date');
+
     if (body.categoryId) {
       const [category] = await db
         .select({ id: vehicleCategories.id })
@@ -261,7 +280,7 @@ export async function POST(req: NextRequest) {
           make,
           model,
           seriesName: body.seriesName || null,
-          manufactureYear: body.manufactureYear ? Number(body.manufactureYear) : null,
+          manufactureYear,
           vehicleCategory: body.vehicleCategory || null,
           vehicleDescription: body.vehicleDescription || null,
           driveType: body.driveType || null,
@@ -270,16 +289,16 @@ export async function POST(req: NextRequest) {
           transmission: body.transmission || 'manual',
 
           // Section C — Weight & capacity
-          tareKg: body.tareKg ? Number(body.tareKg) : null,
-          grossVehicleMassKg: body.grossVehicleMassKg ? Number(body.grossVehicleMassKg) : null,
-          seatedCapacity: body.seatedCapacity ? Number(body.seatedCapacity) : null,
-          standingCapacity: body.standingCapacity ? Number(body.standingCapacity) : null,
+          tareKg,
+          grossVehicleMassKg,
+          seatedCapacity,
+          standingCapacity,
 
           // Section D — Registration & compliance
           registeringAuthority: body.registeringAuthority || null,
           nationalVehicleClassification: body.nationalVehicleClassification || null,
-          roadworthyTestDate: body.roadworthyTestDate || null,
-          licenceExpiryDate: body.licenceExpiryDate || null,
+          roadworthyTestDate,
+          licenceExpiryDate,
 
           // Section E — Fleet assignment
           status: requestedStatus,
@@ -321,6 +340,9 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ vehicle }, { status: 201 });
   } catch (error) {
     console.error('[fleet] POST failed:', error);
+    if (error instanceof VehicleInputValidationError) {
+      return NextResponse.json({ error: error.message }, { status: 422 });
+    }
     if (error instanceof Error && error.message.startsWith(VEHICLE_ENTITLEMENT_CONFLICT)) {
       return NextResponse.json(
         { error: error.message.slice(VEHICLE_ENTITLEMENT_CONFLICT.length) },
