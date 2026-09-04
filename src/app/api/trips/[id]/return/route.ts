@@ -11,6 +11,9 @@ import { recordTenantRequestActivity } from '@/lib/tenant-activity';
 import { createScopedNotifications } from '@/lib/notification-service';
 import { WorkspaceIds } from '@/lib/workspaces';
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function POST(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
@@ -52,6 +55,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
       Permissions.DRIVER_LOG_CREATE,
     ]);
     if (permCheck instanceof NextResponse) return permCheck;
+    if (!UUID_PATTERN.test(id)) {
+      return NextResponse.json({ error: 'Trip not found' }, { status: 404 });
+    }
 
     const db = getDb();
     const [trip] = await db
