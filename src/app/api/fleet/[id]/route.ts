@@ -18,6 +18,11 @@ import { resolveDashboardAccess } from '@/lib/dashboard-access';
 import { vehicleScopeCondition } from '@/lib/record-scope';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { getDatabaseErrorDetails } from '@/lib/database-error-details';
+import {
+  parseOptionalIsoDate,
+  parseOptionalNonNegativeInteger,
+  VehicleInputValidationError,
+} from '@/lib/vehicle-input-validation';
 
 const MANUAL_EDIT_STATUSES = new Set(['available', 'provisional', 'maintenance']);
 const PROTECTED_REACTIVATION_STATUSES = new Set(['maintenance', 'out_of_service', 'written_off']);
@@ -168,6 +173,35 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       }
     }
 
+    const manufactureYear =
+      body.manufactureYear === undefined
+        ? undefined
+        : parseOptionalNonNegativeInteger(body.manufactureYear, 'Manufacture year');
+    const tareKg =
+      body.tareKg === undefined
+        ? undefined
+        : parseOptionalNonNegativeInteger(body.tareKg, 'Tare weight');
+    const grossVehicleMassKg =
+      body.grossVehicleMassKg === undefined
+        ? undefined
+        : parseOptionalNonNegativeInteger(body.grossVehicleMassKg, 'Gross vehicle mass');
+    const seatedCapacity =
+      body.seatedCapacity === undefined
+        ? undefined
+        : parseOptionalNonNegativeInteger(body.seatedCapacity, 'Seated capacity');
+    const standingCapacity =
+      body.standingCapacity === undefined
+        ? undefined
+        : parseOptionalNonNegativeInteger(body.standingCapacity, 'Standing capacity');
+    const roadworthyTestDate =
+      body.roadworthyTestDate === undefined
+        ? undefined
+        : parseOptionalIsoDate(body.roadworthyTestDate, 'Roadworthy test date');
+    const licenceExpiryDate =
+      body.licenceExpiryDate === undefined
+        ? undefined
+        : parseOptionalIsoDate(body.licenceExpiryDate, 'Licence expiry date');
+
     const requestedStatus = body.status === undefined ? undefined : String(body.status).trim();
     if (requestedStatus !== undefined && requestedStatus !== existing.status) {
       if (['allocated', 'issued'].includes(existing.status)) {
@@ -261,8 +295,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (body.make !== undefined) updateData.make = body.make;
     if (body.model !== undefined) updateData.model = body.model;
     if (body.seriesName !== undefined) updateData.seriesName = body.seriesName || null;
-    if (body.manufactureYear !== undefined)
-      updateData.manufactureYear = body.manufactureYear ? Number(body.manufactureYear) : null;
+    if (manufactureYear !== undefined) updateData.manufactureYear = manufactureYear;
     if (body.vehicleCategory !== undefined)
       updateData.vehicleCategory = body.vehicleCategory || null;
     if (body.vehicleDescription !== undefined)
@@ -272,24 +305,17 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     if (body.fuelType !== undefined) updateData.fuelType = body.fuelType;
     if (body.transmission !== undefined) updateData.transmission = body.transmission;
 
-    if (body.tareKg !== undefined) updateData.tareKg = body.tareKg ? Number(body.tareKg) : null;
-    if (body.grossVehicleMassKg !== undefined)
-      updateData.grossVehicleMassKg = body.grossVehicleMassKg
-        ? Number(body.grossVehicleMassKg)
-        : null;
-    if (body.seatedCapacity !== undefined)
-      updateData.seatedCapacity = body.seatedCapacity ? Number(body.seatedCapacity) : null;
-    if (body.standingCapacity !== undefined)
-      updateData.standingCapacity = body.standingCapacity ? Number(body.standingCapacity) : null;
+    if (tareKg !== undefined) updateData.tareKg = tareKg;
+    if (grossVehicleMassKg !== undefined) updateData.grossVehicleMassKg = grossVehicleMassKg;
+    if (seatedCapacity !== undefined) updateData.seatedCapacity = seatedCapacity;
+    if (standingCapacity !== undefined) updateData.standingCapacity = standingCapacity;
 
     if (body.registeringAuthority !== undefined)
       updateData.registeringAuthority = body.registeringAuthority || null;
     if (body.nationalVehicleClassification !== undefined)
       updateData.nationalVehicleClassification = body.nationalVehicleClassification || null;
-    if (body.roadworthyTestDate !== undefined)
-      updateData.roadworthyTestDate = body.roadworthyTestDate || null;
-    if (body.licenceExpiryDate !== undefined)
-      updateData.licenceExpiryDate = body.licenceExpiryDate || null;
+    if (roadworthyTestDate !== undefined) updateData.roadworthyTestDate = roadworthyTestDate;
+    if (licenceExpiryDate !== undefined) updateData.licenceExpiryDate = licenceExpiryDate;
 
     if (requestedStatus !== undefined) updateData.status = requestedStatus;
     if (requestedOdometer !== undefined) updateData.currentOdometer = requestedOdometer;
@@ -312,10 +338,7 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
         .returning();
       if (!updated) throw new Error(VEHICLE_UPDATE_CONFLICT);
 
-      if (
-        requestedOdometer !== undefined &&
-        requestedOdometer !== existing.currentOdometer
-      ) {
+      if (requestedOdometer !== undefined && requestedOdometer !== existing.currentOdometer) {
         await tx.insert(vehicleOdometerEvents).values({
           vehicleId: id,
           odometerValue: requestedOdometer,
@@ -389,6 +412,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     return NextResponse.json({ vehicle });
   } catch (error) {
     console.error('[fleet/:id] PATCH failed:', error);
+    if (error instanceof VehicleInputValidationError) {
+      return NextResponse.json({ error: error.message }, { status: 422 });
+    }
     if (error instanceof Error && error.message.includes(VEHICLE_UPDATE_CONFLICT)) {
       return NextResponse.json(
         {
