@@ -1,6 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
-import { vehicles, vehicleCategories } from '@/db/schema/fleet';
+import {
+  vehicleCategories,
+  vehicleOdometerEvents,
+  vehicleStatusEvents,
+  vehicles,
+} from '@/db/schema/fleet';
 import { offices } from '@/db/schema/people';
 import {
   getSessionRoleNames,
@@ -151,9 +156,10 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const currentOdometer = body.currentOdometer === undefined || body.currentOdometer === ''
-      ? 0
-      : Number(body.currentOdometer);
+    const currentOdometer =
+      body.currentOdometer === undefined || body.currentOdometer === ''
+        ? 0
+        : Number(body.currentOdometer);
     if (!Number.isInteger(currentOdometer) || currentOdometer < 0) {
       return NextResponse.json(
         { error: 'Current odometer must be a non-negative whole number' },
@@ -231,57 +237,81 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const [vehicle] = await db
-      .insert(vehicles)
-      .values({
-        tenantId: session.tenantId,
-        createdBy: session.user.id,
-        updatedBy: session.user.id,
+    const vehicle = await db.transaction(async (tx) => {
+      const [created] = await tx
+        .insert(vehicles)
+        .values({
+          tenantId: session.tenantId,
+          createdBy: session.user.id,
+          updatedBy: session.user.id,
 
-        // Section A — Identity
-        licenceNumber,
-        vehicleRegisterNumber: body.vehicleRegisterNumber || null,
-        vin: body.vin || null,
-        engineNumber: body.engineNumber || null,
+          // Section A — Identity
+          licenceNumber,
+          vehicleRegisterNumber: body.vehicleRegisterNumber || null,
+          vin: body.vin || null,
+          engineNumber: body.engineNumber || null,
 
-        // Section B — Description
-        make,
-        model,
-        seriesName: body.seriesName || null,
-        manufactureYear: body.manufactureYear ? Number(body.manufactureYear) : null,
-        vehicleCategory: body.vehicleCategory || null,
-        vehicleDescription: body.vehicleDescription || null,
-        driveType: body.driveType || null,
-        colour: body.colour || null,
-        fuelType: body.fuelType || 'petrol',
-        transmission: body.transmission || 'manual',
+          // Section B — Description
+          make,
+          model,
+          seriesName: body.seriesName || null,
+          manufactureYear: body.manufactureYear ? Number(body.manufactureYear) : null,
+          vehicleCategory: body.vehicleCategory || null,
+          vehicleDescription: body.vehicleDescription || null,
+          driveType: body.driveType || null,
+          colour: body.colour || null,
+          fuelType: body.fuelType || 'petrol',
+          transmission: body.transmission || 'manual',
 
-        // Section C — Weight & capacity
-        tareKg: body.tareKg ? Number(body.tareKg) : null,
-        grossVehicleMassKg: body.grossVehicleMassKg ? Number(body.grossVehicleMassKg) : null,
-        seatedCapacity: body.seatedCapacity ? Number(body.seatedCapacity) : null,
-        standingCapacity: body.standingCapacity ? Number(body.standingCapacity) : null,
+          // Section C — Weight & capacity
+          tareKg: body.tareKg ? Number(body.tareKg) : null,
+          grossVehicleMassKg: body.grossVehicleMassKg ? Number(body.grossVehicleMassKg) : null,
+          seatedCapacity: body.seatedCapacity ? Number(body.seatedCapacity) : null,
+          standingCapacity: body.standingCapacity ? Number(body.standingCapacity) : null,
 
-        // Section D — Registration & compliance
-        registeringAuthority: body.registeringAuthority || null,
-        nationalVehicleClassification: body.nationalVehicleClassification || null,
-        roadworthyTestDate: body.roadworthyTestDate || null,
-        licenceExpiryDate: body.licenceExpiryDate || null,
+          // Section D — Registration & compliance
+          registeringAuthority: body.registeringAuthority || null,
+          nationalVehicleClassification: body.nationalVehicleClassification || null,
+          roadworthyTestDate: body.roadworthyTestDate || null,
+          licenceExpiryDate: body.licenceExpiryDate || null,
 
-        // Section E — Fleet assignment
-        status: requestedStatus,
-        currentOdometer,
-        fuelCardNumber: body.fuelCardNumber || null,
-        categoryId: body.categoryId || null,
-        officeId: body.officeId || null,
-        assignedOfficeId: body.assignedOfficeId || null,
+          // Section E — Fleet assignment
+          status: requestedStatus,
+          currentOdometer,
+          fuelCardNumber: body.fuelCardNumber || null,
+          categoryId: body.categoryId || null,
+          officeId: body.officeId || null,
+          assignedOfficeId: body.assignedOfficeId || null,
 
-        notes: body.notes || null,
-        isActive: true,
-      })
-      .returning();
+          notes: body.notes || null,
+          isActive: true,
+        })
+        .returning();
 
-    if (vehicle) vehicle.fuelCardPin = null;
+      await tx.insert(vehicleStatusEvents).values({
+        vehicleId: created.id,
+        previousStatus: null,
+        newStatus: requestedStatus,
+        reason: 'Initial fleet registration',
+        changedByUserId: session.user.id,
+        referenceEntityType: 'vehicle_registration',
+        referenceEntityId: created.id,
+      });
+
+      if (currentOdometer > 0) {
+        await tx.insert(vehicleOdometerEvents).values({
+          vehicleId: created.id,
+          odometerValue: currentOdometer,
+          source: 'manual_correction',
+          recordedByUserId: session.user.id,
+          notes: `Initial fleet registration odometer: ${currentOdometer} km`,
+        });
+      }
+
+      return created;
+    });
+
+    vehicle.fuelCardPin = null;
     return NextResponse.json({ vehicle }, { status: 201 });
   } catch (error) {
     console.error('[fleet] POST failed:', error);
