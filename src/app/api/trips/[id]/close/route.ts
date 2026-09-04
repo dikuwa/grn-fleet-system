@@ -27,6 +27,7 @@ import { runAtomicMutations } from '@/lib/db-atomic';
 const CLOSURE_DECISIONS = ['closed', 'requires_correction', 'follow_up'] as const;
 type ClosureDecision = (typeof CLOSURE_DECISIONS)[number];
 const RESTRICTED_VEHICLE_STATUSES = new Set(['maintenance', 'out_of_service', 'written_off']);
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type ReturnDeclaration = {
   incidentDeclared?: boolean;
@@ -68,6 +69,9 @@ export async function POST(req: NextRequest, { params }: { params: Promise<{ id:
     if (roleCheck instanceof NextResponse) return roleCheck;
     const permCheck = await requirePermission(session, Permissions.TRIP_CLOSE);
     if (permCheck instanceof NextResponse) return permCheck;
+    if (!UUID_PATTERN.test(id)) {
+      return NextResponse.json({ error: 'Trip ID is invalid' }, { status: 400 });
+    }
 
     const db = getDb();
     const userId = session.user.id;
