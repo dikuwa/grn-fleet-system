@@ -11,6 +11,9 @@ import { recordAuditEvent } from '@/lib/audit-event';
 import { createElement } from 'react';
 import bcrypt from 'bcryptjs';
 
+const INVITATION_STATE_CONFLICT = 'invitation_state_conflict';
+const INVITATION_CREDENTIAL_CONFLICT = 'invitation_credential_conflict';
+
 /**
  * GET /api/admin/invites
  *
@@ -165,21 +168,41 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      await db
-        .update(tenantMemberships)
-        .set({ status: 'suspended' })
-        .where(and(eq(tenantMemberships.id, membership.id), eq(tenantMemberships.status, 'active')));
+      await db.transaction(async (tx) => {
+        const [lockedUser] = await tx
+          .select({ emailVerified: user.emailVerified })
+          .from(user)
+          .where(eq(user.id, userId))
+          .limit(1)
+          .for('update');
+        if (!lockedUser || lockedUser.emailVerified) {
+          throw new Error(INVITATION_STATE_CONFLICT);
+        }
 
-      await recordAuditEvent({
-        tenantId: session.tenantId,
-        actorUserId: session.user.id,
-        action: 'user_invitation.revoked',
-        entityType: 'tenant_membership',
-        entityId: membership.id,
-        before: { status: 'active', emailVerified: false },
-        after: { status: 'suspended', emailVerified: false },
-        summary: `Pending account invitation revoked for ${targetUser.email}`,
-      }).catch(() => undefined);
+        const [revokedMembership] = await tx
+          .update(tenantMemberships)
+          .set({ status: 'suspended' })
+          .where(
+            and(
+              eq(tenantMemberships.id, membership.id),
+              eq(tenantMemberships.tenantId, session.tenantId),
+              eq(tenantMemberships.status, 'active'),
+            ),
+          )
+          .returning({ id: tenantMemberships.id });
+        if (!revokedMembership) throw new Error(INVITATION_STATE_CONFLICT);
+
+        await recordAuditEvent({
+          tenantId: session.tenantId,
+          actorUserId: session.user.id,
+          action: 'user_invitation.revoked',
+          entityType: 'tenant_membership',
+          entityId: membership.id,
+          before: { status: 'active', emailVerified: false },
+          after: { status: 'suspended', emailVerified: false },
+          summary: `Pending account invitation revoked for ${targetUser.email}`,
+        }, tx);
+      });
 
       return NextResponse.json({
         success: true,
@@ -209,10 +232,60 @@ export async function POST(req: NextRequest) {
     const previousPasswordHash = credentialAccount.password;
     const tempPassword = `Gf!${crypto.randomUUID().replace(/-/g, '').slice(0, 12)}`;
     const passwordHash = await bcrypt.hash(tempPassword, 10);
-    await db
-      .update(account)
-      .set({ password: passwordHash, updatedAt: new Date() })
-      .where(eq(account.id, credentialAccount.id));
+
+    await db.transaction(async (tx) => {
+      const [lockedUser] = await tx
+        .select({ emailVerified: user.emailVerified })
+        .from(user)
+        .where(eq(user.id, userId))
+        .limit(1)
+        .for('update');
+      if (!lockedUser || lockedUser.emailVerified) {
+        throw new Error(INVITATION_STATE_CONFLICT);
+      }
+
+      const [lockedMembership] = await tx
+        .select({ status: tenantMemberships.status })
+        .from(tenantMemberships)
+        .where(
+          and(
+            eq(tenantMemberships.id, membership.id),
+            eq(tenantMemberships.tenantId, session.tenantId),
+          ),
+        )
+        .limit(1)
+        .for('update');
+      if (lockedMembership?.status !== 'active') {
+        throw new Error(INVITATION_STATE_CONFLICT);
+      }
+
+      const [rotatedCredential] = await tx
+        .update(account)
+        .set({ password: passwordHash, updatedAt: new Date() })
+        .where(
+          and(
+            eq(account.id, credentialAccount.id),
+            eq(account.password, previousPasswordHash),
+          ),
+        )
+        .returning({ id: account.id });
+      if (!rotatedCredential) throw new Error(INVITATION_CREDENTIAL_CONFLICT);
+
+      await recordAuditEvent({
+        tenantId: session.tenantId,
+        actorUserId: session.user.id,
+        action: 'user_invitation.credential_rotated',
+        entityType: 'tenant_membership',
+        entityId: membership.id,
+        after: {
+          userId,
+          email: targetUser.email,
+          temporaryCredentialRotated: true,
+          deliveryPending: true,
+        },
+        summary: `Temporary invitation credential rotated for ${targetUser.email}; delivery pending`,
+      }, tx);
+    });
 
     const loginUrl = `${process.env.NEXT_PUBLIC_APP_URL || 'https://grn-fleet-system.vercel.app'}/login`;
     const element = createElement(UserInviteEmail, {
@@ -239,11 +312,14 @@ export async function POST(req: NextRequest) {
     }
 
     if (!emailSent) {
-      // Do not strand the invitee with a rotated credential they never received.
-      await db
+      // Restore the previous credential only if this resend still owns the hash
+      // it installed. A later credential change must never be overwritten by a
+      // stale email-failure rollback.
+      const [restoredCredential] = await db
         .update(account)
         .set({ password: previousPasswordHash, updatedAt: new Date() })
-        .where(eq(account.id, credentialAccount.id));
+        .where(and(eq(account.id, credentialAccount.id), eq(account.password, passwordHash)))
+        .returning({ id: account.id });
 
       await recordAuditEvent({
         tenantId: session.tenantId,
@@ -255,13 +331,16 @@ export async function POST(req: NextRequest) {
           userId,
           email: targetUser.email,
           emailSent: false,
-          temporaryCredentialRestored: true,
+          temporaryCredentialRestored: Boolean(restoredCredential),
+          newerCredentialPreserved: !restoredCredential,
         },
-        summary: `Invitation resend failed for ${targetUser.email}; previous credential preserved`,
+        summary: restoredCredential
+          ? `Invitation resend failed for ${targetUser.email}; previous credential preserved`
+          : `Invitation resend failed for ${targetUser.email}; a newer credential change was preserved`,
       }).catch(() => undefined);
 
       return NextResponse.json(
-        { error: emailError || 'Invitation email could not be delivered. The existing temporary credential remains unchanged.' },
+        { error: emailError || 'Invitation email could not be delivered. No newer credential was overwritten.' },
         { status: 502 },
       );
     }
@@ -290,6 +369,19 @@ export async function POST(req: NextRequest) {
     });
   } catch (error) {
     console.error('[Admin Invites] POST failed:', error);
+    if (
+      error instanceof Error &&
+      (error.message === INVITATION_STATE_CONFLICT ||
+        error.message === INVITATION_CREDENTIAL_CONFLICT)
+    ) {
+      return NextResponse.json(
+        {
+          error:
+            'This invitation changed while the action was being processed. Refresh Invitations and review its current activation, membership and credential state before retrying.',
+        },
+        { status: 409 },
+      );
+    }
     return NextResponse.json({ error: 'Failed to process invitation action' }, { status: 500 });
   }
 }
