@@ -19,6 +19,9 @@ import {
 } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function PATCH(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -67,6 +70,10 @@ export async function PATCH(
     const effectiveAt = body.effectiveDate ? new Date(String(body.effectiveDate)) : new Date();
     if (!Number.isFinite(effectiveAt.getTime())) {
       return NextResponse.json({ error: 'Effective date is invalid.' }, { status: 422 });
+    }
+
+    if (!UUID_PATTERN.test(id)) {
+      return NextResponse.json({ error: 'Employee not found' }, { status: 404 });
     }
 
     const db = getDb();
