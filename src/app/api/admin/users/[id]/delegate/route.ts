@@ -10,10 +10,13 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { user } from '@/db/schema/better-auth';
 import { tenantMemberships, roleAssignments, roles } from '@/db/schema/tenants';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, isNull, sql } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { recordAuditEvent } from '@/lib/audit-event';
+
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function asDate(value: Date | string | null | undefined) {
   return value ? new Date(value) : null;
@@ -41,6 +44,13 @@ function assignmentOverlapsWindow(
   const existingStartsBeforeNewEnds = endsAt === null || assignmentStart === null || assignmentStart < endsAt;
   const newStartsBeforeExistingEnds = assignmentEnd === null || startsAt < assignmentEnd;
   return existingStartsBeforeNewEnds && newStartsBeforeExistingEnds;
+}
+
+function assignmentEndRevisionMatches(endDate: Date | string | null | undefined) {
+  const reviewedEnd = asDate(endDate);
+  return reviewedEnd
+    ? sql`date_trunc('milliseconds', ${roleAssignments.endDate}) = ${reviewedEnd.toISOString()}::timestamptz`
+    : isNull(roleAssignments.endDate);
 }
 
 export async function POST(
@@ -74,6 +84,9 @@ export async function POST(
     }
     if (endsAt && endsAt <= startsAt) {
       return NextResponse.json({ error: 'Delegation end date must be after its start date' }, { status: 422 });
+    }
+    if (!UUID_PATTERN.test(roleId)) {
+      return NextResponse.json({ error: 'Role not found in your organisation' }, { status: 404 });
     }
 
     const db = getDb();
@@ -221,6 +234,9 @@ export async function DELETE(request: NextRequest) {
     if (!assignmentId) {
       return NextResponse.json({ error: 'assignmentId query param is required' }, { status: 400 });
     }
+    if (!UUID_PATTERN.test(assignmentId)) {
+      return NextResponse.json({ error: 'Acting assignment not found' }, { status: 404 });
+    }
 
     const db = getDb();
     const [assignment] = await db
@@ -260,15 +276,18 @@ export async function DELETE(request: NextRequest) {
     const endedAt = startsAt && startsAt > now ? startsAt : now;
     const wasScheduled = Boolean(startsAt && startsAt > now);
 
-    await db.transaction(async (tx) => {
-      await tx
+    const committed = await db.transaction(async (tx) => {
+      const [ended] = await tx
         .update(roleAssignments)
         .set({ endDate: endedAt })
         .where(and(
           eq(roleAssignments.id, assignmentId),
           eq(roleAssignments.tenantMembershipId, membership.id),
           eq(roleAssignments.isActing, true),
-        ));
+          assignmentEndRevisionMatches(assignment.endDate),
+        ))
+        .returning({ id: roleAssignments.id });
+      if (!ended) return false;
 
       await recordAuditEvent({
         tenantId: session.tenantId,
@@ -287,8 +306,15 @@ export async function DELETE(request: NextRequest) {
           : 'Acting role assignment ended by administrator; history preserved',
         isActing: true,
       }, tx);
+      return true;
     });
 
+    if (!committed) {
+      return NextResponse.json(
+        { error: 'This acting assignment changed while the end action was being prepared. Refresh User Management and review the current delegation state.' },
+        { status: 409 },
+      );
+    }
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('[Delegation] DELETE failed:', error);
