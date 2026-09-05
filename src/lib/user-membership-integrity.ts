@@ -1,4 +1,4 @@
-import { and, ne, sql } from 'drizzle-orm';
+import { and, eq, ne, sql } from 'drizzle-orm';
 import { tenantMemberships } from '@/db/schema/tenants';
 
 export async function lockUserMembershipInvariant(executor: any, userId: string) {
@@ -18,7 +18,7 @@ export async function hasOtherUsableMembership(
     .select({ id: tenantMemberships.id })
     .from(tenantMemberships)
     .where(and(
-      sql`${tenantMemberships.userId} = ${userId}`,
+      eq(tenantMemberships.userId, userId),
       ne(tenantMemberships.id, excludedMembershipId),
       ne(tenantMemberships.status, 'access_removed'),
     ))
