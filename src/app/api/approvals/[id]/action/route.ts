@@ -16,6 +16,9 @@ import { processExternalAuthorisationDecision } from '@/lib/external-authorisati
 import { sendWorkflowOutcomeEmailBestEffort } from '@/lib/workflow-outcome-email';
 import { evaluateTripReleaseGate } from '@/lib/trip-release-gate';
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function semanticPositiveResult(actionType: string): WorkflowActionResult {
   switch (actionType) {
     case 'release':
@@ -70,6 +73,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         },
         { status: 400 },
       );
+    }
+    if (!UUID_PATTERN.test(id)) {
+      return NextResponse.json({ error: 'Workflow instance not found' }, { status: 404 });
     }
 
     const db = getDb();
