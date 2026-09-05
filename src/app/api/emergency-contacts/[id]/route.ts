@@ -17,6 +17,7 @@ import {
 import { Permissions } from '@/lib/permissions';
 import {
   deleteEmergencyContact,
+  EMERGENCY_CONTACT_EDIT_CONFLICT,
   isEmergencyContactRole,
   setEmergencyContactActive,
   updateEmergencyContact,
@@ -100,6 +101,12 @@ export async function PATCH(
 
     return NextResponse.json({ data: row });
   } catch (error) {
+    if (error instanceof Error && error.message === EMERGENCY_CONTACT_EDIT_CONFLICT) {
+      return NextResponse.json(
+        { error: 'This emergency contact changed while the edit was being prepared. Refresh and review the current contact before trying again.' },
+        { status: 409 },
+      );
+    }
     console.error('[emergency-contacts] PATCH failed:', error);
     return NextResponse.json({ error: 'Failed to update contact' }, { status: 500 });
   }
