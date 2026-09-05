@@ -23,6 +23,8 @@ import { eq, and, desc, type SQL } from 'drizzle-orm';
 import { tripScopeCondition } from '@/lib/record-scope';
 
 const POSTGRES_INT_MAX = 2_147_483_647;
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const continuationStates = new Set([
   'safe_to_continue',
   'continue_with_caution',
@@ -76,6 +78,9 @@ export async function GET(req: NextRequest) {
 
     const { searchParams } = new URL(req.url);
     const tripId = searchParams.get('tripId');
+    if (tripId && !UUID_PATTERN.test(tripId)) {
+      return NextResponse.json({ error: 'tripId must be a valid UUID' }, { status: 400 });
+    }
     const db = getDb();
 
     const conditions: SQL[] = [
@@ -148,6 +153,9 @@ export async function POST(req: NextRequest) {
     } = body;
 
     if (!tripId) return NextResponse.json({ error: 'Trip ID is required' }, { status: 400 });
+    if (typeof tripId !== 'string' || !UUID_PATTERN.test(tripId)) {
+      return NextResponse.json({ error: 'Trip not found' }, { status: 404 });
+    }
 
     const syncId = typeof clientSyncId === 'string' && clientSyncId.trim() ? clientSyncId.trim() : null;
     if (syncId && syncId.length > 128) {
