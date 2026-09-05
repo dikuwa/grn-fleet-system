@@ -26,7 +26,12 @@ import { normaliseAvailability, normaliseEmployeeStatus } from '@/lib/employee-s
 import { getTenantEntitlements, checkEntitlement } from '@/lib/entitlements';
 import { recordAuditEvent } from '@/lib/audit-event';
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 async function getEmployee(id: string, tenantId: string) {
+  if (!UUID_PATTERN.test(id)) return undefined;
+
   const db = getDb();
   const [employee] = await db
     .select()
@@ -497,6 +502,15 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     }
     if (body.supervisorEmployeeId === id) {
       return NextResponse.json({ error: 'An employee cannot supervise themselves.' }, { status: 400 });
+    }
+    if (!UUID_PATTERN.test(body.officeId)) {
+      return NextResponse.json({ error: 'The selected office does not belong to this tenant.' }, { status: 400 });
+    }
+    if (body.departmentId && !UUID_PATTERN.test(body.departmentId)) {
+      return NextResponse.json({ error: 'The selected department does not belong to this tenant.' }, { status: 400 });
+    }
+    if (body.supervisorEmployeeId && !UUID_PATTERN.test(body.supervisorEmployeeId)) {
+      return NextResponse.json({ error: 'The selected supervisor is not an active employee in this tenant.' }, { status: 400 });
     }
 
     const [[office], [department], [supervisor]] = await Promise.all([
