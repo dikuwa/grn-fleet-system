@@ -11,13 +11,16 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { tenantMemberships } from '@/db/schema/tenants';
 import { userProfiles } from '@/db/schema/auth';
-import { and, count, eq, inArray } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { getTenantEntitlements, checkEntitlement } from '@/lib/entitlements';
+import { getTenantEntitlements } from '@/lib/entitlements';
 import { recordAuditEvent } from '@/lib/audit-event';
+import { checkTenantUserCapacityLocked } from '@/lib/tenant-user-capacity';
+import { lockUserMembershipInvariant } from '@/lib/user-membership-integrity';
 
 const USER_RESTORE_CONFLICT = 'user_restore_conflict';
+const USER_LIMIT_REACHED = 'user_limit_reached';
 
 export async function POST(
   request: NextRequest,
@@ -33,20 +36,13 @@ export async function POST(
     if (permCheck instanceof NextResponse) return permCheck;
 
     const db = getDb();
-    const [[membership], [profile]] = await Promise.all([
-      db
-        .select()
-        .from(tenantMemberships)
-        .where(
-          and(eq(tenantMemberships.userId, id), eq(tenantMemberships.tenantId, session.tenantId)),
-        )
-        .limit(1),
-      db
-        .select({ status: userProfiles.status })
-        .from(userProfiles)
-        .where(eq(userProfiles.userId, id))
-        .limit(1),
-    ]);
+    const [membership] = await db
+      .select()
+      .from(tenantMemberships)
+      .where(
+        and(eq(tenantMemberships.userId, id), eq(tenantMemberships.tenantId, session.tenantId)),
+      )
+      .limit(1);
 
     if (!membership) {
       return NextResponse.json({ error: 'User not found in your organisation' }, { status: 404 });
@@ -59,25 +55,27 @@ export async function POST(
     }
 
     const entitlements = await getTenantEntitlements(session.tenantId);
-    if (entitlements) {
-      const [countRow] = await db
-        .select({ total: count() })
-        .from(tenantMemberships)
-        .where(and(
-          eq(tenantMemberships.tenantId, session.tenantId),
-          inArray(tenantMemberships.status, ['active', 'pending', 'pending_activation', 'suspended']),
-        ));
-      const userCheck = checkEntitlement(entitlements, 'users', Number(countRow?.total ?? 0), 1);
-      if (!userCheck.ok) {
-        return NextResponse.json(
-          { error: userCheck.message || 'User limit reached. Increase the tenant user allowance before restoring this account.' },
-          { status: 409 },
-        );
-      }
-    }
-
     const now = new Date();
+    let globalProfileStatusChanged = false;
+
     await db.transaction(async (tx) => {
+      if (entitlements) {
+        const userCheck = await checkTenantUserCapacityLocked(
+          tx,
+          session.tenantId,
+          entitlements,
+          1,
+        );
+        if (!userCheck.ok) {
+          throw new Error(`${USER_LIMIT_REACHED}:${userCheck.message || 'User limit reached. Increase the tenant user allowance before restoring this account.'}`);
+        }
+      }
+
+      // Capacity is tenant-scoped; global Better Auth profile state is user-scoped.
+      // Always acquire the user lock after the tenant-capacity lock so restore and
+      // removal paths cannot make contradictory global-profile decisions.
+      await lockUserMembershipInvariant(tx, id);
+
       const [restoredMembership] = await tx
         .update(tenantMemberships)
         .set({ status: 'active' })
@@ -89,11 +87,15 @@ export async function POST(
         .returning({ id: tenantMemberships.id });
       if (!restoredMembership) throw new Error(USER_RESTORE_CONFLICT);
 
-      // `user_profiles` is global to the Better Auth user. Only clear a
-      // previous tenant-removal marker; never override a deliberate global
-      // suspended/disabled security state while restoring one membership.
+      // `user_profiles` is global to the Better Auth user. Re-read it only after
+      // taking the user-scoped lock; never overwrite a newer security state.
+      const [profile] = await tx
+        .select({ status: userProfiles.status })
+        .from(userProfiles)
+        .where(eq(userProfiles.userId, id))
+        .limit(1);
       if (profile?.status === 'removed') {
-        await tx
+        const [restoredProfile] = await tx
           .update(userProfiles)
           .set({
             status: 'active',
@@ -101,7 +103,9 @@ export async function POST(
             disabledAt: null,
             updatedAt: now,
           })
-          .where(and(eq(userProfiles.userId, id), eq(userProfiles.status, 'removed')));
+          .where(and(eq(userProfiles.userId, id), eq(userProfiles.status, 'removed')))
+          .returning({ userId: userProfiles.userId });
+        globalProfileStatusChanged = Boolean(restoredProfile);
       }
 
       await recordAuditEvent({
@@ -115,7 +119,7 @@ export async function POST(
           userId: id,
           restoredAt: now.toISOString(),
           tenantMembershipStatus: 'active',
-          globalProfileStatusChanged: profile?.status === 'removed',
+          globalProfileStatusChanged,
           staffRecordPreserved: true,
         },
       }, tx);
@@ -127,6 +131,12 @@ export async function POST(
     if (error instanceof Error && error.message === USER_RESTORE_CONFLICT) {
       return NextResponse.json(
         { error: 'This account changed while it was being restored. Refresh User Management and review its current access state.' },
+        { status: 409 },
+      );
+    }
+    if (error instanceof Error && error.message.startsWith(`${USER_LIMIT_REACHED}:`)) {
+      return NextResponse.json(
+        { error: error.message.slice(USER_LIMIT_REACHED.length + 1) },
         { status: 409 },
       );
     }
