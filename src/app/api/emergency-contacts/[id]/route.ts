@@ -31,6 +31,16 @@ function resolveTenantId(
   return tenantOverride && isPlatformAdmin ? tenantOverride : sessionTenantId;
 }
 
+function databaseCode(error: unknown) {
+  if (!error || typeof error !== 'object') return null;
+  const value = error as { code?: unknown; cause?: { code?: unknown } };
+  return typeof value.code === 'string'
+    ? value.code
+    : typeof value.cause?.code === 'string'
+      ? value.cause.code
+      : null;
+}
+
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -104,6 +114,12 @@ export async function PATCH(
     if (error instanceof Error && error.message === EMERGENCY_CONTACT_EDIT_CONFLICT) {
       return NextResponse.json(
         { error: 'This emergency contact changed while the edit was being prepared. Refresh and review the current contact before trying again.' },
+        { status: 409 },
+      );
+    }
+    if (databaseCode(error) === '23505') {
+      return NextResponse.json(
+        { error: 'An emergency contact with this phone number and role already exists.' },
         { status: 409 },
       );
     }
