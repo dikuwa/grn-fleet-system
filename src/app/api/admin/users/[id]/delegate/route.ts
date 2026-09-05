@@ -14,6 +14,7 @@ import { eq, and, isNull, sql } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { recordAuditEvent } from '@/lib/audit-event';
+import { isRoleAssignmentWindowConflict } from '@/lib/role-assignment-integrity';
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -216,6 +217,12 @@ export async function POST(
 
     return NextResponse.json({ success: true, data: assignment });
   } catch (error) {
+    if (isRoleAssignmentWindowConflict(error)) {
+      return NextResponse.json(
+        { error: 'The target user already holds this role during part or all of the requested delegation period' },
+        { status: 409 },
+      );
+    }
     console.error('[Delegation] POST failed:', error);
     return NextResponse.json({ error: 'Failed to create delegation' }, { status: 500 });
   }
