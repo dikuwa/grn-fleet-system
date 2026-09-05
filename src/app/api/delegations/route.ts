@@ -8,6 +8,9 @@ import { Permissions } from '@/lib/permissions';
 import { findDelegationConflicts } from '@/lib/employee-lifecycle';
 import { recordAuditEvent } from '@/lib/audit-event';
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function GET(request: NextRequest) {
   const auth = await requireRequestAuth(request);
   if (!auth.ok) return auth.error;
@@ -88,6 +91,21 @@ export async function POST(request: NextRequest) {
   // never a conflict that may be bypassed with an override reason.
   if (endAt <= startAt) {
     return NextResponse.json({ error: 'Delegation end date must be after the start date' }, { status: 422 });
+  }
+  if (!UUID_PATTERN.test(body.roleId) || !UUID_PATTERN.test(body.actingEmployeeId)) {
+    return NextResponse.json({ error: 'Employee or role was not found in your organisation' }, { status: 404 });
+  }
+  if (body.officeId && !UUID_PATTERN.test(body.officeId)) {
+    return NextResponse.json({ error: 'Office scope was not found in your organisation' }, { status: 404 });
+  }
+  if (body.departmentId && !UUID_PATTERN.test(body.departmentId)) {
+    return NextResponse.json({ error: 'Department scope was not found in your organisation' }, { status: 404 });
+  }
+  if (body.regionId && !UUID_PATTERN.test(body.regionId)) {
+    return NextResponse.json({ error: 'Region scope was not found in your organisation' }, { status: 404 });
+  }
+  if (body.substantiveHolderEmployeeId && !UUID_PATTERN.test(body.substantiveHolderEmployeeId)) {
+    return NextResponse.json({ error: 'Substantive role holder was not found in your organisation' }, { status: 404 });
   }
 
   const db = getDb();
@@ -217,6 +235,9 @@ export async function PATCH(request: NextRequest) {
   if (!['revoke', 'cancel'].includes(body.action)) {
     return NextResponse.json({ error: 'Unsupported delegation action' }, { status: 400 });
   }
+  if (!UUID_PATTERN.test(body.id)) {
+    return NextResponse.json({ error: 'Delegation not found' }, { status: 404 });
+  }
   const db = getDb();
   const [existing] = await db.select().from(roleDelegations)
     .where(and(eq(roleDelegations.id, body.id), eq(roleDelegations.tenantId, auth.session.tenantId))).limit(1);
@@ -235,13 +256,24 @@ export async function PATCH(request: NextRequest) {
   }
 
   const status = body.action === 'cancel' ? 'cancelled' : 'revoked';
-  await db.update(roleDelegations).set({
+  const now = new Date();
+  const [updated] = await db.update(roleDelegations).set({
     status,
-    revokedAt: new Date(),
+    revokedAt: now,
     revokedByUserId: auth.session.user.id,
     revocationReason: body.reason.trim(),
-    updatedAt: new Date(),
-  }).where(and(eq(roleDelegations.id, body.id), eq(roleDelegations.tenantId, auth.session.tenantId)));
+    updatedAt: now,
+  }).where(and(
+    eq(roleDelegations.id, body.id),
+    eq(roleDelegations.tenantId, auth.session.tenantId),
+    eq(roleDelegations.status, existing.status),
+  )).returning({ id: roleDelegations.id });
+  if (!updated) {
+    return NextResponse.json(
+      { error: 'This delegation changed while the action was being recorded. Refresh and try again.' },
+      { status: 409 },
+    );
+  }
   await recordAuditEvent({
     tenantId: auth.session.tenantId,
     actorUserId: auth.session.user.id,
