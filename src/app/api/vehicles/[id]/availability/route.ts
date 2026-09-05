@@ -31,6 +31,9 @@ interface Blocker {
   severity: 'error' | 'warning';
 }
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function isDateOnly(value: string) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const date = new Date(`${value}T00:00:00Z`);
@@ -71,6 +74,17 @@ export async function GET(
     }
     if (startParam && endParam && endParam < startParam) {
       return NextResponse.json({ error: 'End date cannot be before the start date' }, { status: 400 });
+    }
+    if (!UUID_PATTERN.test(id)) {
+      return NextResponse.json(
+        {
+          available: false,
+          blockers: [
+            { type: 'vehicle_status', detail: 'Vehicle not found', severity: 'error' },
+          ],
+        },
+        { status: 404 },
+      );
     }
 
     const db = getDb();
