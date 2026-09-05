@@ -30,6 +30,8 @@ import { runAtomicMutations } from '@/lib/db-atomic';
 const REVIEW_ROLES = ['Transport Administrator'] as const;
 const REVIEWABLE_STATUSES = new Set(['awaiting_review', 'needs_correction', 'uploaded', 'pending']);
 const TERMINAL_STATUSES = new Set(['verified', 'expired', 'superseded', 'rejected']);
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const CORRECTABLE_FIELDS = [
   'licenceNumber',
   'licenceClass',
@@ -150,6 +152,12 @@ async function notifyDriver(
 async function access(request: NextRequest, employeeId: string) {
   const auth = await requireRequestAuth(request);
   if (!auth.ok) return auth;
+  if (!UUID_PATTERN.test(employeeId)) {
+    return {
+      ok: false as const,
+      error: NextResponse.json({ error: 'Driver not found' }, { status: 404 }),
+    };
+  }
   const db = getDb();
   const [employee] = await db
     .select({ id: employees.id, userId: employees.userId })
