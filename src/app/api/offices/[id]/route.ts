@@ -7,9 +7,15 @@ import { Permissions } from '@/lib/permissions';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { PATCH as patchOffice } from '../route';
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   const { id } = await params;
   const body = await request.json();
+  if (!UUID_PATTERN.test(id)) {
+    return NextResponse.json({ error: 'Office not found.' }, { status: 404 });
+  }
   return patchOffice(new NextRequest(request.url, { method: 'PATCH', headers: request.headers, body: JSON.stringify({ ...body, id }) }));
 }
 
@@ -20,6 +26,9 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
     if (!auth.ok) return auth.error;
     const permission = await requirePermission(auth.session, Permissions.TENANT_MANAGE);
     if (permission instanceof NextResponse) return permission;
+    if (!UUID_PATTERN.test(id)) {
+      return NextResponse.json({ error: 'Office not found.' }, { status: 404 });
+    }
     const db = getDb();
     const [existing] = await db.select().from(offices).where(and(eq(offices.id, id), eq(offices.tenantId, auth.session.tenantId))).limit(1);
     if (!existing) return NextResponse.json({ error: 'Office not found.' }, { status: 404 });
