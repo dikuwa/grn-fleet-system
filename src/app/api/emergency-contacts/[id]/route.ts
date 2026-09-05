@@ -23,12 +23,22 @@ import {
   updateEmergencyContact,
 } from '@/lib/incidents/emergency-contacts';
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function resolveTenantId(
   sessionTenantId: string,
   tenantOverride: string | null | undefined,
   isPlatformAdmin: boolean,
 ) {
   return tenantOverride && isPlatformAdmin ? tenantOverride : sessionTenantId;
+}
+
+function invalidPlatformTenantOverride(
+  tenantOverride: string | null | undefined,
+  isPlatformAdmin: boolean,
+) {
+  return Boolean(tenantOverride && isPlatformAdmin && !UUID_PATTERN.test(tenantOverride));
 }
 
 function databaseCode(error: unknown) {
@@ -56,11 +66,11 @@ export async function PATCH(
     const { id } = await params;
     const body = await req.json();
     const isPlatformAdmin = await hasPermission(session, Permissions.PLATFORM_ADMIN);
-    const tenantId = resolveTenantId(
-      session.tenantId,
-      typeof body.tenantId === 'string' ? body.tenantId : null,
-      isPlatformAdmin,
-    );
+    const tenantOverride = typeof body.tenantId === 'string' ? body.tenantId : null;
+    if (invalidPlatformTenantOverride(tenantOverride, isPlatformAdmin)) {
+      return NextResponse.json({ error: 'tenantId must be a valid UUID' }, { status: 400 });
+    }
+    const tenantId = resolveTenantId(session.tenantId, tenantOverride, isPlatformAdmin);
 
     const hasContactFields = ['name', 'phone', 'role', 'region', 'sortOrder'].some(
       (key) => Object.prototype.hasOwnProperty.call(body, key),
@@ -143,11 +153,11 @@ export async function DELETE(
     const { id } = await params;
     const { searchParams } = new URL(req.url);
     const isPlatformAdmin = await hasPermission(session, Permissions.PLATFORM_ADMIN);
-    const tenantId = resolveTenantId(
-      session.tenantId,
-      searchParams.get('tenantId'),
-      isPlatformAdmin,
-    );
+    const tenantOverride = searchParams.get('tenantId');
+    if (invalidPlatformTenantOverride(tenantOverride, isPlatformAdmin)) {
+      return NextResponse.json({ error: 'tenantId must be a valid UUID' }, { status: 400 });
+    }
+    const tenantId = resolveTenantId(session.tenantId, tenantOverride, isPlatformAdmin);
 
     const row = await deleteEmergencyContact(tenantId, id, session.user.id);
     if (!row) return NextResponse.json({ error: 'Contact not found' }, { status: 404 });
