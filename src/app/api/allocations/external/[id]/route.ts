@@ -11,6 +11,9 @@ import { Permissions } from '@/lib/permissions';
 
 type RouteContext = { params: Promise<{ id: string }> };
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function GET(request: NextRequest, context: RouteContext) {
   try {
     const auth = await requireRequestAuth(request);
@@ -22,6 +25,9 @@ export async function GET(request: NextRequest, context: RouteContext) {
     if (permissionCheck instanceof NextResponse) return permissionCheck;
 
     const { id } = await context.params;
+    if (!UUID_PATTERN.test(id)) {
+      return NextResponse.json({ error: 'External driver assignment not found' }, { status: 404 });
+    }
     const db = getDb();
     const tenantId = session.tenantId;
     const [record] = await db
