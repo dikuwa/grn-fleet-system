@@ -18,7 +18,7 @@ import {
   vehicleAllocations,
   workflowActions,
 } from '@/db/schema';
-import { and, count, eq, gt, inArray, isNull, lte, ne, or } from 'drizzle-orm';
+import { and, count, eq, gt, inArray, isNull, lte, ne, or, sql } from 'drizzle-orm';
 import { requireDashboardAction, requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { AVAILABILITY_STATUSES } from '@/lib/employee-lifecycle';
@@ -43,6 +43,10 @@ function lifecycleConflictResponse() {
   );
 }
 
+function employeeRevisionMatches(employee: typeof employees.$inferSelect) {
+  return sql`date_trunc('milliseconds', ${employees.updatedAt}) = ${employee.updatedAt.toISOString()}::timestamptz`;
+}
+
 async function updateEmployeeRevision(
   executor: any,
   employee: typeof employees.$inferSelect,
@@ -55,7 +59,7 @@ async function updateEmployeeRevision(
     .where(and(
       eq(employees.id, employee.id),
       eq(employees.tenantId, tenantId),
-      eq(employees.updatedAt, employee.updatedAt),
+      employeeRevisionMatches(employee),
     ))
     .returning({ id: employees.id });
   if (!updated) throw new EmployeeLifecycleConflictError();
@@ -720,7 +724,7 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
     .where(and(
       eq(employees.id, id),
       eq(employees.tenantId, auth.session.tenantId),
-      eq(employees.updatedAt, employee.updatedAt),
+      employeeRevisionMatches(employee),
     ))
     .returning({ id: employees.id });
   if (deleted.length === 0) {
