@@ -23,6 +23,8 @@ import { lockUserMembershipInvariant } from '@/lib/user-membership-integrity';
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const USER_ROLE_MEMBERSHIP_CHANGED = 'user_role_membership_changed';
+const USER_ROLE_OVERLAP_CONFLICT = 'user_role_overlap_conflict';
 
 function asDate(value: Date | string | null | undefined) {
   return value ? new Date(value) : null;
@@ -334,8 +336,32 @@ export async function PATCH(
       }
 
       await db.transaction(async (tx) => {
+        await lockUserMembershipInvariant(tx, id);
+        const [lockedMembership] = await tx
+          .select({ id: tenantMemberships.id, status: tenantMemberships.status })
+          .from(tenantMemberships)
+          .where(and(
+            eq(tenantMemberships.id, membership.id),
+            eq(tenantMemberships.userId, id),
+            eq(tenantMemberships.tenantId, session.tenantId),
+            ne(tenantMemberships.status, 'access_removed'),
+          ))
+          .limit(1);
+        if (!lockedMembership) throw new Error(USER_ROLE_MEMBERSHIP_CHANGED);
+
+        const lockedRoleHistory = await tx
+          .select({ startDate: roleAssignments.startDate, endDate: roleAssignments.endDate })
+          .from(roleAssignments)
+          .where(and(
+            eq(roleAssignments.tenantMembershipId, lockedMembership.id),
+            eq(roleAssignments.roleId, role.id),
+          ));
+        if (lockedRoleHistory.some((assignment) => assignmentOverlapsWindow(assignment, startsAt, endsAt))) {
+          throw new Error(USER_ROLE_OVERLAP_CONFLICT);
+        }
+
         const [assignment] = await tx.insert(roleAssignments).values({
-          tenantMembershipId: membership.id,
+          tenantMembershipId: lockedMembership.id,
           roleId: role.id,
           startDate: startsAt,
           endDate: endsAt,
@@ -436,6 +462,8 @@ export async function PATCH(
       if (!existingEnd || existingEnd > now) {
         const endedAt = assignmentStart && assignmentStart > now ? assignmentStart : now;
         const removalResult = await db.transaction(async (tx) => {
+          await lockUserMembershipInvariant(tx, id);
+
           if (assignmentIsActive(assignment, now) && assignment.roleName === 'Tenant Administrator') {
             const finalAdmin = await wouldDisableFinalActiveTenantAdministrator(
               tx,
@@ -490,6 +518,18 @@ export async function PATCH(
 
     return NextResponse.json({ success: true });
   } catch (error) {
+    if (error instanceof Error && error.message === USER_ROLE_MEMBERSHIP_CHANGED) {
+      return NextResponse.json(
+        { error: 'This user membership changed while the role assignment was being prepared. Refresh User Management and review the current account state.' },
+        { status: 409 },
+      );
+    }
+    if (error instanceof Error && error.message === USER_ROLE_OVERLAP_CONFLICT) {
+      return NextResponse.json(
+        { error: 'This user already holds the selected role during part or all of the requested period' },
+        { status: 409 },
+      );
+    }
     console.error('[Admin User Detail] PATCH failed:', error);
     return NextResponse.json({ error: 'Failed to update user' }, { status: 500 });
   }
@@ -595,6 +635,25 @@ export async function DELETE(
       if (finalAdmin) return { state: 'final-admin' as const };
 
       await lockUserMembershipInvariant(tx, id);
+
+      const lockedAssignments = await tx
+        .select({
+          id: roleAssignments.id,
+          roleName: roles.name,
+          startDate: roleAssignments.startDate,
+          endDate: roleAssignments.endDate,
+        })
+        .from(roleAssignments)
+        .innerJoin(roles, eq(roleAssignments.roleId, roles.id))
+        .where(eq(roleAssignments.tenantMembershipId, membership.id));
+      const lockedActiveAssignments = lockedAssignments.filter((assignment) => assignmentIsActive(assignment, now));
+      if (lockedActiveAssignments.length > 0) {
+        return {
+          state: 'active-roles' as const,
+          roleNames: lockedActiveAssignments.map((assignment) => assignment.roleName),
+        };
+      }
+
       const otherMemberships = await tx
         .select({ id: tenantMemberships.id, status: tenantMemberships.status })
         .from(tenantMemberships)
@@ -641,8 +700,8 @@ export async function DELETE(
           userId: id,
           userEmail: userRecord.email,
           staffRecordPreserved: true,
-          activeRoleCount: activeAssignments.length,
-          futureOrHistoricalRoleRecordsPreserved: assignments.length,
+          activeRoleCount: lockedActiveAssignments.length,
+          futureOrHistoricalRoleRecordsPreserved: lockedAssignments.length,
           otherMembershipsPreserved: otherMemberships.length,
           globalAccountRevoked: revokeGlobalAccount,
           sessionsRevoked: revokeGlobalAccount,
@@ -657,6 +716,14 @@ export async function DELETE(
 
     if (removalResult.state === 'final-admin') {
       return NextResponse.json({ error: 'The final active Tenant Administrator cannot be removed.' }, { status: 409 });
+    }
+    if (removalResult.state === 'active-roles') {
+      return NextResponse.json(
+        {
+          error: `This user gained active role${removalResult.roleNames.length === 1 ? '' : 's'} while account removal was being prepared: ${removalResult.roleNames.join(', ')}. Remove active roles and try again.`,
+        },
+        { status: 409 },
+      );
     }
     if (removalResult.state === 'conflict') {
       return NextResponse.json(
