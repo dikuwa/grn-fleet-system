@@ -22,6 +22,9 @@ import {
 } from '@/lib/notification-service';
 import { SystemRoles, WorkspaceIds } from '@/lib/workspaces';
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function POST(request: NextRequest) {
   try {
     const auth = await requireRequestAuth(request);
@@ -53,18 +56,28 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const vehicleId = typeof body.vehicleId === 'string' ? body.vehicleId : '';
+    const tripId = typeof body.tripId === 'string' ? body.tripId : '';
+    if (
+      vehicleId &&
+      tripId &&
+      (!UUID_PATTERN.test(vehicleId) || !UUID_PATTERN.test(tripId))
+    ) {
+      return NextResponse.json({ error: 'Trip or vehicle not found' }, { status: 404 });
+    }
+
     // Any driver-material authority amendment invalidates the previous
     // acceptance for departure. Keep the original acknowledgement immutable,
     // but require acceptance of the current authority before a fresh official
     // departure inspection can be submitted.
-    if (body.type === 'departure' && typeof body.tripId === 'string') {
+    if (body.type === 'departure' && tripId) {
       const db = getDb();
       const [authority] = await db
         .select({ id: tripAuthorities.id, acceptedAt: tripAuthorities.acceptedAt })
         .from(tripAuthorities)
         .where(
           and(
-            eq(tripAuthorities.tripId, body.tripId),
+            eq(tripAuthorities.tripId, tripId),
             eq(tripAuthorities.tenantId, session.tenantId),
           ),
         )
@@ -92,8 +105,8 @@ export async function POST(request: NextRequest) {
     const result = await completeOfficialInspection({
       tenantId: session.tenantId,
       userId: session.user.id,
-      vehicleId: body.vehicleId,
-      tripId: body.tripId,
+      vehicleId,
+      tripId,
       type: body.type,
       odometerReading: Number(body.odometerReading),
       fuelLevel: body.fuelLevel,
@@ -114,13 +127,13 @@ export async function POST(request: NextRequest) {
       body.type === 'departure' &&
       result.overallPass === true &&
       result.idempotent !== true &&
-      typeof body.tripId === 'string'
+      tripId
     ) {
       const db = getDb();
       const [trip] = await db
         .select({ allocationId: trips.allocationId })
         .from(trips)
-        .where(and(eq(trips.id, body.tripId), eq(trips.tenantId, session.tenantId)))
+        .where(and(eq(trips.id, tripId), eq(trips.tenantId, session.tenantId)))
         .limit(1);
       if (trip?.allocationId) {
         await onTripIssued(trip.allocationId, session.tenantId, session.user.id).catch((error) =>
@@ -131,7 +144,7 @@ export async function POST(request: NextRequest) {
       await resolveActionNotifications({
         tenantId: session.tenantId,
         entityType: 'trip',
-        entityId: body.tripId,
+        entityId: tripId,
         eventTypes: ['departure_inspection_required'],
       }).catch((error) =>
         console.warn('[inspections] Could not resolve departure-inspection notification:', error),
@@ -149,8 +162,8 @@ export async function POST(request: NextRequest) {
           title: 'Trip Authority ready for formal issue',
           body: 'The official departure inspection passed. Review and formally issue the latest Trip Authority before recording physical vehicle issue.',
           entityType: 'trip',
-          entityId: body.tripId,
-          actionUrl: `/dashboard/trips/${body.tripId}`,
+          entityId: tripId,
+          actionUrl: `/dashboard/trips/${tripId}`,
           workspace: WorkspaceIds.TRANSPORT_ADMIN,
           priority: 'high',
         }).catch((error) =>
