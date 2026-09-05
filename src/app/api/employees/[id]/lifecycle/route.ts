@@ -23,11 +23,14 @@ import { requireDashboardAction, requirePermission, requireRequestAuth } from '@
 import { Permissions } from '@/lib/permissions';
 import { AVAILABILITY_STATUSES } from '@/lib/employee-lifecycle';
 import { normaliseAvailability, normaliseEmployeeStatus } from '@/lib/employee-status';
-import { getTenantEntitlements, checkEntitlement } from '@/lib/entitlements';
+import { getTenantEntitlements } from '@/lib/entitlements';
 import { recordAuditEvent } from '@/lib/audit-event';
+import { checkTenantUserCapacityLocked, lockTenantUserCapacity } from '@/lib/tenant-user-capacity';
+import { lockUserMembershipInvariant } from '@/lib/user-membership-integrity';
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const STAFF_RESTORE_USER_LIMIT = 'staff_restore_user_limit';
 
 class EmployeeLifecycleConflictError extends Error {
   constructor() {
@@ -166,74 +169,6 @@ async function wouldDisableFinalTenantAdmin(userId: string, tenantId: string) {
       .map((assignment) => assignment.userId),
   )];
   return activeAdmins.length === 1 && activeAdmins[0] === userId;
-}
-
-async function restoreArchivedAccountIfAllowed(
-  userId: string,
-  tenantId: string,
-  archivedAt: Date | string | null,
-) {
-  const db = getDb();
-  const [[membership], [profile]] = await Promise.all([
-    db
-      .select({ id: tenantMemberships.id, status: tenantMemberships.status })
-      .from(tenantMemberships)
-      .where(and(eq(tenantMemberships.userId, userId), eq(tenantMemberships.tenantId, tenantId)))
-      .limit(1),
-    db
-      .select({ status: userProfiles.status, disabledAt: userProfiles.disabledAt })
-      .from(userProfiles)
-      .where(eq(userProfiles.userId, userId))
-      .limit(1),
-  ]);
-
-  // Only the archive-specific inactive state may be reversed here. Suspended,
-  // removed, pending and other states belong to User Management and remain intact.
-  if (!membership || membership.status !== 'inactive') return false;
-
-  const entitlements = await getTenantEntitlements(tenantId);
-  if (entitlements) {
-    const [countRow] = await db
-      .select({ total: count() })
-      .from(tenantMemberships)
-      .where(and(
-        eq(tenantMemberships.tenantId, tenantId),
-        inArray(tenantMemberships.status, ['active', 'pending', 'pending_activation', 'suspended']),
-      ));
-    const result = checkEntitlement(entitlements, 'users', Number(countRow?.total ?? 0), 1);
-    if (!result.ok) {
-      throw new Error(result.message || 'USER_LIMIT_REACHED');
-    }
-  }
-
-  const archivedTimestamp = archivedAt ? new Date(archivedAt).getTime() : null;
-  const disabledTimestamp = profile?.disabledAt ? new Date(profile.disabledAt).getTime() : null;
-  const archiveDisabledGlobalProfile =
-    profile?.status === 'disabled'
-    && archivedTimestamp !== null
-    && disabledTimestamp !== null
-    && archivedTimestamp === disabledTimestamp;
-
-  await db.transaction(async (tx) => {
-    await tx
-      .update(tenantMemberships)
-      .set({ status: 'active' })
-      .where(and(
-        eq(tenantMemberships.id, membership.id),
-        eq(tenantMemberships.tenantId, tenantId),
-        eq(tenantMemberships.status, 'inactive'),
-      ));
-
-    // Only undo the global profile disable when this exact staff archive set it.
-    // A separate security suspension/disablement must remain authoritative.
-    if (archiveDisabledGlobalProfile) {
-      await tx
-        .update(userProfiles)
-        .set({ accountEnabled: true, status: 'active', disabledAt: null, updatedAt: new Date() })
-        .where(and(eq(userProfiles.userId, userId), eq(userProfiles.status, 'disabled')));
-    }
-  });
-  return true;
 }
 
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
@@ -402,43 +337,113 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   } else if (body.action === 'restore') {
     let accountRestored = false;
     try {
-      if (employee.userId) {
-        accountRestored = await restoreArchivedAccountIfAllowed(
-          employee.userId,
-          auth.session.tenantId,
-          employee.archivedAt,
-        );
-      }
-    } catch (error) {
-      const message = error instanceof Error ? error.message : '';
-      return NextResponse.json(
-        { error: message || 'User limit reached. Increase the tenant user allowance before restoring this account.' },
-        { status: 409 },
-      );
-    }
+      const entitlements = employee.userId
+        ? await getTenantEntitlements(auth.session.tenantId)
+        : null;
 
-    await db.transaction(async (tx) => {
-      await tx
-        .update(employees)
-        .set({
+      await db.transaction(async (tx) => {
+        let membership: { id: string; status: string } | undefined;
+        let profile: { status: string | null; disabledAt: Date | null } | undefined;
+
+        if (employee.userId) {
+          // Capacity is tenant-scoped while the global Better Auth profile is user-scoped.
+          // Keep this lock order aligned with Admin User Restore and future account mutations.
+          await lockTenantUserCapacity(tx, auth.session.tenantId);
+          await lockUserMembershipInvariant(tx, employee.userId);
+
+          [membership] = await tx
+            .select({ id: tenantMemberships.id, status: tenantMemberships.status })
+            .from(tenantMemberships)
+            .where(and(
+              eq(tenantMemberships.userId, employee.userId),
+              eq(tenantMemberships.tenantId, auth.session.tenantId),
+            ))
+            .limit(1);
+          [profile] = await tx
+            .select({ status: userProfiles.status, disabledAt: userProfiles.disabledAt })
+            .from(userProfiles)
+            .where(eq(userProfiles.userId, employee.userId))
+            .limit(1);
+
+          // Only the archive-specific inactive membership is restored here.
+          // Suspended, removed and pending account states remain User Management decisions.
+          if (membership?.status === 'inactive' && entitlements) {
+            const userCheck = await checkTenantUserCapacityLocked(
+              tx,
+              auth.session.tenantId,
+              entitlements,
+              1,
+            );
+            if (!userCheck.ok) {
+              throw new Error(`${STAFF_RESTORE_USER_LIMIT}:${userCheck.message || 'User limit reached. Increase the tenant user allowance before restoring this account.'}`);
+            }
+          }
+        }
+
+        await updateEmployeeRevision(tx, employee, auth.session.tenantId, {
           employmentStatus: 'active',
           // Restoring employment does not imply immediate operational availability.
           availabilityStatus: employee.isDriver ? 'temporarily_unavailable' : 'available',
           archivedAt: null,
           archivedByUserId: null,
           updatedAt: now,
-        })
-        .where(and(eq(employees.id, id), eq(employees.tenantId, auth.session.tenantId)));
+        });
 
-      if (employee.isDriver) {
-        // Licence verification/driver authorisation remains authoritative. The
-        // driver must be explicitly made available after compliance is valid.
-        await tx
-          .update(driverProfiles)
-          .set({ availabilityStatus: 'unavailable', unavailableUntil: null, updatedAt: now })
-          .where(eq(driverProfiles.employeeId, id));
+        if (employee.userId && membership?.status === 'inactive') {
+          const [restoredMembership] = await tx
+            .update(tenantMemberships)
+            .set({ status: 'active' })
+            .where(and(
+              eq(tenantMemberships.id, membership.id),
+              eq(tenantMemberships.tenantId, auth.session.tenantId),
+              eq(tenantMemberships.status, 'inactive'),
+            ))
+            .returning({ id: tenantMemberships.id });
+          if (!restoredMembership) throw new EmployeeLifecycleConflictError();
+          accountRestored = true;
+
+          const archivedTimestamp = employee.archivedAt ? new Date(employee.archivedAt).getTime() : null;
+          const disabledTimestamp = profile?.disabledAt ? new Date(profile.disabledAt).getTime() : null;
+          const archiveDisabledGlobalProfile =
+            profile?.status === 'disabled'
+            && archivedTimestamp !== null
+            && disabledTimestamp !== null
+            && archivedTimestamp === disabledTimestamp;
+
+          // Only undo the exact global disable created by this staff archive.
+          // A newer security suspension/disable remains authoritative.
+          if (archiveDisabledGlobalProfile && profile?.disabledAt) {
+            await tx
+              .update(userProfiles)
+              .set({ accountEnabled: true, status: 'active', disabledAt: null, updatedAt: now })
+              .where(and(
+                eq(userProfiles.userId, employee.userId),
+                eq(userProfiles.status, 'disabled'),
+                eq(userProfiles.disabledAt, profile.disabledAt),
+              ));
+          }
+        }
+
+        if (employee.isDriver) {
+          // Licence verification/driver authorisation remains authoritative. The
+          // driver must be explicitly made available after compliance is valid.
+          await tx
+            .update(driverProfiles)
+            .set({ availabilityStatus: 'unavailable', unavailableUntil: null, updatedAt: now })
+            .where(eq(driverProfiles.employeeId, id));
+        }
+      });
+    } catch (error) {
+      if (error instanceof EmployeeLifecycleConflictError) return lifecycleConflictResponse();
+      if (error instanceof Error && error.message.startsWith(`${STAFF_RESTORE_USER_LIMIT}:`)) {
+        return NextResponse.json(
+          { error: error.message.slice(STAFF_RESTORE_USER_LIMIT.length + 1) },
+          { status: 409 },
+        );
       }
-    });
+      throw error;
+    }
+
     after = {
       employmentStatus: 'active',
       availabilityStatus: employee.isDriver ? 'temporarily_unavailable' : 'available',
