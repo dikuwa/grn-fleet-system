@@ -26,6 +26,8 @@ import {
 } from '@/lib/vehicle-input-validation';
 
 const SERVICE_TYPES = new Set(['scheduled', 'repair', 'inspection']);
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function optionalNonNegativeNumber(value: unknown, label: string) {
   if (value === undefined || value === null || value === '') return null;
@@ -123,6 +125,13 @@ export async function POST(req: NextRequest) {
       cost = optionalNonNegativeNumber(body.cost, 'Cost');
     } catch (error) {
       return NextResponse.json({ error: error instanceof Error ? error.message : 'Invalid numeric value' }, { status: 400 });
+    }
+
+    if (!UUID_PATTERN.test(vehicleId)) {
+      return NextResponse.json(
+        { error: 'Vehicle is not available in your current maintenance scope' },
+        { status: 404 },
+      );
     }
 
     const db = getDb();
