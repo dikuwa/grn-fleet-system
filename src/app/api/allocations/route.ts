@@ -30,6 +30,8 @@ const ALLOCATABLE_STATUSES = [
   'vehicle_allocated',
 ];
 const LIVE_ALLOCATION_STATES = ['provisional', 'confirmed'] as const;
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 const ALLOCATION_DB_ERROR_MESSAGES: Record<string, { status: number; error: string }> = {
   allocation_request_already_live: {
@@ -122,6 +124,9 @@ export async function POST(req: NextRequest) {
       driverEmployeeId,
       notes,
     } = body;
+    if (requestId && (typeof requestId !== 'string' || !UUID_PATTERN.test(requestId))) {
+      return NextResponse.json({ error: 'Transport request not found' }, { status: 404 });
+    }
 
     const db = getDb();
     const userId = session.user.id;
@@ -195,6 +200,9 @@ export async function POST(req: NextRequest) {
     }
     if (!startDate) {
       return NextResponse.json({ error: 'Start date is required' }, { status: 400 });
+    }
+    if (typeof resolvedVehicleId !== 'string' || !UUID_PATTERN.test(resolvedVehicleId)) {
+      return NextResponse.json({ error: 'Vehicle not found' }, { status: 404 });
     }
 
     const [vehicle] = await db
@@ -270,6 +278,12 @@ export async function POST(req: NextRequest) {
         },
         { status: 400 },
       );
+    }
+    if (
+      resolvedDriverId &&
+      (typeof resolvedDriverId !== 'string' || !UUID_PATTERN.test(resolvedDriverId))
+    ) {
+      return NextResponse.json({ error: 'Driver has no active licence profile.' }, { status: 409 });
     }
 
     let driverCompliance: ReturnType<typeof calculateDriverCompliance> | null = null;
