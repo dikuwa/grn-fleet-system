@@ -8,23 +8,27 @@ const source = readFileSync(
 );
 
 describe('admin user creation capacity serialization', () => {
-  it('keeps validation and role lookup before the account transaction', () => {
+  it('keeps ordinary validation before the account transaction', () => {
     const requiredEmployee = source.indexOf('An employee record is required');
-    const roleLookup = source.indexOf('eq(roles.id, roleId)', requiredEmployee);
-    const transaction = source.indexOf('await db.transaction', roleLookup);
+    const existingUser = source.indexOf('A user with this email already exists', requiredEmployee);
+    const transaction = source.indexOf('await db.transaction', existingUser);
 
-    expect(roleLookup).toBeGreaterThan(requiredEmployee);
-    expect(transaction).toBeGreaterThan(roleLookup);
+    expect(existingUser).toBeGreaterThan(requiredEmployee);
+    expect(transaction).toBeGreaterThan(existingUser);
   });
 
-  it('checks tenant capacity under the transaction lock before user inserts', () => {
+  it('checks tenant capacity before role validation and all account inserts', () => {
     const transaction = source.indexOf('await db.transaction');
     const capacity = source.indexOf('checkTenantUserCapacityLocked(', transaction);
-    const userInsert = source.indexOf('.insert(user)', capacity);
+    const roleGuard = source.indexOf("roleId && (typeof roleId !== 'string' || !UUID_PATTERN.test(roleId))", capacity);
+    const roleLookup = source.indexOf('eq(roles.id, roleId)', roleGuard);
+    const userInsert = source.indexOf('.insert(user)', roleLookup);
     const membershipInsert = source.indexOf('.insert(tenantMemberships)', userInsert);
 
     expect(capacity).toBeGreaterThan(transaction);
-    expect(userInsert).toBeGreaterThan(capacity);
+    expect(roleGuard).toBeGreaterThan(capacity);
+    expect(roleLookup).toBeGreaterThan(roleGuard);
+    expect(userInsert).toBeGreaterThan(roleLookup);
     expect(membershipInsert).toBeGreaterThan(userInsert);
   });
 
@@ -37,13 +41,15 @@ describe('admin user creation capacity serialization', () => {
     expect(preflightCount === -1 || preflightCount > transaction).toBe(true);
   });
 
-  it('maps locked capacity rejection to the existing controlled 409', () => {
-    const marker = source.indexOf('ADMIN_USER_LIMIT_REACHED');
-    const catchBranch = source.indexOf("error.message.startsWith(`${ADMIN_USER_LIMIT_REACHED}:`)", marker);
-    const status = source.indexOf('{ status: 409 }', catchBranch);
+  it('maps locked capacity and role validation rejections to controlled surfaces', () => {
+    const capacityMarker = source.indexOf('ADMIN_USER_LIMIT_REACHED');
+    const capacityCatch = source.indexOf("error.message.startsWith(`${ADMIN_USER_LIMIT_REACHED}:`)", capacityMarker);
+    const roleMarker = source.indexOf('ADMIN_ROLE_NOT_FOUND');
+    const roleCatch = source.indexOf('error.message === ADMIN_ROLE_NOT_FOUND', roleMarker);
 
-    expect(marker).toBeGreaterThan(-1);
-    expect(catchBranch).toBeGreaterThan(marker);
-    expect(status).toBeGreaterThan(catchBranch);
+    expect(capacityCatch).toBeGreaterThan(capacityMarker);
+    expect(source.indexOf('{ status: 409 }', capacityCatch)).toBeGreaterThan(capacityCatch);
+    expect(roleCatch).toBeGreaterThan(roleMarker);
+    expect(source.indexOf('{ status: 404 }', roleCatch)).toBeGreaterThan(roleCatch);
   });
 });
