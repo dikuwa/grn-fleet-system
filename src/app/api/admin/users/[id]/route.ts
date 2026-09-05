@@ -20,6 +20,7 @@ import { Permissions } from '@/lib/permissions';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { wouldDisableFinalActiveTenantAdministrator } from '@/lib/tenant-admin-integrity';
 import { lockUserMembershipInvariant } from '@/lib/user-membership-integrity';
+import { isRoleAssignmentWindowConflict } from '@/lib/role-assignment-integrity';
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -525,6 +526,12 @@ export async function PATCH(
       );
     }
     if (error instanceof Error && error.message === USER_ROLE_OVERLAP_CONFLICT) {
+      return NextResponse.json(
+        { error: 'This user already holds the selected role during part or all of the requested period' },
+        { status: 409 },
+      );
+    }
+    if (isRoleAssignmentWindowConflict(error)) {
       return NextResponse.json(
         { error: 'This user already holds the selected role during part or all of the requested period' },
         { status: 409 },
