@@ -9,7 +9,7 @@
 
 import { getDb } from '@/db';
 import { emergencyContacts } from '@/db/schema/trips';
-import { eq, and, asc, or, isNull } from 'drizzle-orm';
+import { eq, and, asc, or, isNull, sql } from 'drizzle-orm';
 import { recordAuditEvent } from '@/lib/audit-event';
 
 // Re-export client-safe constants and types
@@ -20,6 +20,14 @@ export {
 } from './emergency-contact-constants';
 import type { EmergencyContactRole } from './emergency-contact-constants';
 export type { EmergencyContactRole } from './emergency-contact-constants';
+
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+export const EMERGENCY_CONTACT_EDIT_CONFLICT = 'emergency_contact_edit_conflict';
+
+function emergencyContactRevisionMatches(updatedAt: Date) {
+  return sql`date_trunc('milliseconds', ${emergencyContacts.updatedAt}) = ${updatedAt.toISOString()}::timestamptz`;
+}
 
 // ---------------------------------------------------------------------------
 // Types
@@ -70,6 +78,7 @@ export async function listEmergencyContacts(
 }
 
 export async function getEmergencyContact(tenantId: string, id: string) {
+  if (!UUID_PATTERN.test(id)) return null;
   const db = getDb();
   const [row] = await db
     .select()
@@ -148,10 +157,16 @@ export async function updateEmergencyContact(
       isActive: input.isActive ?? before.isActive,
       updatedAt: new Date(),
     })
-    .where(and(eq(emergencyContacts.tenantId, tenantId), eq(emergencyContacts.id, id)))
+    .where(
+      and(
+        eq(emergencyContacts.tenantId, tenantId),
+        eq(emergencyContacts.id, id),
+        emergencyContactRevisionMatches(before.updatedAt),
+      ),
+    )
     .returning();
 
-  if (!row) return null;
+  if (!row) throw new Error(EMERGENCY_CONTACT_EDIT_CONFLICT);
 
   await recordAuditEvent({
     tenantId,
@@ -189,6 +204,7 @@ export async function setEmergencyContactActive(
   isActive: boolean,
   actorUserId: string,
 ) {
+  if (!UUID_PATTERN.test(id)) return null;
   const db = getDb();
   const [row] = await db
     .update(emergencyContacts)
@@ -216,6 +232,7 @@ export async function deleteEmergencyContact(
   id: string,
   actorUserId: string,
 ) {
+  if (!UUID_PATTERN.test(id)) return null;
   const db = getDb();
   const [row] = await db
     .delete(emergencyContacts)
