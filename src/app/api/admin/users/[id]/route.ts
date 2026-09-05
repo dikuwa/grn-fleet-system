@@ -19,6 +19,9 @@ import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { recordAuditEvent } from '@/lib/audit-event';
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function asDate(value: Date | string | null | undefined) {
   return value ? new Date(value) : null;
 }
@@ -236,6 +239,9 @@ export async function PATCH(
     }
 
     if (addRoleId) {
+      if (!UUID_PATTERN.test(String(addRoleId))) {
+        return NextResponse.json({ error: 'Role not found' }, { status: 404 });
+      }
       const [role] = await db
         .select()
         .from(roles)
@@ -393,6 +399,9 @@ export async function PATCH(
     }
 
     if (removeRoleId) {
+      if (!UUID_PATTERN.test(String(removeRoleId))) {
+        return NextResponse.json({ error: 'Role assignment not found' }, { status: 404 });
+      }
       const [assignment] = await db
         .select({
           id: roleAssignments.id,
