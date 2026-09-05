@@ -7,8 +7,21 @@ import { Permissions } from '@/lib/permissions';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { normaliseOrganisationCode, suggestOrganisationCode } from '@/lib/organisation-codes';
 import { runAtomicMutations } from '@/lib/db-atomic';
+import { getDatabaseErrorDetails } from '@/lib/database-error-details';
 
 const UNIT_TYPES = new Set(['directorate', 'department', 'unit']);
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const DEPARTMENT_CODE_UNIQUE_INDEX = 'uq_departments_tenant_code_normalized';
+
+function isUuid(value: string) {
+  return UUID_PATTERN.test(value);
+}
+
+function isDepartmentCodeConflict(error: unknown) {
+  const details = getDatabaseErrorDetails(error);
+  return details.code === '23505' && details.message.includes(DEPARTMENT_CODE_UNIQUE_INDEX);
+}
 
 async function validateReferences(
   db: ReturnType<typeof getDb>,
@@ -17,6 +30,7 @@ async function validateReferences(
   currentId?: string,
 ) {
   const parentId = typeof body.parentId === 'string' && body.parentId ? body.parentId : null;
+  if (parentId && !isUuid(parentId)) return 'The selected parent unit does not belong to this tenant.';
   if (parentId === currentId) return 'An organisation unit cannot be its own parent.';
 
   const requireActiveParent = !currentId || body.parentId !== undefined;
@@ -45,6 +59,9 @@ async function validateReferences(
     ? body.officeIds.filter((id): id is string => typeof id === 'string')
     : [];
   for (const officeId of officeIds) {
+    if (!isUuid(officeId)) {
+      return 'One or more selected offices are inactive or do not belong to this tenant.';
+    }
     const [office] = await db
       .select({ id: offices.id })
       .from(offices)
@@ -55,6 +72,9 @@ async function validateReferences(
 
   const validateHead = !currentId || body.headEmployeeId !== undefined;
   if (validateHead && typeof body.headEmployeeId === 'string' && body.headEmployeeId) {
+    if (!isUuid(body.headEmployeeId)) {
+      return 'The selected unit head must be an active employee in this tenant.';
+    }
     const [head] = await db
       .select({ id: employees.id })
       .from(employees)
@@ -166,6 +186,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: true, data: department }, { status: 201 });
   } catch (error) {
     console.error('[Departments] POST failed:', error);
+    if (isDepartmentCodeConflict(error)) {
+      return NextResponse.json(
+        { error: 'This organisation unit code is already used in this tenant. Refresh and try again.' },
+        { status: 409 },
+      );
+    }
     return NextResponse.json({ error: 'Failed to create organisation unit.' }, { status: 500 });
   }
 }
@@ -180,6 +206,9 @@ export async function PATCH(request: NextRequest) {
     const body = (await request.json()) as Record<string, unknown>;
     const id = typeof body.id === 'string' ? body.id : '';
     if (!id) return NextResponse.json({ error: 'Organisation unit ID is required.' }, { status: 400 });
+    if (!isUuid(id)) {
+      return NextResponse.json({ error: 'Organisation unit not found.' }, { status: 404 });
+    }
 
     const db = getDb();
     const tenantId = auth.session.tenantId;
@@ -217,7 +246,7 @@ export async function PATCH(request: NextRequest) {
       .where(and(
         eq(departments.tenantId, tenantId),
         ne(departments.id, id),
-        sql`upper(${departments.code}) = ${code}`,
+        sql`upper(btrim(${departments.code})) = ${code}`,
       ))
       .limit(1);
     if (duplicate) {
@@ -292,6 +321,12 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ success: true, data: updated });
   } catch (error) {
     console.error('[Departments] PATCH failed:', error);
+    if (isDepartmentCodeConflict(error)) {
+      return NextResponse.json(
+        { error: 'This organisation unit code is already used in this tenant. Refresh and try again.' },
+        { status: 409 },
+      );
+    }
     return NextResponse.json({ error: 'Failed to update organisation unit.' }, { status: 500 });
   }
 }
