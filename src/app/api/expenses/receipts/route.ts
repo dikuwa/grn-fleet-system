@@ -13,6 +13,8 @@ import { UPLOAD_MAX_SIZE_BYTES } from '@/lib/constants';
 import { runAtomicMutations } from '@/lib/db-atomic';
 
 const EXPENSE_RECEIPT_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function expenseReceiptClosureConflict(error: unknown) {
   const record = error as {
@@ -59,6 +61,12 @@ export async function POST(request: NextRequest) {
     }
     if (!tripId && !canManage) {
       return NextResponse.json({ error: 'Drivers may attach expenses only to their active trip' }, { status: 422 });
+    }
+    if (tripId && !UUID_PATTERN.test(tripId)) {
+      return NextResponse.json({ error: 'Trip not found or not assigned to you' }, { status: 404 });
+    }
+    if (!tripId && vehicleId && !UUID_PATTERN.test(vehicleId)) {
+      return NextResponse.json({ error: 'Vehicle not found in this tenant' }, { status: 404 });
     }
 
     const db = getDb();
