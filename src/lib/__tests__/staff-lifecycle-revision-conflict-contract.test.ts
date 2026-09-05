@@ -8,12 +8,17 @@ const source = readFileSync(
 );
 
 describe('staff lifecycle revision conflict contract', () => {
-  it('matches the reviewed employee updatedAt revision before lifecycle side effects', () => {
+  it('normalizes the reviewed employee updatedAt revision to JavaScript millisecond precision', () => {
+    const matcher = source.indexOf('function employeeRevisionMatches');
+    const truncation = source.indexOf("date_trunc('milliseconds'", matcher);
+    const reviewed = source.indexOf('employee.updatedAt.toISOString()', truncation);
     const helper = source.indexOf('async function updateEmployeeRevision');
-    const revision = source.indexOf('eq(employees.updatedAt, employee.updatedAt)', helper);
+    const revision = source.indexOf('employeeRevisionMatches(employee)', helper);
     const conflict = source.indexOf('throw new EmployeeLifecycleConflictError()', helper);
 
-    expect(helper).toBeGreaterThan(-1);
+    expect(matcher).toBeGreaterThan(-1);
+    expect(truncation).toBeGreaterThan(matcher);
+    expect(reviewed).toBeGreaterThan(truncation);
     expect(revision).toBeGreaterThan(helper);
     expect(conflict).toBeGreaterThan(revision);
   });
@@ -57,7 +62,7 @@ describe('staff lifecycle revision conflict contract', () => {
 
   it('deletes only the exact reviewed revision and audits only after a winning delete', () => {
     const deleteHandler = source.indexOf('export async function DELETE');
-    const revision = source.indexOf('eq(employees.updatedAt, employee.updatedAt)', deleteHandler);
+    const revision = source.indexOf('employeeRevisionMatches(employee)', deleteHandler);
     const returning = source.indexOf('.returning({ id: employees.id })', revision);
     const lostClaim = source.indexOf('if (deleted.length === 0)', returning);
     const audit = source.indexOf('await recordAuditEvent({', lostClaim);
