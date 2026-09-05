@@ -20,6 +20,9 @@ import { employees, departments, offices, driverProfiles } from '@/db/schema/peo
 import { getTenantEntitlements, checkEntitlement } from '@/lib/entitlements';
 import { recordAuditEvent } from '@/lib/audit-event';
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function assignmentIsActive(
   assignment: { startDate: Date | string | null; endDate: Date | string | null },
   now = new Date(),
@@ -237,6 +240,9 @@ export async function POST(request: NextRequest) {
     if (!employeeId) {
       return NextResponse.json({ error: 'An employee record is required' }, { status: 400 });
     }
+    if (typeof employeeId !== 'string' || !UUID_PATTERN.test(employeeId)) {
+      return NextResponse.json({ error: 'Active employee not found' }, { status: 404 });
+    }
 
     const db = getDb();
     const [employee] = await db
@@ -299,11 +305,14 @@ export async function POST(request: NextRequest) {
       }
     }
 
+    if (roleId && (typeof roleId !== 'string' || !UUID_PATTERN.test(roleId))) {
+      return NextResponse.json({ error: 'Role not found in your organisation' }, { status: 404 });
+    }
     const selectedRole = roleId
       ? (await db
           .select({ id: roles.id, name: roles.name })
           .from(roles)
-          .where(and(eq(roles.id, String(roleId)), eq(roles.tenantId, session.tenantId)))
+          .where(and(eq(roles.id, roleId), eq(roles.tenantId, session.tenantId)))
           .limit(1))[0]
       : null;
     if (roleId && !selectedRole) {
