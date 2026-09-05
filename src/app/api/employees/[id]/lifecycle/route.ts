@@ -18,7 +18,7 @@ import {
   vehicleAllocations,
   workflowActions,
 } from '@/db/schema';
-import { and, count, eq, gt, inArray, isNull, lte, ne, or } from 'drizzle-orm';
+import { and, count, eq, gt, inArray, isNull, lte, ne, or, sql } from 'drizzle-orm';
 import { requireDashboardAction, requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { AVAILABILITY_STATUSES } from '@/lib/employee-lifecycle';
@@ -28,6 +28,55 @@ import { recordAuditEvent } from '@/lib/audit-event';
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+class EmployeeLifecycleConflictError extends Error {
+  constructor() {
+    super('Employee lifecycle revision changed');
+    this.name = 'EmployeeLifecycleConflictError';
+  }
+}
+
+function lifecycleConflictResponse() {
+  return NextResponse.json(
+    { error: 'This employee lifecycle record changed while the action was being prepared. Refresh and review the current state before trying again.' },
+    { status: 409 },
+  );
+}
+
+function employeeRevisionMatches(employee: typeof employees.$inferSelect) {
+  return sql`date_trunc('milliseconds', ${employees.updatedAt}) = ${employee.updatedAt.toISOString()}::timestamptz`;
+}
+
+async function updateEmployeeRevision(
+  executor: any,
+  employee: typeof employees.$inferSelect,
+  tenantId: string,
+  values: any,
+) {
+  const [updated] = await executor
+    .update(employees)
+    .set(values)
+    .where(and(
+      eq(employees.id, employee.id),
+      eq(employees.tenantId, tenantId),
+      employeeRevisionMatches(employee),
+    ))
+    .returning({ id: employees.id });
+  if (!updated) throw new EmployeeLifecycleConflictError();
+}
+
+async function runLifecycleTransaction(
+  db: ReturnType<typeof getDb>,
+  work: (tx: any) => Promise<void>,
+) {
+  try {
+    await db.transaction(work);
+    return true;
+  } catch (error) {
+    if (error instanceof EmployeeLifecycleConflictError) return false;
+    throw error;
+  }
+}
 
 async function getEmployee(id: string, tenantId: string) {
   if (!UUID_PATTERN.test(id)) return undefined;
@@ -314,17 +363,14 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       }
     }
 
-    await db.transaction(async (tx) => {
-      await tx
-        .update(employees)
-        .set({
-          employmentStatus: 'archived',
-          availabilityStatus: 'temporarily_unavailable',
-          archivedAt: now,
-          archivedByUserId: auth.session.user.id,
-          updatedAt: now,
-        })
-        .where(and(eq(employees.id, id), eq(employees.tenantId, auth.session.tenantId)));
+    const committed = await runLifecycleTransaction(db, async (tx) => {
+      await updateEmployeeRevision(tx, employee, auth.session.tenantId, {
+        employmentStatus: 'archived',
+        availabilityStatus: 'temporarily_unavailable',
+        archivedAt: now,
+        archivedByUserId: auth.session.user.id,
+        updatedAt: now,
+      });
 
       if (employee.isDriver) {
         await tx
@@ -351,6 +397,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         }
       }
     });
+    if (!committed) return lifecycleConflictResponse();
     after = { employmentStatus: 'archived', accountArchived, globalProfileDisabled };
   } else if (body.action === 'restore') {
     let accountRestored = false;
@@ -405,16 +452,19 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         { status: 400 },
       );
     }
-    await db
-      .update(employees)
-      .set({ employmentStatus: canonical, updatedAt: now })
-      .where(and(eq(employees.id, id), eq(employees.tenantId, auth.session.tenantId)));
-    if (employee.isDriver && canonical === 'inactive') {
-      await db
-        .update(driverProfiles)
-        .set({ availabilityStatus: 'unavailable', updatedAt: now })
-        .where(eq(driverProfiles.employeeId, id));
-    }
+    const committed = await runLifecycleTransaction(db, async (tx) => {
+      await updateEmployeeRevision(tx, employee, auth.session.tenantId, {
+        employmentStatus: canonical,
+        updatedAt: now,
+      });
+      if (employee.isDriver && canonical === 'inactive') {
+        await tx
+          .update(driverProfiles)
+          .set({ availabilityStatus: 'unavailable', updatedAt: now })
+          .where(eq(driverProfiles.employeeId, id));
+      }
+    });
+    if (!committed) return lifecycleConflictResponse();
     after = { employmentStatus: canonical };
   } else if (body.action === 'remove_driver') {
     if (!employee.isDriver) {
@@ -422,11 +472,11 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     }
     const dependencyError = await assertNoLiveDriverResponsibility(employee.id, auth.session.tenantId);
     if (dependencyError) return NextResponse.json({ error: dependencyError }, { status: 409 });
-    await db.transaction(async (tx) => {
-      await tx
-        .update(employees)
-        .set({ isDriver: false, updatedAt: now })
-        .where(and(eq(employees.id, id), eq(employees.tenantId, auth.session.tenantId)));
+    const committed = await runLifecycleTransaction(db, async (tx) => {
+      await updateEmployeeRevision(tx, employee, auth.session.tenantId, {
+        isDriver: false,
+        updatedAt: now,
+      });
       await tx
         .update(driverProfiles)
         .set({
@@ -437,6 +487,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         })
         .where(eq(driverProfiles.employeeId, id));
     });
+    if (!committed) return lifecycleConflictResponse();
     after = { isDriver: false, driverStatus: 'revoked', availabilityStatus: 'unavailable' };
   } else if (body.action === 'availability') {
     const canonicalAvailability = normaliseAvailability(body.status);
@@ -461,7 +512,11 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       );
     }
 
-    await db.transaction(async (tx) => {
+    const committed = await runLifecycleTransaction(db, async (tx) => {
+      await updateEmployeeRevision(tx, employee, auth.session.tenantId, {
+        availabilityStatus: canonicalAvailability,
+        updatedAt: now,
+      });
       await tx
         .update(employeeAvailability)
         .set({ isActive: false, endAt: now })
@@ -480,10 +535,6 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         notes: body.notes?.trim() || null,
         enteredByUserId: auth.session.user.id,
       });
-      await tx
-        .update(employees)
-        .set({ availabilityStatus: canonicalAvailability, updatedAt: now })
-        .where(and(eq(employees.id, id), eq(employees.tenantId, auth.session.tenantId)));
       if (employee.isDriver) {
         await tx
           .update(driverProfiles)
@@ -495,6 +546,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
           .where(eq(driverProfiles.employeeId, id));
       }
     });
+    if (!committed) return lifecycleConflictResponse();
     after = { availabilityStatus: canonicalAvailability, startAt, endAt };
   } else if (body.action === 'transfer') {
     if (!body.officeId || !body.jobTitle?.trim()) {
@@ -556,7 +608,16 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     }
 
     const jobTitle = body.jobTitle.trim();
-    await db.transaction(async (tx) => {
+    const committed = await runLifecycleTransaction(db, async (tx) => {
+      await updateEmployeeRevision(tx, employee, auth.session.tenantId, {
+        officeId: office.id,
+        departmentId: body.departmentId || null,
+        jobTitle,
+        substantivePosition: body.position?.trim() || jobTitle,
+        supervisorEmployeeId: body.supervisorEmployeeId || null,
+        employmentStatus: 'active',
+        updatedAt: now,
+      });
       await tx
         .update(employeeAssignments)
         .set({ isCurrent: false, endDate: now.toISOString().slice(0, 10) })
@@ -577,19 +638,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         reason: body.reason?.trim() || 'Transfer',
         createdByUserId: auth.session.user.id,
       });
-      await tx
-        .update(employees)
-        .set({
-          officeId: office.id,
-          departmentId: body.departmentId || null,
-          jobTitle,
-          substantivePosition: body.position?.trim() || jobTitle,
-          supervisorEmployeeId: body.supervisorEmployeeId || null,
-          employmentStatus: 'active',
-          updatedAt: now,
-        })
-        .where(and(eq(employees.id, id), eq(employees.tenantId, auth.session.tenantId)));
     });
+    if (!committed) return lifecycleConflictResponse();
     after = {
       officeId: office.id,
       departmentId: body.departmentId || null,
@@ -669,9 +719,20 @@ export async function DELETE(request: NextRequest, { params }: { params: Promise
     );
   }
 
-  await db
+  const deleted = await db
     .delete(employees)
-    .where(and(eq(employees.id, id), eq(employees.tenantId, auth.session.tenantId)));
+    .where(and(
+      eq(employees.id, id),
+      eq(employees.tenantId, auth.session.tenantId),
+      employeeRevisionMatches(employee),
+    ))
+    .returning({ id: employees.id });
+  if (deleted.length === 0) {
+    return NextResponse.json(
+      { error: 'This employee lifecycle record changed while deletion was being prepared. Refresh and review the current state before trying again.' },
+      { status: 409 },
+    );
+  }
   await recordAuditEvent({
     tenantId: auth.session.tenantId,
     actorUserId: auth.session.user.id,
