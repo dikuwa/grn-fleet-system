@@ -7,6 +7,9 @@ import { Permissions } from '@/lib/permissions';
 import { fuelScopeCondition } from '@/lib/record-scope';
 import { getSignedFileUrl, isStorageConfigured } from '@/lib/storage';
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -27,6 +30,9 @@ export async function GET(
     }
     if (!isStorageConfigured()) {
       return NextResponse.json({ error: 'Secure receipt storage is not configured' }, { status: 503 });
+    }
+    if (!UUID_PATTERN.test(id)) {
+      return NextResponse.json({ error: 'Receipt evidence not found' }, { status: 404 });
     }
 
     const scope = canManage || canVerify
