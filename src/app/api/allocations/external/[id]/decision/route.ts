@@ -11,6 +11,8 @@ import { Permissions } from '@/lib/permissions';
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
 
 const ACCEPTANCE_METHODS = ['in_person', 'phone', 'signed_paper', 'secure_link'] as const;
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type RouteContext = { params: Promise<{ id: string }> };
 
@@ -43,6 +45,9 @@ export async function PATCH(request: NextRequest, context: RouteContext) {
     const action = body.action;
     if (action !== 'accept' && action !== 'cancel') {
       return NextResponse.json({ error: 'Action must be accept or cancel' }, { status: 422 });
+    }
+    if (!UUID_PATTERN.test(id)) {
+      return NextResponse.json({ error: 'External driver assignment not found' }, { status: 404 });
     }
 
     const db = getDb();
