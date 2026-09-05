@@ -21,9 +21,10 @@ describe('admin password reset serialization', () => {
     const credentialClaimIndex = source.indexOf('const [rotatedCredential] = await tx', transactionIndex);
 
     expect(source).toContain("const PASSWORD_RESET_CONFLICT = 'password_reset_conflict'");
+    expect(source).toContain('const previousPasswordHash = credential.password');
     expect(membershipLockIndex).toBeGreaterThan(transactionIndex);
     expect(credentialClaimIndex).toBeGreaterThan(membershipLockIndex);
-    expect(source).toContain('eq(account.password, credential.password)');
+    expect(source).toContain('eq(account.password, previousPasswordHash)');
     expect(source).toContain('if (!rotatedCredential) throw new Error(PASSWORD_RESET_CONFLICT)');
   });
 
