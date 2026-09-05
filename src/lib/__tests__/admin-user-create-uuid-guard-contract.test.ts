@@ -19,15 +19,15 @@ describe('admin user creation UUID boundary contract', () => {
     expect(db).toBeGreaterThan(notFound);
   });
 
-  it('keeps the role UUID guard after the entitlement check and before role lookup', () => {
-    const entitlement = source.indexOf("checkEntitlement(entitlements, 'users'");
-    const guard = source.indexOf("roleId && (typeof roleId !== 'string' || !UUID_PATTERN.test(roleId))", entitlement);
-    const notFound = source.indexOf('Role not found in your organisation', guard);
+  it('keeps the role UUID guard after the locked capacity check and before role lookup', () => {
+    const capacity = source.indexOf('checkTenantUserCapacityLocked(');
+    const guard = source.indexOf("roleId && (typeof roleId !== 'string' || !UUID_PATTERN.test(roleId))", capacity);
     const query = source.indexOf('eq(roles.id, roleId)', guard);
+    const roleError = source.indexOf('ADMIN_ROLE_NOT_FOUND', guard);
 
-    expect(entitlement).toBeGreaterThan(-1);
-    expect(guard).toBeGreaterThan(entitlement);
-    expect(notFound).toBeGreaterThan(guard);
-    expect(query).toBeGreaterThan(notFound);
+    expect(capacity).toBeGreaterThan(-1);
+    expect(guard).toBeGreaterThan(capacity);
+    expect(query).toBeGreaterThan(guard);
+    expect(roleError).toBeGreaterThan(guard);
   });
 });

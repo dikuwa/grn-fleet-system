@@ -17,11 +17,14 @@ import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import bcrypt from 'bcryptjs';
 import { employees, departments, offices, driverProfiles } from '@/db/schema/people';
-import { getTenantEntitlements, checkEntitlement } from '@/lib/entitlements';
+import { getTenantEntitlements } from '@/lib/entitlements';
 import { recordAuditEvent } from '@/lib/audit-event';
+import { checkTenantUserCapacityLocked } from '@/lib/tenant-user-capacity';
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const ADMIN_USER_LIMIT_REACHED = 'admin_user_limit_reached';
+const ADMIN_ROLE_NOT_FOUND = 'admin_role_not_found';
 
 function assignmentIsActive(
   assignment: { startDate: Date | string | null; endDate: Date | string | null },
@@ -289,42 +292,38 @@ export async function POST(request: NextRequest) {
     }
 
     const entitlements = await getTenantEntitlements(session.tenantId);
-    if (entitlements) {
-      const [countRow] = await db
-        .select({ total: count() })
-        .from(tenantMemberships)
-        .where(
-          and(
-            eq(tenantMemberships.tenantId, session.tenantId),
-            inArray(tenantMemberships.status, ['active', 'pending', 'pending_activation', 'suspended']),
-          ),
-        );
-      const userCheck = checkEntitlement(entitlements, 'users', countRow?.total ?? 0, 1);
-      if (!userCheck.ok) {
-        return NextResponse.json({ error: userCheck.message || 'User limit reached' }, { status: 409 });
-      }
-    }
-
-    if (roleId && (typeof roleId !== 'string' || !UUID_PATTERN.test(roleId))) {
-      return NextResponse.json({ error: 'Role not found in your organisation' }, { status: 404 });
-    }
-    const selectedRole = roleId
-      ? (await db
-          .select({ id: roles.id, name: roles.name })
-          .from(roles)
-          .where(and(eq(roles.id, roleId), eq(roles.tenantId, session.tenantId)))
-          .limit(1))[0]
-      : null;
-    if (roleId && !selectedRole) {
-      return NextResponse.json({ error: 'Role not found in your organisation' }, { status: 404 });
-    }
-
     const userId = crypto.randomUUID();
     const now = new Date();
     const passwordHash = await bcrypt.hash(password, 10);
     const forcePasswordChange = process.env.FORCE_PASSWORD_CHANGE_ON_FIRST_LOGIN !== 'false';
 
     await db.transaction(async (tx) => {
+      if (entitlements) {
+        const userCheck = await checkTenantUserCapacityLocked(
+          tx,
+          session.tenantId,
+          entitlements,
+          1,
+        );
+        if (!userCheck.ok) {
+          throw new Error(`${ADMIN_USER_LIMIT_REACHED}:${userCheck.message || 'User limit reached'}`);
+        }
+      }
+
+      if (roleId && (typeof roleId !== 'string' || !UUID_PATTERN.test(roleId))) {
+        throw new Error(ADMIN_ROLE_NOT_FOUND);
+      }
+      const selectedRole = roleId
+        ? (await tx
+            .select({ id: roles.id, name: roles.name })
+            .from(roles)
+            .where(and(eq(roles.id, roleId), eq(roles.tenantId, session.tenantId)))
+            .limit(1))[0]
+        : null;
+      if (roleId && !selectedRole) {
+        throw new Error(ADMIN_ROLE_NOT_FOUND);
+      }
+
       await tx.insert(user).values({
         id: userId,
         email: normalizedEmail,
@@ -431,6 +430,15 @@ export async function POST(request: NextRequest) {
     }, { status: 201 });
   } catch (error) {
     console.error('[Admin Users] POST failed:', error);
+    if (error instanceof Error && error.message.startsWith(`${ADMIN_USER_LIMIT_REACHED}:`)) {
+      return NextResponse.json(
+        { error: error.message.slice(ADMIN_USER_LIMIT_REACHED.length + 1) },
+        { status: 409 },
+      );
+    }
+    if (error instanceof Error && error.message === ADMIN_ROLE_NOT_FOUND) {
+      return NextResponse.json({ error: 'Role not found in your organisation' }, { status: 404 });
+    }
     if (error instanceof Error && error.message === 'STAFF_ACCOUNT_ALREADY_LINKED') {
       return NextResponse.json({ error: 'Employee already has an account' }, { status: 409 });
     }
