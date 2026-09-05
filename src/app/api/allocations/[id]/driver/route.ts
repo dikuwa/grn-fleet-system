@@ -28,6 +28,8 @@ import { WorkspaceIds } from '@/lib/workspaces';
 import { requestPostAuthorisationDriverReplacement } from '@/lib/driver-authority-replacement';
 
 const LIVE_ALLOCATION_STATES = ['provisional', 'confirmed'] as const;
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function PATCH(
   request: NextRequest,
@@ -48,6 +50,12 @@ export async function PATCH(
     const { driverEmployeeId, reason } = body;
     if (!driverEmployeeId) {
       return NextResponse.json({ error: 'driverEmployeeId is required' }, { status: 400 });
+    }
+    if (!UUID_PATTERN.test(id)) {
+      return NextResponse.json({ error: 'Allocation not found' }, { status: 404 });
+    }
+    if (typeof driverEmployeeId !== 'string' || !UUID_PATTERN.test(driverEmployeeId)) {
+      return NextResponse.json({ error: 'Driver has no active licence profile.' }, { status: 409 });
     }
 
     const cleanReason = typeof reason === 'string' ? reason.trim() : '';
@@ -442,6 +450,9 @@ export async function DELETE(
     }
     if (cleanReason.length > 500) {
       return NextResponse.json({ error: 'Driver removal reason must be 500 characters or fewer' }, { status: 422 });
+    }
+    if (!UUID_PATTERN.test(id)) {
+      return NextResponse.json({ error: 'Allocation not found' }, { status: 404 });
     }
 
     const db = getDb();
