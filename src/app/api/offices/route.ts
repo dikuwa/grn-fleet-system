@@ -6,6 +6,7 @@ import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { normaliseOrganisationCode, suggestOrganisationCode } from '@/lib/organisation-codes';
+import { getDatabaseErrorDetails } from '@/lib/database-error-details';
 
 const OFFICE_TYPES = new Set([
   'head_office',
@@ -17,6 +18,18 @@ const OFFICE_TYPES = new Set([
   'workshop',
   'other',
 ]);
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const OFFICE_CODE_UNIQUE_INDEX = 'uq_offices_tenant_code_normalized';
+
+function isUuid(value: string) {
+  return UUID_PATTERN.test(value);
+}
+
+function isOfficeCodeConflict(error: unknown) {
+  const details = getDatabaseErrorDetails(error);
+  return details.code === '23505' && details.message.includes(OFFICE_CODE_UNIQUE_INDEX);
+}
 
 async function validateParent(
   db: ReturnType<typeof getDb>,
@@ -26,6 +39,7 @@ async function validateParent(
   requireActiveParent = true,
 ) {
   if (!parentId) return null;
+  if (!isUuid(parentId)) return 'The selected parent office does not belong to this tenant.';
   if (parentId === currentId) return 'An office cannot be its own parent.';
   let cursor: string | null = parentId;
   const visited = new Set<string>();
@@ -150,6 +164,12 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: true, data: office }, { status: 201 });
   } catch (error) {
     console.error('[Offices] POST failed:', error);
+    if (isOfficeCodeConflict(error)) {
+      return NextResponse.json(
+        { error: 'This office code is already used in this tenant. Refresh and try again.' },
+        { status: 409 },
+      );
+    }
     return NextResponse.json({ error: 'Failed to create office.' }, { status: 500 });
   }
 }
@@ -162,15 +182,19 @@ export async function PATCH(request: NextRequest) {
     if (permission instanceof NextResponse) return permission;
 
     const body = await request.json();
-    if (!body.id) {
+    const id = typeof body.id === 'string' ? body.id : '';
+    if (!id) {
       return NextResponse.json({ error: 'Office ID is required.' }, { status: 400 });
+    }
+    if (!isUuid(id)) {
+      return NextResponse.json({ error: 'Office not found.' }, { status: 404 });
     }
 
     const db = getDb();
     const [existing] = await db
       .select()
       .from(offices)
-      .where(and(eq(offices.id, body.id), eq(offices.tenantId, auth.session.tenantId)))
+      .where(and(eq(offices.id, id), eq(offices.tenantId, auth.session.tenantId)))
       .limit(1);
     if (!existing) return NextResponse.json({ error: 'Office not found.' }, { status: 404 });
 
@@ -183,7 +207,11 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json({ error: 'Office name cannot be empty.' }, { status: 400 });
     }
 
-    const parentId = body.parentId !== undefined ? body.parentId || null : existing.parentId;
+    const parentId = body.parentId !== undefined
+      ? typeof body.parentId === 'string' && body.parentId
+        ? body.parentId
+        : null
+      : existing.parentId;
     const parentError = await validateParent(
       db,
       auth.session.tenantId,
@@ -212,7 +240,7 @@ export async function PATCH(request: NextRequest) {
         and(
           eq(offices.tenantId, auth.session.tenantId),
           ne(offices.id, existing.id),
-          sql`upper(${offices.code}) = ${code}`,
+          sql`upper(btrim(${offices.code})) = ${code}`,
         ),
       )
       .limit(1);
@@ -281,6 +309,12 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ success: true, data: updated });
   } catch (error) {
     console.error('[Offices] PATCH failed:', error);
+    if (isOfficeCodeConflict(error)) {
+      return NextResponse.json(
+        { error: 'This office code is already used in this tenant. Refresh and try again.' },
+        { status: 409 },
+      );
+    }
     return NextResponse.json({ error: 'Failed to update office.' }, { status: 500 });
   }
 }
