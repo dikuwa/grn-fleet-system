@@ -36,11 +36,18 @@ class EmployeeLifecycleConflictError extends Error {
   }
 }
 
+function lifecycleConflictResponse() {
+  return NextResponse.json(
+    { error: 'This employee lifecycle record changed while the action was being prepared. Refresh and review the current state before trying again.' },
+    { status: 409 },
+  );
+}
+
 async function updateEmployeeRevision(
   executor: any,
   employee: typeof employees.$inferSelect,
   tenantId: string,
-  values: Record<string, unknown>,
+  values: any,
 ) {
   const [updated] = await executor
     .update(employees)
@@ -52,6 +59,19 @@ async function updateEmployeeRevision(
     ))
     .returning({ id: employees.id });
   if (!updated) throw new EmployeeLifecycleConflictError();
+}
+
+async function runLifecycleTransaction(
+  db: ReturnType<typeof getDb>,
+  work: (tx: any) => Promise<void>,
+) {
+  try {
+    await db.transaction(work);
+    return true;
+  } catch (error) {
+    if (error instanceof EmployeeLifecycleConflictError) return false;
+    throw error;
+  }
 }
 
 async function getEmployee(id: string, tenantId: string) {
@@ -290,345 +310,340 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
   const now = new Date();
   let after: Record<string, unknown> = {};
 
-  try {
-    if (body.action === 'archive') {
-      if (!body.reason?.trim()) {
-        return NextResponse.json({ error: 'Archive reason is required' }, { status: 400 });
-      }
-      if (employee.userId === auth.session.user.id) {
-        return NextResponse.json(
-          { error: 'You cannot archive your own staff record while using this Tenant Administrator account.' },
-          { status: 409 },
-        );
-      }
-      if (employee.isDriver) {
-        const dependencyError = await assertNoLiveDriverResponsibility(employee.id, auth.session.tenantId);
-        if (dependencyError) return NextResponse.json({ error: dependencyError }, { status: 409 });
-      }
+  if (body.action === 'archive') {
+    if (!body.reason?.trim()) {
+      return NextResponse.json({ error: 'Archive reason is required' }, { status: 400 });
+    }
+    if (employee.userId === auth.session.user.id) {
+      return NextResponse.json(
+        { error: 'You cannot archive your own staff record while using this Tenant Administrator account.' },
+        { status: 409 },
+      );
+    }
+    if (employee.isDriver) {
+      const dependencyError = await assertNoLiveDriverResponsibility(employee.id, auth.session.tenantId);
+      if (dependencyError) return NextResponse.json({ error: dependencyError }, { status: 409 });
+    }
 
-      let accountArchived = false;
-      let globalProfileDisabled = false;
-      if (employee.userId) {
-        const [membership] = await db
+    let accountArchived = false;
+    let globalProfileDisabled = false;
+    if (employee.userId) {
+      const [membership] = await db
+        .select({ id: tenantMemberships.id, status: tenantMemberships.status })
+        .from(tenantMemberships)
+        .where(and(
+          eq(tenantMemberships.userId, employee.userId),
+          eq(tenantMemberships.tenantId, auth.session.tenantId),
+        ))
+        .limit(1);
+
+      if (membership?.status === 'active') {
+        if (await wouldDisableFinalTenantAdmin(employee.userId, auth.session.tenantId)) {
+          return NextResponse.json(
+            { error: 'This employee is the final active Tenant Administrator. Assign another active Tenant Administrator before archiving.' },
+            { status: 409 },
+          );
+        }
+
+        const otherMemberships = await db
           .select({ id: tenantMemberships.id, status: tenantMemberships.status })
           .from(tenantMemberships)
           .where(and(
             eq(tenantMemberships.userId, employee.userId),
-            eq(tenantMemberships.tenantId, auth.session.tenantId),
-          ))
-          .limit(1);
-
-        if (membership?.status === 'active') {
-          if (await wouldDisableFinalTenantAdmin(employee.userId, auth.session.tenantId)) {
-            return NextResponse.json(
-              { error: 'This employee is the final active Tenant Administrator. Assign another active Tenant Administrator before archiving.' },
-              { status: 409 },
-            );
-          }
-
-          const otherMemberships = await db
-            .select({ id: tenantMemberships.id, status: tenantMemberships.status })
-            .from(tenantMemberships)
-            .where(and(
-              eq(tenantMemberships.userId, employee.userId),
-              ne(tenantMemberships.id, membership.id),
-            ));
-          globalProfileDisabled = !otherMemberships.some(
-            (otherMembership) => otherMembership.status !== 'access_removed',
-          );
-          accountArchived = true;
-        }
-      }
-
-      await db.transaction(async (tx) => {
-        await updateEmployeeRevision(tx, employee, auth.session.tenantId, {
-          employmentStatus: 'archived',
-          availabilityStatus: 'temporarily_unavailable',
-          archivedAt: now,
-          archivedByUserId: auth.session.user.id,
-          updatedAt: now,
-        });
-
-        if (employee.isDriver) {
-          await tx
-            .update(driverProfiles)
-            .set({ availabilityStatus: 'unavailable', unavailableUntil: null, updatedAt: now })
-            .where(eq(driverProfiles.employeeId, id));
-        }
-
-        if (employee.userId && accountArchived) {
-          await tx
-            .update(tenantMemberships)
-            .set({ status: 'inactive' })
-            .where(and(
-              eq(tenantMemberships.userId, employee.userId),
-              eq(tenantMemberships.tenantId, auth.session.tenantId),
-              eq(tenantMemberships.status, 'active'),
-            ));
-
-          if (globalProfileDisabled) {
-            await tx
-              .update(userProfiles)
-              .set({ accountEnabled: false, status: 'disabled', disabledAt: now, updatedAt: now })
-              .where(and(eq(userProfiles.userId, employee.userId), eq(userProfiles.status, 'active')));
-          }
-        }
-      });
-      after = { employmentStatus: 'archived', accountArchived, globalProfileDisabled };
-    } else if (body.action === 'restore') {
-      let accountRestored = false;
-      try {
-        if (employee.userId) {
-          accountRestored = await restoreArchivedAccountIfAllowed(
-            employee.userId,
-            auth.session.tenantId,
-            employee.archivedAt,
-          );
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : '';
-        return NextResponse.json(
-          { error: message || 'User limit reached. Increase the tenant user allowance before restoring this account.' },
-          { status: 409 },
+            ne(tenantMemberships.id, membership.id),
+          ));
+        globalProfileDisabled = !otherMemberships.some(
+          (otherMembership) => otherMembership.status !== 'access_removed',
         );
+        accountArchived = true;
       }
+    }
 
-      await db.transaction(async (tx) => {
-        await tx
-          .update(employees)
-          .set({
-            employmentStatus: 'active',
-            // Restoring employment does not imply immediate operational availability.
-            availabilityStatus: employee.isDriver ? 'temporarily_unavailable' : 'available',
-            archivedAt: null,
-            archivedByUserId: null,
-            updatedAt: now,
-          })
-          .where(and(eq(employees.id, id), eq(employees.tenantId, auth.session.tenantId)));
+    const committed = await runLifecycleTransaction(db, async (tx) => {
+      await updateEmployeeRevision(tx, employee, auth.session.tenantId, {
+        employmentStatus: 'archived',
+        availabilityStatus: 'temporarily_unavailable',
+        archivedAt: now,
+        archivedByUserId: auth.session.user.id,
+        updatedAt: now,
+      });
 
-        if (employee.isDriver) {
-          // Licence verification/driver authorisation remains authoritative. The
-          // driver must be explicitly made available after compliance is valid.
-          await tx
-            .update(driverProfiles)
-            .set({ availabilityStatus: 'unavailable', unavailableUntil: null, updatedAt: now })
-            .where(eq(driverProfiles.employeeId, id));
-        }
-      });
-      after = {
-        employmentStatus: 'active',
-        availabilityStatus: employee.isDriver ? 'temporarily_unavailable' : 'available',
-        accountRestored,
-      };
-    } else if (body.action === 'status') {
-      const canonical = normaliseEmployeeStatus(body.status);
-      if (!canonical || (canonical !== 'active' && canonical !== 'inactive')) {
-        return NextResponse.json(
-          { error: 'Invalid employment status. Use Mark Active or Mark Inactive for routine status changes.' },
-          { status: 400 },
-        );
-      }
-      await db.transaction(async (tx) => {
-        await updateEmployeeRevision(tx, employee, auth.session.tenantId, {
-          employmentStatus: canonical,
-          updatedAt: now,
-        });
-        if (employee.isDriver && canonical === 'inactive') {
-          await tx
-            .update(driverProfiles)
-            .set({ availabilityStatus: 'unavailable', updatedAt: now })
-            .where(eq(driverProfiles.employeeId, id));
-        }
-      });
-      after = { employmentStatus: canonical };
-    } else if (body.action === 'remove_driver') {
-      if (!employee.isDriver) {
-        return NextResponse.json({ error: 'This employee is not currently designated as a driver.' }, { status: 409 });
-      }
-      const dependencyError = await assertNoLiveDriverResponsibility(employee.id, auth.session.tenantId);
-      if (dependencyError) return NextResponse.json({ error: dependencyError }, { status: 409 });
-      await db.transaction(async (tx) => {
-        await updateEmployeeRevision(tx, employee, auth.session.tenantId, {
-          isDriver: false,
-          updatedAt: now,
-        });
+      if (employee.isDriver) {
         await tx
           .update(driverProfiles)
-          .set({
-            driverStatus: 'revoked',
-            availabilityStatus: 'unavailable',
-            notes: body.reason?.trim() || 'Driver designation removed',
-            updatedAt: now,
-          })
+          .set({ availabilityStatus: 'unavailable', unavailableUntil: null, updatedAt: now })
           .where(eq(driverProfiles.employeeId, id));
-      });
-      after = { isDriver: false, driverStatus: 'revoked', availabilityStatus: 'unavailable' };
-    } else if (body.action === 'availability') {
-      const canonicalAvailability = normaliseAvailability(body.status);
-      if (
-        !canonicalAvailability
-        || !AVAILABILITY_STATUSES.includes(canonicalAvailability as typeof AVAILABILITY_STATUSES[number])
-      ) {
-        return NextResponse.json({ error: 'Invalid availability status' }, { status: 400 });
       }
-      const startAt = body.startAt ? new Date(body.startAt) : now;
-      const endAt = body.endAt ? new Date(body.endAt) : null;
-      if (Number.isNaN(startAt.getTime()) || (endAt && Number.isNaN(endAt.getTime()))) {
-        return NextResponse.json({ error: 'Availability dates are invalid' }, { status: 400 });
+
+      if (employee.userId && accountArchived) {
+        await tx
+          .update(tenantMemberships)
+          .set({ status: 'inactive' })
+          .where(and(
+            eq(tenantMemberships.userId, employee.userId),
+            eq(tenantMemberships.tenantId, auth.session.tenantId),
+            eq(tenantMemberships.status, 'active'),
+          ));
+
+        if (globalProfileDisabled) {
+          await tx
+            .update(userProfiles)
+            .set({ accountEnabled: false, status: 'disabled', disabledAt: now, updatedAt: now })
+            .where(and(eq(userProfiles.userId, employee.userId), eq(userProfiles.status, 'active')));
+        }
       }
-      if (endAt && endAt <= startAt) {
-        return NextResponse.json({ error: 'Availability end must be after start' }, { status: 400 });
-      }
-      if (employee.employmentStatus !== 'active' && canonicalAvailability === 'available') {
-        return NextResponse.json(
-          { error: 'Only active employees can be marked available.' },
-          { status: 409 },
+    });
+    if (!committed) return lifecycleConflictResponse();
+    after = { employmentStatus: 'archived', accountArchived, globalProfileDisabled };
+  } else if (body.action === 'restore') {
+    let accountRestored = false;
+    try {
+      if (employee.userId) {
+        accountRestored = await restoreArchivedAccountIfAllowed(
+          employee.userId,
+          auth.session.tenantId,
+          employee.archivedAt,
         );
       }
-
-      await db.transaction(async (tx) => {
-        await updateEmployeeRevision(tx, employee, auth.session.tenantId, {
-          availabilityStatus: canonicalAvailability,
-          updatedAt: now,
-        });
-        await tx
-          .update(employeeAvailability)
-          .set({ isActive: false, endAt: now })
-          .where(and(
-            eq(employeeAvailability.employeeId, id),
-            eq(employeeAvailability.tenantId, auth.session.tenantId),
-            eq(employeeAvailability.isActive, true),
-          ));
-        await tx.insert(employeeAvailability).values({
-          tenantId: auth.session.tenantId,
-          employeeId: id,
-          status: canonicalAvailability,
-          startAt,
-          endAt,
-          reason: body.reason?.trim() || null,
-          notes: body.notes?.trim() || null,
-          enteredByUserId: auth.session.user.id,
-        });
-        if (employee.isDriver) {
-          await tx
-            .update(driverProfiles)
-            .set({
-              availabilityStatus: driverAvailabilityFromEmployee(canonicalAvailability),
-              unavailableUntil: endAt,
-              updatedAt: now,
-            })
-            .where(eq(driverProfiles.employeeId, id));
-        }
-      });
-      after = { availabilityStatus: canonicalAvailability, startAt, endAt };
-    } else if (body.action === 'transfer') {
-      if (!body.officeId || !body.jobTitle?.trim()) {
-        return NextResponse.json({ error: 'Office and job title are required' }, { status: 400 });
-      }
-      if (body.supervisorEmployeeId === id) {
-        return NextResponse.json({ error: 'An employee cannot supervise themselves.' }, { status: 400 });
-      }
-      if (!UUID_PATTERN.test(body.officeId)) {
-        return NextResponse.json({ error: 'The selected office does not belong to this tenant.' }, { status: 400 });
-      }
-      if (body.departmentId && !UUID_PATTERN.test(body.departmentId)) {
-        return NextResponse.json({ error: 'The selected department does not belong to this tenant.' }, { status: 400 });
-      }
-      if (body.supervisorEmployeeId && !UUID_PATTERN.test(body.supervisorEmployeeId)) {
-        return NextResponse.json({ error: 'The selected supervisor is not an active employee in this tenant.' }, { status: 400 });
-      }
-
-      const [[office], [department], [supervisor]] = await Promise.all([
-        db
-          .select({ id: offices.id })
-          .from(offices)
-          .where(and(
-            eq(offices.id, body.officeId),
-            eq(offices.tenantId, auth.session.tenantId),
-            eq(offices.isActive, true),
-          ))
-          .limit(1),
-        body.departmentId
-          ? db
-              .select({ id: departments.id })
-              .from(departments)
-              .where(and(
-                eq(departments.id, body.departmentId),
-                eq(departments.tenantId, auth.session.tenantId),
-                eq(departments.isActive, true),
-              ))
-              .limit(1)
-          : Promise.resolve([undefined] as const),
-        body.supervisorEmployeeId
-          ? db
-              .select({ id: employees.id })
-              .from(employees)
-              .where(and(
-                eq(employees.id, body.supervisorEmployeeId),
-                eq(employees.tenantId, auth.session.tenantId),
-                eq(employees.employmentStatus, 'active'),
-              ))
-              .limit(1)
-          : Promise.resolve([undefined] as const),
-      ]);
-
-      if (!office) return NextResponse.json({ error: 'The selected office does not belong to this tenant.' }, { status: 400 });
-      if (body.departmentId && !department) {
-        return NextResponse.json({ error: 'The selected department does not belong to this tenant.' }, { status: 400 });
-      }
-      if (body.supervisorEmployeeId && !supervisor) {
-        return NextResponse.json({ error: 'The selected supervisor is not an active employee in this tenant.' }, { status: 400 });
-      }
-
-      const jobTitle = body.jobTitle.trim();
-      await db.transaction(async (tx) => {
-        await updateEmployeeRevision(tx, employee, auth.session.tenantId, {
-          officeId: office.id,
-          departmentId: body.departmentId || null,
-          jobTitle,
-          substantivePosition: body.position?.trim() || jobTitle,
-          supervisorEmployeeId: body.supervisorEmployeeId || null,
-          employmentStatus: 'active',
-          updatedAt: now,
-        });
-        await tx
-          .update(employeeAssignments)
-          .set({ isCurrent: false, endDate: now.toISOString().slice(0, 10) })
-          .where(and(
-            eq(employeeAssignments.employeeId, id),
-            eq(employeeAssignments.tenantId, auth.session.tenantId),
-            eq(employeeAssignments.isCurrent, true),
-          ));
-        await tx.insert(employeeAssignments).values({
-          tenantId: auth.session.tenantId,
-          employeeId: id,
-          officeId: office.id,
-          departmentId: body.departmentId || null,
-          jobTitle,
-          position: body.position?.trim() || jobTitle,
-          supervisorEmployeeId: body.supervisorEmployeeId || null,
-          startDate: now.toISOString().slice(0, 10),
-          reason: body.reason?.trim() || 'Transfer',
-          createdByUserId: auth.session.user.id,
-        });
-      });
-      after = {
-        officeId: office.id,
-        departmentId: body.departmentId || null,
-        jobTitle,
-        supervisorEmployeeId: body.supervisorEmployeeId || null,
-      };
-    } else {
-      return NextResponse.json({ error: 'Unsupported lifecycle action' }, { status: 400 });
-    }
-  } catch (error) {
-    if (error instanceof EmployeeLifecycleConflictError) {
+    } catch (error) {
+      const message = error instanceof Error ? error.message : '';
       return NextResponse.json(
-        { error: 'This employee lifecycle record changed while the action was being prepared. Refresh and review the current state before trying again.' },
+        { error: message || 'User limit reached. Increase the tenant user allowance before restoring this account.' },
         { status: 409 },
       );
     }
-    throw error;
+
+    await db.transaction(async (tx) => {
+      await tx
+        .update(employees)
+        .set({
+          employmentStatus: 'active',
+          // Restoring employment does not imply immediate operational availability.
+          availabilityStatus: employee.isDriver ? 'temporarily_unavailable' : 'available',
+          archivedAt: null,
+          archivedByUserId: null,
+          updatedAt: now,
+        })
+        .where(and(eq(employees.id, id), eq(employees.tenantId, auth.session.tenantId)));
+
+      if (employee.isDriver) {
+        // Licence verification/driver authorisation remains authoritative. The
+        // driver must be explicitly made available after compliance is valid.
+        await tx
+          .update(driverProfiles)
+          .set({ availabilityStatus: 'unavailable', unavailableUntil: null, updatedAt: now })
+          .where(eq(driverProfiles.employeeId, id));
+      }
+    });
+    after = {
+      employmentStatus: 'active',
+      availabilityStatus: employee.isDriver ? 'temporarily_unavailable' : 'available',
+      accountRestored,
+    };
+  } else if (body.action === 'status') {
+    const canonical = normaliseEmployeeStatus(body.status);
+    if (!canonical || (canonical !== 'active' && canonical !== 'inactive')) {
+      return NextResponse.json(
+        { error: 'Invalid employment status. Use Mark Active or Mark Inactive for routine status changes.' },
+        { status: 400 },
+      );
+    }
+    const committed = await runLifecycleTransaction(db, async (tx) => {
+      await updateEmployeeRevision(tx, employee, auth.session.tenantId, {
+        employmentStatus: canonical,
+        updatedAt: now,
+      });
+      if (employee.isDriver && canonical === 'inactive') {
+        await tx
+          .update(driverProfiles)
+          .set({ availabilityStatus: 'unavailable', updatedAt: now })
+          .where(eq(driverProfiles.employeeId, id));
+      }
+    });
+    if (!committed) return lifecycleConflictResponse();
+    after = { employmentStatus: canonical };
+  } else if (body.action === 'remove_driver') {
+    if (!employee.isDriver) {
+      return NextResponse.json({ error: 'This employee is not currently designated as a driver.' }, { status: 409 });
+    }
+    const dependencyError = await assertNoLiveDriverResponsibility(employee.id, auth.session.tenantId);
+    if (dependencyError) return NextResponse.json({ error: dependencyError }, { status: 409 });
+    const committed = await runLifecycleTransaction(db, async (tx) => {
+      await updateEmployeeRevision(tx, employee, auth.session.tenantId, {
+        isDriver: false,
+        updatedAt: now,
+      });
+      await tx
+        .update(driverProfiles)
+        .set({
+          driverStatus: 'revoked',
+          availabilityStatus: 'unavailable',
+          notes: body.reason?.trim() || 'Driver designation removed',
+          updatedAt: now,
+        })
+        .where(eq(driverProfiles.employeeId, id));
+    });
+    if (!committed) return lifecycleConflictResponse();
+    after = { isDriver: false, driverStatus: 'revoked', availabilityStatus: 'unavailable' };
+  } else if (body.action === 'availability') {
+    const canonicalAvailability = normaliseAvailability(body.status);
+    if (
+      !canonicalAvailability
+      || !AVAILABILITY_STATUSES.includes(canonicalAvailability as typeof AVAILABILITY_STATUSES[number])
+    ) {
+      return NextResponse.json({ error: 'Invalid availability status' }, { status: 400 });
+    }
+    const startAt = body.startAt ? new Date(body.startAt) : now;
+    const endAt = body.endAt ? new Date(body.endAt) : null;
+    if (Number.isNaN(startAt.getTime()) || (endAt && Number.isNaN(endAt.getTime()))) {
+      return NextResponse.json({ error: 'Availability dates are invalid' }, { status: 400 });
+    }
+    if (endAt && endAt <= startAt) {
+      return NextResponse.json({ error: 'Availability end must be after start' }, { status: 400 });
+    }
+    if (employee.employmentStatus !== 'active' && canonicalAvailability === 'available') {
+      return NextResponse.json(
+        { error: 'Only active employees can be marked available.' },
+        { status: 409 },
+      );
+    }
+
+    const committed = await runLifecycleTransaction(db, async (tx) => {
+      await updateEmployeeRevision(tx, employee, auth.session.tenantId, {
+        availabilityStatus: canonicalAvailability,
+        updatedAt: now,
+      });
+      await tx
+        .update(employeeAvailability)
+        .set({ isActive: false, endAt: now })
+        .where(and(
+          eq(employeeAvailability.employeeId, id),
+          eq(employeeAvailability.tenantId, auth.session.tenantId),
+          eq(employeeAvailability.isActive, true),
+        ));
+      await tx.insert(employeeAvailability).values({
+        tenantId: auth.session.tenantId,
+        employeeId: id,
+        status: canonicalAvailability,
+        startAt,
+        endAt,
+        reason: body.reason?.trim() || null,
+        notes: body.notes?.trim() || null,
+        enteredByUserId: auth.session.user.id,
+      });
+      if (employee.isDriver) {
+        await tx
+          .update(driverProfiles)
+          .set({
+            availabilityStatus: driverAvailabilityFromEmployee(canonicalAvailability),
+            unavailableUntil: endAt,
+            updatedAt: now,
+          })
+          .where(eq(driverProfiles.employeeId, id));
+      }
+    });
+    if (!committed) return lifecycleConflictResponse();
+    after = { availabilityStatus: canonicalAvailability, startAt, endAt };
+  } else if (body.action === 'transfer') {
+    if (!body.officeId || !body.jobTitle?.trim()) {
+      return NextResponse.json({ error: 'Office and job title are required' }, { status: 400 });
+    }
+    if (body.supervisorEmployeeId === id) {
+      return NextResponse.json({ error: 'An employee cannot supervise themselves.' }, { status: 400 });
+    }
+    if (!UUID_PATTERN.test(body.officeId)) {
+      return NextResponse.json({ error: 'The selected office does not belong to this tenant.' }, { status: 400 });
+    }
+    if (body.departmentId && !UUID_PATTERN.test(body.departmentId)) {
+      return NextResponse.json({ error: 'The selected department does not belong to this tenant.' }, { status: 400 });
+    }
+    if (body.supervisorEmployeeId && !UUID_PATTERN.test(body.supervisorEmployeeId)) {
+      return NextResponse.json({ error: 'The selected supervisor is not an active employee in this tenant.' }, { status: 400 });
+    }
+
+    const [[office], [department], [supervisor]] = await Promise.all([
+      db
+        .select({ id: offices.id })
+        .from(offices)
+        .where(and(
+          eq(offices.id, body.officeId),
+          eq(offices.tenantId, auth.session.tenantId),
+          eq(offices.isActive, true),
+        ))
+        .limit(1),
+      body.departmentId
+        ? db
+            .select({ id: departments.id })
+            .from(departments)
+            .where(and(
+              eq(departments.id, body.departmentId),
+              eq(departments.tenantId, auth.session.tenantId),
+              eq(departments.isActive, true),
+            ))
+            .limit(1)
+        : Promise.resolve([undefined] as const),
+      body.supervisorEmployeeId
+        ? db
+            .select({ id: employees.id })
+            .from(employees)
+            .where(and(
+              eq(employees.id, body.supervisorEmployeeId),
+              eq(employees.tenantId, auth.session.tenantId),
+              eq(employees.employmentStatus, 'active'),
+            ))
+            .limit(1)
+        : Promise.resolve([undefined] as const),
+    ]);
+
+    if (!office) return NextResponse.json({ error: 'The selected office does not belong to this tenant.' }, { status: 400 });
+    if (body.departmentId && !department) {
+      return NextResponse.json({ error: 'The selected department does not belong to this tenant.' }, { status: 400 });
+    }
+    if (body.supervisorEmployeeId && !supervisor) {
+      return NextResponse.json({ error: 'The selected supervisor is not an active employee in this tenant.' }, { status: 400 });
+    }
+
+    const jobTitle = body.jobTitle.trim();
+    const committed = await runLifecycleTransaction(db, async (tx) => {
+      await updateEmployeeRevision(tx, employee, auth.session.tenantId, {
+        officeId: office.id,
+        departmentId: body.departmentId || null,
+        jobTitle,
+        substantivePosition: body.position?.trim() || jobTitle,
+        supervisorEmployeeId: body.supervisorEmployeeId || null,
+        employmentStatus: 'active',
+        updatedAt: now,
+      });
+      await tx
+        .update(employeeAssignments)
+        .set({ isCurrent: false, endDate: now.toISOString().slice(0, 10) })
+        .where(and(
+          eq(employeeAssignments.employeeId, id),
+          eq(employeeAssignments.tenantId, auth.session.tenantId),
+          eq(employeeAssignments.isCurrent, true),
+        ));
+      await tx.insert(employeeAssignments).values({
+        tenantId: auth.session.tenantId,
+        employeeId: id,
+        officeId: office.id,
+        departmentId: body.departmentId || null,
+        jobTitle,
+        position: body.position?.trim() || jobTitle,
+        supervisorEmployeeId: body.supervisorEmployeeId || null,
+        startDate: now.toISOString().slice(0, 10),
+        reason: body.reason?.trim() || 'Transfer',
+        createdByUserId: auth.session.user.id,
+      });
+    });
+    if (!committed) return lifecycleConflictResponse();
+    after = {
+      officeId: office.id,
+      departmentId: body.departmentId || null,
+      jobTitle,
+      supervisorEmployeeId: body.supervisorEmployeeId || null,
+    };
+  } else {
+    return NextResponse.json({ error: 'Unsupported lifecycle action' }, { status: 400 });
   }
 
   await recordAuditEvent({
