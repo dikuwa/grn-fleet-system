@@ -17,6 +17,8 @@ import { Permissions } from '@/lib/permissions';
 import { getTenantEntitlements, checkEntitlement } from '@/lib/entitlements';
 import { recordAuditEvent } from '@/lib/audit-event';
 
+const USER_RESTORE_CONFLICT = 'user_restore_conflict';
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -76,10 +78,16 @@ export async function POST(
 
     const now = new Date();
     await db.transaction(async (tx) => {
-      await tx
+      const [restoredMembership] = await tx
         .update(tenantMemberships)
         .set({ status: 'active' })
-        .where(and(eq(tenantMemberships.id, membership.id), eq(tenantMemberships.tenantId, session.tenantId)));
+        .where(and(
+          eq(tenantMemberships.id, membership.id),
+          eq(tenantMemberships.tenantId, session.tenantId),
+          eq(tenantMemberships.status, 'access_removed'),
+        ))
+        .returning({ id: tenantMemberships.id });
+      if (!restoredMembership) throw new Error(USER_RESTORE_CONFLICT);
 
       // `user_profiles` is global to the Better Auth user. Only clear a
       // previous tenant-removal marker; never override a deliberate global
@@ -116,6 +124,12 @@ export async function POST(
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('[Admin User Restore] POST failed:', error);
+    if (error instanceof Error && error.message === USER_RESTORE_CONFLICT) {
+      return NextResponse.json(
+        { error: 'This account changed while it was being restored. Refresh User Management and review its current access state.' },
+        { status: 409 },
+      );
+    }
     return NextResponse.json({ error: 'Failed to restore user access' }, { status: 500 });
   }
 }
