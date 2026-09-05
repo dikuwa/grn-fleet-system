@@ -19,6 +19,8 @@ import { requireDashboardAction, requireRequestAuth, requirePermission } from '@
 import { Permissions } from '@/lib/permissions';
 
 const LIVE_ALLOCATION_STATES = ['provisional', 'confirmed'] as const;
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function GET(
   request: NextRequest,
@@ -34,6 +36,9 @@ export async function GET(
     if (routeCheck instanceof NextResponse) return routeCheck;
     const permCheck = await requirePermission(auth.session, Permissions.ALLOCATION_MANAGE);
     if (permCheck instanceof NextResponse) return permCheck;
+    if (!UUID_PATTERN.test(id)) {
+      return NextResponse.json({ error: 'Allocation not found' }, { status: 404 });
+    }
 
     const db = getDb();
     const tenantId = auth.session.tenantId;
