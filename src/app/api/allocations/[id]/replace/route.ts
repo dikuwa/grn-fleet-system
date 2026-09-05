@@ -18,6 +18,9 @@ import {
 import { Permissions } from '@/lib/permissions';
 import { SystemRoles } from '@/lib/workspaces';
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -39,6 +42,18 @@ export async function POST(
       handoverOdometer,
       outgoingVehicleDisposition,
     } = body ?? {};
+    if (!UUID_PATTERN.test(id)) {
+      return NextResponse.json({ error: 'Allocation not found' }, { status: 404 });
+    }
+    if (
+      replacementVehicleId &&
+      (typeof replacementVehicleId !== 'string' || !UUID_PATTERN.test(replacementVehicleId))
+    ) {
+      return NextResponse.json(
+        { error: 'Replacement vehicle not found in this tenant' },
+        { status: 404 },
+      );
+    }
     const result = await replaceVehicle(
       {
         allocationId: id,
