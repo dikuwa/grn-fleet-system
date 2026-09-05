@@ -7,6 +7,8 @@ import { Permissions } from '@/lib/permissions';
 import { recordAuditEvent } from '@/lib/audit-event';
 
 const REVIEWABLE = new Set(['awaiting_review', 'needs_correction']);
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -31,6 +33,9 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     }
     if (action !== 'verify' && (reason.length < 5 || reason.length > 1000)) {
       return NextResponse.json({ error: 'A review reason of 5–1,000 characters is required' }, { status: 422 });
+    }
+    if (!UUID_PATTERN.test(id)) {
+      return NextResponse.json({ error: 'External driver licence not found' }, { status: 404 });
     }
 
     const db = getDb();
