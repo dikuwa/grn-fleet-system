@@ -9,6 +9,9 @@ import { generatedDocuments } from '@/db/schema/documents';
 import { and, eq } from 'drizzle-orm';
 import { canSessionReadGeneratedDocument } from '@/lib/document-access';
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
  * GET /api/documents/[id]/pdf
  *
@@ -32,6 +35,9 @@ export async function GET(
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
+    if (!UUID_PATTERN.test(id)) {
+      return NextResponse.json({ error: 'Document not found' }, { status: 404 });
+    }
 
     const db = getDb();
     const [doc] = await db
