@@ -34,7 +34,7 @@ describe('staff lifecycle revision conflict contract', () => {
 
   it('keeps status and driver changes in the same transaction after the revision claim', () => {
     const status = source.indexOf("body.action === 'status'");
-    const transaction = source.indexOf('await db.transaction(async (tx) => {', status);
+    const transaction = source.indexOf('runLifecycleTransaction(db, async (tx) => {', status);
     const claim = source.indexOf('await updateEmployeeRevision(tx, employee', transaction);
     const driverUpdate = source.indexOf('.update(driverProfiles)', claim);
 
@@ -43,14 +43,16 @@ describe('staff lifecycle revision conflict contract', () => {
     expect(driverUpdate).toBeGreaterThan(claim);
   });
 
-  it('returns a controlled 409 before audit when a lifecycle revision claim is lost', () => {
-    const catchBlock = source.indexOf('error instanceof EmployeeLifecycleConflictError');
-    const conflictMessage = source.indexOf('This employee lifecycle record changed while the action was being prepared', catchBlock);
-    const audit = source.indexOf('await recordAuditEvent({', catchBlock);
+  it('maps a lost revision claim to controlled conflict before successful audit', () => {
+    const wrapper = source.indexOf('async function runLifecycleTransaction');
+    const catchesConflict = source.indexOf('error instanceof EmployeeLifecycleConflictError', wrapper);
+    const response = source.indexOf('if (!committed) return lifecycleConflictResponse();');
+    const audit = source.indexOf('await recordAuditEvent({', response);
 
-    expect(catchBlock).toBeGreaterThan(-1);
-    expect(conflictMessage).toBeGreaterThan(catchBlock);
-    expect(audit).toBeGreaterThan(conflictMessage);
+    expect(wrapper).toBeGreaterThan(-1);
+    expect(catchesConflict).toBeGreaterThan(wrapper);
+    expect(response).toBeGreaterThan(catchesConflict);
+    expect(audit).toBeGreaterThan(response);
   });
 
   it('deletes only the exact reviewed revision and audits only after a winning delete', () => {
