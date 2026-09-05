@@ -6,8 +6,12 @@ const service = readFileSync(
   resolve(process.cwd(), 'src/lib/incidents/emergency-contacts.ts'),
   'utf8',
 );
-const route = readFileSync(
+const detailRoute = readFileSync(
   resolve(process.cwd(), 'src/app/api/emergency-contacts/[id]/route.ts'),
+  'utf8',
+);
+const collectionRoute = readFileSync(
+  resolve(process.cwd(), 'src/app/api/emergency-contacts/route.ts'),
   'utf8',
 );
 
@@ -51,14 +55,36 @@ describe('emergency contact integrity contract', () => {
   });
 
   it('maps stale edit and duplicate identity conflicts to controlled 409 responses', () => {
-    const stale = route.indexOf('error.message === EMERGENCY_CONTACT_EDIT_CONFLICT');
-    const staleStatus = route.indexOf('{ status: 409 }', stale);
-    const duplicate = route.indexOf("databaseCode(error) === '23505'", staleStatus);
-    const duplicateStatus = route.indexOf('{ status: 409 }', duplicate);
+    const stale = detailRoute.indexOf('error.message === EMERGENCY_CONTACT_EDIT_CONFLICT');
+    const staleStatus = detailRoute.indexOf('{ status: 409 }', stale);
+    const duplicate = detailRoute.indexOf("databaseCode(error) === '23505'", staleStatus);
+    const duplicateStatus = detailRoute.indexOf('{ status: 409 }', duplicate);
 
     expect(stale).toBeGreaterThan(-1);
     expect(staleStatus).toBeGreaterThan(stale);
     expect(duplicate).toBeGreaterThan(staleStatus);
     expect(duplicateStatus).toBeGreaterThan(duplicate);
+  });
+
+  it('rejects malformed platform tenant overrides before collection service access', () => {
+    const permission = collectionRoute.indexOf('Permissions.PLATFORM_ADMIN');
+    const guard = collectionRoute.indexOf('invalidPlatformTenantOverride(tenantOverride, isPlatformAdmin)', permission);
+    const invalid = collectionRoute.indexOf('tenantId must be a valid UUID', guard);
+    const serviceCall = collectionRoute.indexOf('listEmergencyContacts(tenantId', invalid);
+
+    expect(guard).toBeGreaterThan(permission);
+    expect(invalid).toBeGreaterThan(guard);
+    expect(serviceCall).toBeGreaterThan(invalid);
+  });
+
+  it('rejects malformed platform tenant overrides before detail mutations', () => {
+    const permission = detailRoute.indexOf('Permissions.PLATFORM_ADMIN');
+    const guard = detailRoute.indexOf('invalidPlatformTenantOverride(tenantOverride, isPlatformAdmin)', permission);
+    const invalid = detailRoute.indexOf('tenantId must be a valid UUID', guard);
+    const mutation = detailRoute.indexOf('setEmergencyContactActive(', invalid);
+
+    expect(guard).toBeGreaterThan(permission);
+    expect(invalid).toBeGreaterThan(guard);
+    expect(mutation).toBeGreaterThan(invalid);
   });
 });
