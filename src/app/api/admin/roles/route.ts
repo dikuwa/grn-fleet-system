@@ -16,7 +16,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { roles, rolePermissions, roleAssignments, tenantMemberships } from '@/db/schema/tenants';
-import { eq, and, inArray, asc } from 'drizzle-orm';
+import { eq, and, inArray, asc, sql } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import {
   Permissions,
@@ -31,6 +31,9 @@ import { SYSTEM_ROLE_REQUIRED_PERMISSIONS, permissionLabel } from '@/lib/role-me
 const MAX_ROLE_DESCRIPTION_LENGTH = 500;
 const REQUIRED_PERMISSION_LOCK_MESSAGE =
   'Required system permissions cannot be removed. They are part of the built-in role the application relies on for its workflows.';
+const ROLE_UPDATE_CONFLICT = 'role_update_conflict';
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function normalizeDescription(value: unknown): string | null {
   if (typeof value !== 'string') return null;
@@ -79,6 +82,10 @@ function databaseCode(error: unknown) {
     : typeof value.cause?.code === 'string'
       ? value.cause.code
       : null;
+}
+
+function roleRevisionMatches(updatedAt: Date) {
+  return sql`date_trunc('milliseconds', ${roles.updatedAt}) = ${updatedAt.toISOString()}::timestamptz`;
 }
 
 export async function GET(request: NextRequest) {
@@ -274,6 +281,9 @@ export async function PATCH(request: NextRequest) {
     const body = await request.json();
     const roleId = typeof body?.roleId === 'string' ? body.roleId : '';
     if (!roleId) return NextResponse.json({ error: 'Role ID is required' }, { status: 400 });
+    if (!UUID_PATTERN.test(roleId)) {
+      return NextResponse.json({ error: 'Role not found' }, { status: 404 });
+    }
 
     const db = getDb();
     const [existing] = await db
@@ -289,8 +299,6 @@ export async function PATCH(request: NextRequest) {
       );
     }
     if (existing.isSystem && !SYSTEM_ROLE_REQUIRED_PERMISSIONS[existing.name]) {
-      // Fail closed: a built-in role whose system definition is not recognised
-      // must not silently lose its protection.
       return NextResponse.json(
         {
           error: `"${existing.name}" is marked as a built-in role but its system definition is not recognised. Contact the platform administrator.`,
@@ -366,38 +374,39 @@ export async function PATCH(request: NextRequest) {
       .select({ permissionCode: rolePermissions.permissionCode })
       .from(rolePermissions)
       .where(eq(rolePermissions.roleId, roleId));
-
-    await runAtomicMutations((executor) => {
-      const mutations: Array<PromiseLike<unknown>> = [];
-      const updateData: Record<string, unknown> = { updatedAt: new Date() };
-      if (name !== undefined) updateData.name = name;
-      if (description !== undefined) updateData.description = description || null;
-      if (Object.keys(updateData).length > 1) {
-        mutations.push(
-          executor
-            .update(roles)
-            .set(updateData)
-            .where(and(eq(roles.id, roleId), eq(roles.tenantId, session.tenantId))),
-        );
-      }
-
-      if (permissionCodes !== undefined) {
-        mutations.push(executor.delete(rolePermissions).where(eq(rolePermissions.roleId, roleId)));
-        if (permissionCodes.length > 0) {
-          mutations.push(
-            executor
-              .insert(rolePermissions)
-              .values(permissionCodes.map((permissionCode) => ({ roleId, permissionCode }))),
-          );
-        }
-      }
-      return mutations;
-    });
-
     const beforeCodes = existingPermissions.map((permission) => permission.permissionCode);
     const afterCodes = permissionCodes ?? beforeCodes;
     const permissionAdded = afterCodes.filter((code) => !beforeCodes.includes(code));
     const permissionRemoved = beforeCodes.filter((code) => !afterCodes.includes(code));
+    const hasMutation = name !== undefined || description !== undefined || permissionCodes !== undefined;
+
+    if (hasMutation) {
+      await db.transaction(async (tx) => {
+        const updateData: Record<string, unknown> = { updatedAt: new Date() };
+        if (name !== undefined) updateData.name = name;
+        if (description !== undefined) updateData.description = description || null;
+
+        const [claimed] = await tx
+          .update(roles)
+          .set(updateData)
+          .where(and(
+            eq(roles.id, roleId),
+            eq(roles.tenantId, session.tenantId),
+            roleRevisionMatches(existing.updatedAt),
+          ))
+          .returning({ id: roles.id });
+        if (!claimed) throw new Error(ROLE_UPDATE_CONFLICT);
+
+        if (permissionCodes !== undefined) {
+          await tx.delete(rolePermissions).where(eq(rolePermissions.roleId, roleId));
+          if (permissionCodes.length > 0) {
+            await tx
+              .insert(rolePermissions)
+              .values(permissionCodes.map((permissionCode) => ({ roleId, permissionCode })));
+          }
+        }
+      });
+    }
 
     await recordAuditEvent({
       tenantId: session.tenantId,
@@ -425,6 +434,12 @@ export async function PATCH(request: NextRequest) {
     return NextResponse.json({ success: true });
   } catch (error) {
     console.error('[Admin Roles] PATCH failed:', error);
+    if (error instanceof Error && error.message === ROLE_UPDATE_CONFLICT) {
+      return NextResponse.json(
+        { error: 'This role changed while the update was being prepared. Refresh Roles and review the current permissions before trying again.' },
+        { status: 409 },
+      );
+    }
     if (databaseCode(error) === '23505') {
       return NextResponse.json(
         { error: 'A role with this name already exists in your organisation' },
