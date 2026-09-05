@@ -7,6 +7,9 @@ import { employees } from '@/db/schema/people';
 import { hasPermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function parseDate(value: string | null, endOfDay = false) {
   if (!value) return null;
   const parsed = new Date(endOfDay ? `${value}T23:59:59.999` : `${value}T00:00:00.000`);
@@ -36,6 +39,13 @@ export async function GET(request: NextRequest) {
     const from = parseDate(searchParams.get('from'));
     const to = parseDate(searchParams.get('to'), true);
     const limit = Math.min(Math.max(Number(searchParams.get('limit') || 100), 1), 250);
+
+    if (vehicleId && !UUID_PATTERN.test(vehicleId)) {
+      return NextResponse.json({ error: 'Vehicle filter is invalid' }, { status: 400 });
+    }
+    if (driverEmployeeId && !UUID_PATTERN.test(driverEmployeeId)) {
+      return NextResponse.json({ error: 'Driver filter is invalid' }, { status: 400 });
+    }
 
     const conditions = [eq(fuelReceipts.tenantId, session.tenantId)];
     if (vehicleId) conditions.push(eq(fuelTransactions.vehicleId, vehicleId));

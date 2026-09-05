@@ -19,6 +19,9 @@ import { eq, and } from 'drizzle-orm';
 import { resolveDashboardAccess } from '@/lib/dashboard-access';
 import { inspectionScopeCondition } from '@/lib/record-scope';
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const { id } = await params;
@@ -32,6 +35,10 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
 
     const permCheck = await requirePermission(session, Permissions.INSPECTION_VIEW);
     if (permCheck instanceof NextResponse) return permCheck;
+
+    if (!UUID_PATTERN.test(id)) {
+      return NextResponse.json({ error: 'Inspection not found' }, { status: 404 });
+    }
 
     const db = getDb();
 
