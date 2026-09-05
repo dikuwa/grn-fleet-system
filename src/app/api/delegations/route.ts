@@ -7,6 +7,7 @@ import { requireDashboardAction, requirePermission, requireRequestAuth } from '@
 import { Permissions } from '@/lib/permissions';
 import { findDelegationConflicts } from '@/lib/employee-lifecycle';
 import { recordAuditEvent } from '@/lib/audit-event';
+import { getDatabaseErrorDetails } from '@/lib/database-error-details';
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -184,43 +185,57 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Delegation conflicts must be resolved or overridden', conflicts }, { status: 409 });
   }
   const now = new Date();
-  const [delegation] = await db.insert(roleDelegations).values({
-    tenantId: auth.session.tenantId,
-    roleId: body.roleId,
-    substantiveHolderEmployeeId: body.substantiveHolderEmployeeId || null,
-    actingEmployeeId: body.actingEmployeeId,
-    actingTitle: body.actingTitle.trim(),
-    officeId: body.officeId || null,
-    departmentId: body.departmentId || null,
-    regionId: body.regionId || null,
-    startAt,
-    endAt,
-    reason: body.reason.trim(),
-    approvalAuthority: body.approvalAuthority || null,
-    canApprove: body.canApprove || false,
-    canSign: body.canSign || false,
-    canAllocateVehicles: body.canAllocateVehicles || false,
-    canAssignDrivers: body.canAssignDrivers || false,
-    canReconcileTrips: body.canReconcileTrips || false,
-    canDelegateFurther: body.canDelegateFurther || false,
-    appointmentMemoKey: body.appointmentMemoKey || null,
-    createdByUserId: auth.session.user.id,
-    authorisedByUserId: auth.session.user.id,
-    status: startAt <= now && endAt > now ? 'active' : 'scheduled',
-    overrideReason: body.overrideReason?.trim() || null,
-  }).returning();
-  await recordAuditEvent({
-    tenantId: auth.session.tenantId,
-    actorUserId: auth.session.user.id,
-    action: 'delegation.created',
-    entityType: 'role_delegation',
-    entityId: delegation.id,
-    after: { ...delegation, conflicts },
-    reason: body.reason,
-    summary: `${employee.firstName} ${employee.lastName} appointed ${body.actingTitle}`,
-    isActing: true,
-  });
-  return NextResponse.json({ data: delegation, conflicts }, { status: 201 });
+  try {
+    const [delegation] = await db.insert(roleDelegations).values({
+      tenantId: auth.session.tenantId,
+      roleId: body.roleId,
+      substantiveHolderEmployeeId: body.substantiveHolderEmployeeId || null,
+      actingEmployeeId: body.actingEmployeeId,
+      actingTitle: body.actingTitle.trim(),
+      officeId: body.officeId || null,
+      departmentId: body.departmentId || null,
+      regionId: body.regionId || null,
+      startAt,
+      endAt,
+      reason: body.reason.trim(),
+      approvalAuthority: body.approvalAuthority || null,
+      canApprove: body.canApprove || false,
+      canSign: body.canSign || false,
+      canAllocateVehicles: body.canAllocateVehicles || false,
+      canAssignDrivers: body.canAssignDrivers || false,
+      canReconcileTrips: body.canReconcileTrips || false,
+      canDelegateFurther: body.canDelegateFurther || false,
+      appointmentMemoKey: body.appointmentMemoKey || null,
+      createdByUserId: auth.session.user.id,
+      authorisedByUserId: auth.session.user.id,
+      status: startAt <= now && endAt > now ? 'active' : 'scheduled',
+      overrideReason: body.overrideReason?.trim() || null,
+    }).returning();
+    await recordAuditEvent({
+      tenantId: auth.session.tenantId,
+      actorUserId: auth.session.user.id,
+      action: 'delegation.created',
+      entityType: 'role_delegation',
+      entityId: delegation.id,
+      after: { ...delegation, conflicts },
+      reason: body.reason,
+      summary: `${employee.firstName} ${employee.lastName} appointed ${body.actingTitle}`,
+      isActing: true,
+    });
+    return NextResponse.json({ data: delegation, conflicts }, { status: 201 });
+  } catch (error) {
+    const { message } = getDatabaseErrorDetails(error);
+    if (message.includes('role_delegation_overlap_conflict')) {
+      return NextResponse.json(
+        {
+          error: 'Delegation conflicts must be resolved or overridden',
+          conflicts: ['Another delegation was created for this role or acting employee during the same period. Refresh and review the conflict before trying again.'],
+        },
+        { status: 409 },
+      );
+    }
+    throw error;
+  }
 }
 
 export async function PATCH(request: NextRequest) {
