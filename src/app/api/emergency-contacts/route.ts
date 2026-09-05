@@ -16,9 +16,16 @@ import {
   isEmergencyContactRole,
 } from '@/lib/incidents/emergency-contacts';
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 function resolveTenantId(sessionTenantId: string, tenantOverride: string | null, isPlatformAdmin: boolean): string {
   if (tenantOverride && isPlatformAdmin) return tenantOverride;
   return sessionTenantId;
+}
+
+function invalidPlatformTenantOverride(tenantOverride: string | null, isPlatformAdmin: boolean) {
+  return Boolean(tenantOverride && isPlatformAdmin && !UUID_PATTERN.test(tenantOverride));
 }
 
 // ---------------------------------------------------------------------------
@@ -41,6 +48,9 @@ export async function GET(req: NextRequest) {
     const isPlatformAdmin = (
       await import('@/lib/auth-helpers').then((m) => m.hasPermission(session, Permissions.PLATFORM_ADMIN))
     );
+    if (invalidPlatformTenantOverride(tenantOverride, isPlatformAdmin)) {
+      return NextResponse.json({ error: 'tenantId must be a valid UUID' }, { status: 400 });
+    }
 
     const tenantId = resolveTenantId(session.tenantId, tenantOverride, isPlatformAdmin);
 
@@ -71,7 +81,7 @@ export async function POST(req: NextRequest) {
     if (permCheck instanceof NextResponse) return permCheck;
 
     const body = await req.json();
-    const { name, phone, role, region, sortOrder, isActive, tenantId: tenantOverride } = body;
+    const { name, phone, role, region, sortOrder, isActive, tenantId: tenantOverrideValue } = body;
 
     if (!name?.trim()) {
       return NextResponse.json({ error: 'Name is required' }, { status: 400 });
@@ -93,6 +103,10 @@ export async function POST(req: NextRequest) {
     const isPlatformAdmin = (
       await import('@/lib/auth-helpers').then((m) => m.hasPermission(session, Permissions.PLATFORM_ADMIN))
     );
+    const tenantOverride = typeof tenantOverrideValue === 'string' ? tenantOverrideValue : null;
+    if (invalidPlatformTenantOverride(tenantOverride, isPlatformAdmin)) {
+      return NextResponse.json({ error: 'tenantId must be a valid UUID' }, { status: 400 });
+    }
     const tenantId = resolveTenantId(session.tenantId, tenantOverride, isPlatformAdmin);
 
     const row = await upsertEmergencyContact(

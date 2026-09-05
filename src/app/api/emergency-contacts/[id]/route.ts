@@ -17,10 +17,14 @@ import {
 import { Permissions } from '@/lib/permissions';
 import {
   deleteEmergencyContact,
+  EMERGENCY_CONTACT_EDIT_CONFLICT,
   isEmergencyContactRole,
   setEmergencyContactActive,
   updateEmergencyContact,
 } from '@/lib/incidents/emergency-contacts';
+
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function resolveTenantId(
   sessionTenantId: string,
@@ -28,6 +32,23 @@ function resolveTenantId(
   isPlatformAdmin: boolean,
 ) {
   return tenantOverride && isPlatformAdmin ? tenantOverride : sessionTenantId;
+}
+
+function invalidPlatformTenantOverride(
+  tenantOverride: string | null | undefined,
+  isPlatformAdmin: boolean,
+) {
+  return Boolean(tenantOverride && isPlatformAdmin && !UUID_PATTERN.test(tenantOverride));
+}
+
+function databaseCode(error: unknown) {
+  if (!error || typeof error !== 'object') return null;
+  const value = error as { code?: unknown; cause?: { code?: unknown } };
+  return typeof value.code === 'string'
+    ? value.code
+    : typeof value.cause?.code === 'string'
+      ? value.cause.code
+      : null;
 }
 
 export async function PATCH(
@@ -45,11 +66,11 @@ export async function PATCH(
     const { id } = await params;
     const body = await req.json();
     const isPlatformAdmin = await hasPermission(session, Permissions.PLATFORM_ADMIN);
-    const tenantId = resolveTenantId(
-      session.tenantId,
-      typeof body.tenantId === 'string' ? body.tenantId : null,
-      isPlatformAdmin,
-    );
+    const tenantOverride = typeof body.tenantId === 'string' ? body.tenantId : null;
+    if (invalidPlatformTenantOverride(tenantOverride, isPlatformAdmin)) {
+      return NextResponse.json({ error: 'tenantId must be a valid UUID' }, { status: 400 });
+    }
+    const tenantId = resolveTenantId(session.tenantId, tenantOverride, isPlatformAdmin);
 
     const hasContactFields = ['name', 'phone', 'role', 'region', 'sortOrder'].some(
       (key) => Object.prototype.hasOwnProperty.call(body, key),
@@ -100,6 +121,18 @@ export async function PATCH(
 
     return NextResponse.json({ data: row });
   } catch (error) {
+    if (error instanceof Error && error.message === EMERGENCY_CONTACT_EDIT_CONFLICT) {
+      return NextResponse.json(
+        { error: 'This emergency contact changed while the edit was being prepared. Refresh and review the current contact before trying again.' },
+        { status: 409 },
+      );
+    }
+    if (databaseCode(error) === '23505') {
+      return NextResponse.json(
+        { error: 'An emergency contact with this phone number and role already exists.' },
+        { status: 409 },
+      );
+    }
     console.error('[emergency-contacts] PATCH failed:', error);
     return NextResponse.json({ error: 'Failed to update contact' }, { status: 500 });
   }
@@ -120,11 +153,11 @@ export async function DELETE(
     const { id } = await params;
     const { searchParams } = new URL(req.url);
     const isPlatformAdmin = await hasPermission(session, Permissions.PLATFORM_ADMIN);
-    const tenantId = resolveTenantId(
-      session.tenantId,
-      searchParams.get('tenantId'),
-      isPlatformAdmin,
-    );
+    const tenantOverride = searchParams.get('tenantId');
+    if (invalidPlatformTenantOverride(tenantOverride, isPlatformAdmin)) {
+      return NextResponse.json({ error: 'tenantId must be a valid UUID' }, { status: 400 });
+    }
+    const tenantId = resolveTenantId(session.tenantId, tenantOverride, isPlatformAdmin);
 
     const row = await deleteEmergencyContact(tenantId, id, session.user.id);
     if (!row) return NextResponse.json({ error: 'Contact not found' }, { status: 404 });
