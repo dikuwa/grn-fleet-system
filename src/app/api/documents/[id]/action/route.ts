@@ -16,6 +16,9 @@ import { findPendingVehicleReplacementAcceptance } from '@/lib/trip-amendment-ac
 import { enrichClosedTripFuelSummary } from '@/lib/trip-closure-document-enrichment';
 import { refreshTripCompletionDraftForIssue } from '@/lib/trip-completion-issue-refresh';
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -46,6 +49,9 @@ export async function POST(
     }
     if (action !== 'issue') {
       return NextResponse.json({ error: 'Invalid action. Must be "issue".' }, { status: 400 });
+    }
+    if (!UUID_PATTERN.test(id)) {
+      return NextResponse.json({ error: 'Document not found' }, { status: 404 });
     }
 
     const db = getDb();
