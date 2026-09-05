@@ -14,6 +14,9 @@ import { SystemRoles, WorkspaceIds } from '@/lib/workspaces';
 
 const ACCEPTED_TYPES = new Set(['image/jpeg', 'image/png', 'image/webp', 'application/pdf']);
 const MAX_BYTES = 12 * 1024 * 1024;
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const EXTERNAL_PARTY_UPLOAD_CONFLICT = 'external_party_upload_conflict';
 
 function validDate(value: string) {
   return /^\d{4}-\d{2}-\d{2}$/.test(value) && !Number.isNaN(new Date(`${value}T00:00:00Z`).getTime());
@@ -84,6 +87,12 @@ async function access(request: NextRequest, partyId: string) {
   ]);
   if (permissionCheck instanceof NextResponse) {
     return { ok: false as const, error: permissionCheck };
+  }
+  if (!UUID_PATTERN.test(partyId)) {
+    return {
+      ok: false as const,
+      error: NextResponse.json({ error: 'External party not found' }, { status: 404 }),
+    };
   }
   const db = getDb();
   const [party] = await db
@@ -203,16 +212,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     }
 
     const db = getDb();
-    const [versionRow] = await db
-      .select({ nextVersion: sql<number>`COALESCE(MAX(${externalDriverLicences.version}), 0) + 1` })
-      .from(externalDriverLicences)
-      .where(
-        and(
-          eq(externalDriverLicences.externalPartyId, id),
-          eq(externalDriverLicences.tenantId, auth.session.tenantId),
-        ),
-      );
-    const version = Number(versionRow?.nextVersion || 1);
     const prefix = auth.session.tenantId;
     const frontKey = buildKey(front.name || 'licence-front', 'external-driver-licences', prefix);
     const backKey = buildKey(back.name || 'licence-back', 'external-driver-licences', prefix);
@@ -235,42 +234,77 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       },
     };
 
-    const [created] = await db
-      .insert(externalDriverLicences)
-      .values({
+    // Serialize version allocation on the canonical external-party row. Two
+    // concurrent uploads must not both observe the same MAX(version) and create
+    // duplicate version numbers. Revalidate active tenant ownership under the
+    // lock so a party deactivated after the initial access check cannot receive
+    // new licence evidence.
+    const { created, version } = await db.transaction(async (tx) => {
+      const [lockedParty] = await tx
+        .select({ id: externalParties.id })
+        .from(externalParties)
+        .where(
+          and(
+            eq(externalParties.id, id),
+            eq(externalParties.tenantId, auth.session.tenantId),
+            eq(externalParties.status, 'active'),
+          ),
+        )
+        .limit(1)
+        .for('update');
+      if (!lockedParty) throw new Error(EXTERNAL_PARTY_UPLOAD_CONFLICT);
+
+      const [versionRow] = await tx
+        .select({ nextVersion: sql<number>`COALESCE(MAX(${externalDriverLicences.version}), 0) + 1` })
+        .from(externalDriverLicences)
+        .where(
+          and(
+            eq(externalDriverLicences.externalPartyId, id),
+            eq(externalDriverLicences.tenantId, auth.session.tenantId),
+          ),
+        );
+      const version = Number(versionRow?.nextVersion || 1);
+
+      const [created] = await tx
+        .insert(externalDriverLicences)
+        .values({
+          tenantId: auth.session.tenantId,
+          externalPartyId: id,
+          version,
+          licenceNumber: licenceNumber.slice(0, 120),
+          licenceClass: licenceClass.slice(0, 120),
+          issueDate: issueDate || null,
+          expiryDate,
+          frontImageKey: frontKey,
+          backImageKey: backKey,
+          verificationStatus: 'awaiting_review',
+          extractedData,
+        })
+        .returning();
+
+      await recordAuditEvent({
         tenantId: auth.session.tenantId,
-        externalPartyId: id,
-        version,
-        licenceNumber: licenceNumber.slice(0, 120),
-        licenceClass: licenceClass.slice(0, 120),
-        issueDate: issueDate || null,
-        expiryDate,
-        frontImageKey: frontKey,
-        backImageKey: backKey,
-        verificationStatus: 'awaiting_review',
-        extractedData,
-      })
-      .returning();
+        actorUserId: auth.session.user.id,
+        action: 'external_driver_licence.uploaded',
+        entityType: 'external_driver_licence',
+        entityId: created.id,
+        after: {
+          externalPartyId: id,
+          version,
+          licenceClass: created.licenceClass,
+          expiryDate: created.expiryDate,
+          verificationStatus: created.verificationStatus,
+          ocrProvider: extractedData.provider,
+          ocrConfidence: extractedData.confidence,
+          ocrQualityWarnings: extractedData.qualityWarnings,
+        },
+        summary: `External driver licence evidence uploaded for ${auth.party.firstName} ${auth.party.lastName}`,
+      }, tx);
+
+      return { created, version };
+    });
 
     uploadedKeys = [];
-    await recordAuditEvent({
-      tenantId: auth.session.tenantId,
-      actorUserId: auth.session.user.id,
-      action: 'external_driver_licence.uploaded',
-      entityType: 'external_driver_licence',
-      entityId: created.id,
-      after: {
-        externalPartyId: id,
-        version,
-        licenceClass: created.licenceClass,
-        expiryDate: created.expiryDate,
-        verificationStatus: created.verificationStatus,
-        ocrProvider: extractedData.provider,
-        ocrConfidence: extractedData.confidence,
-        ocrQualityWarnings: extractedData.qualityWarnings,
-      },
-      summary: `External driver licence evidence uploaded for ${auth.party.firstName} ${auth.party.lastName}`,
-    }).catch(() => undefined);
 
     const recipients = await resolveActiveRoleRecipients(auth.session.tenantId, [SystemRoles.TRANSPORT_ADMIN]);
     if (recipients.length) {
@@ -302,6 +336,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
   } catch (error) {
     await Promise.all(uploadedKeys.map((key) => deleteFile(key).catch(() => undefined)));
     console.error('[external-party-licences] POST failed:', error);
+    if (error instanceof Error && error.message === EXTERNAL_PARTY_UPLOAD_CONFLICT) {
+      return NextResponse.json(
+        { error: 'External party changed while licence evidence was being uploaded. Refresh the external-driver record before retrying.' },
+        { status: 409 },
+      );
+    }
     return NextResponse.json({ error: 'External driver licence evidence could not be saved' }, { status: 500 });
   }
 }
