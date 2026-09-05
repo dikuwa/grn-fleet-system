@@ -24,6 +24,9 @@ import { replaceVehicle, VehicleReplaceError } from '@/lib/allocations/vehicle-r
 import { createScopedNotifications } from '@/lib/notification-service';
 import { recordTenantRequestActivity } from '@/lib/tenant-activity';
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function POST(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -42,6 +45,19 @@ export async function POST(
     const { actionType, vehicleId: replacementVehicleId, reason, handoverOdometer } = body;
     if (!actionType || !['confirm', 'cancel', 'replace_vehicle'].includes(actionType)) {
       return NextResponse.json({ error: 'actionType must be: confirm, cancel, or replace_vehicle' }, { status: 400 });
+    }
+    if (!UUID_PATTERN.test(id)) {
+      return NextResponse.json({ error: 'Allocation not found' }, { status: 404 });
+    }
+    if (
+      actionType === 'replace_vehicle' &&
+      replacementVehicleId &&
+      (typeof replacementVehicleId !== 'string' || !UUID_PATTERN.test(replacementVehicleId))
+    ) {
+      return NextResponse.json(
+        { error: 'Replacement vehicle not found in this tenant' },
+        { status: 404 },
+      );
     }
 
     if (actionType === 'replace_vehicle') {
