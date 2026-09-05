@@ -15,9 +15,13 @@ import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { wouldDisableFinalActiveTenantAdministrator } from '@/lib/tenant-admin-integrity';
+import { lockUserMembershipInvariant } from '@/lib/user-membership-integrity';
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const DELEGATION_MEMBERSHIP_CHANGED = 'delegation_membership_changed';
+const DELEGATION_SOURCE_ROLE_CHANGED = 'delegation_source_role_changed';
+const DELEGATION_TARGET_ROLE_CONFLICT = 'delegation_target_role_conflict';
 
 function asDate(value: Date | string | null | undefined) {
   return value ? new Date(value) : null;
@@ -179,10 +183,69 @@ export async function POST(
     ]);
 
     const assignment = await db.transaction(async (tx) => {
+      const lockedUserIds = [id, targetUserId].sort();
+      for (const lockedUserId of lockedUserIds) {
+        await lockUserMembershipInvariant(tx, lockedUserId);
+      }
+
+      const [[lockedSourceMembership], [lockedTargetMembership]] = await Promise.all([
+        tx
+          .select({ id: tenantMemberships.id })
+          .from(tenantMemberships)
+          .where(and(
+            eq(tenantMemberships.id, sourceMembership.id),
+            eq(tenantMemberships.userId, id),
+            eq(tenantMemberships.tenantId, session.tenantId),
+            eq(tenantMemberships.status, 'active'),
+          ))
+          .limit(1),
+        tx
+          .select({ id: tenantMemberships.id })
+          .from(tenantMemberships)
+          .where(and(
+            eq(tenantMemberships.id, targetMembership.id),
+            eq(tenantMemberships.userId, targetUserId),
+            eq(tenantMemberships.tenantId, session.tenantId),
+            eq(tenantMemberships.status, 'active'),
+          ))
+          .limit(1),
+      ]);
+      if (!lockedSourceMembership || !lockedTargetMembership) {
+        throw new Error(DELEGATION_MEMBERSHIP_CHANGED);
+      }
+
+      const lockedSourceRoleHistory = await tx
+        .select({
+          startDate: roleAssignments.startDate,
+          endDate: roleAssignments.endDate,
+          isActing: roleAssignments.isActing,
+        })
+        .from(roleAssignments)
+        .where(and(
+          eq(roleAssignments.tenantMembershipId, lockedSourceMembership.id),
+          eq(roleAssignments.roleId, roleId),
+        ));
+      if (!lockedSourceRoleHistory.some(
+        (current) => !current.isActing && assignmentCoversWindow(current, startsAt, endsAt),
+      )) {
+        throw new Error(DELEGATION_SOURCE_ROLE_CHANGED);
+      }
+
+      const lockedTargetRoleHistory = await tx
+        .select({ startDate: roleAssignments.startDate, endDate: roleAssignments.endDate })
+        .from(roleAssignments)
+        .where(and(
+          eq(roleAssignments.tenantMembershipId, lockedTargetMembership.id),
+          eq(roleAssignments.roleId, roleId),
+        ));
+      if (lockedTargetRoleHistory.some((current) => assignmentOverlapsWindow(current, startsAt, endsAt))) {
+        throw new Error(DELEGATION_TARGET_ROLE_CONFLICT);
+      }
+
       const [created] = await tx
         .insert(roleAssignments)
         .values({
-          tenantMembershipId: targetMembership.id,
+          tenantMembershipId: lockedTargetMembership.id,
           roleId,
           startDate: startsAt,
           endDate: endsAt,
@@ -217,6 +280,24 @@ export async function POST(
 
     return NextResponse.json({ success: true, data: assignment });
   } catch (error) {
+    if (error instanceof Error && error.message === DELEGATION_MEMBERSHIP_CHANGED) {
+      return NextResponse.json(
+        { error: 'The source or target membership changed while the delegation was being prepared. Refresh User Management and try again.' },
+        { status: 409 },
+      );
+    }
+    if (error instanceof Error && error.message === DELEGATION_SOURCE_ROLE_CHANGED) {
+      return NextResponse.json(
+        { error: 'The source role changed while the delegation was being prepared. Refresh User Management and review the source role period.' },
+        { status: 409 },
+      );
+    }
+    if (error instanceof Error && error.message === DELEGATION_TARGET_ROLE_CONFLICT) {
+      return NextResponse.json(
+        { error: 'The target user already holds this role during part or all of the requested delegation period' },
+        { status: 409 },
+      );
+    }
     console.error('[Delegation] POST failed:', error);
     return NextResponse.json({ error: 'Failed to create delegation' }, { status: 500 });
   }
@@ -280,6 +361,8 @@ export async function DELETE(request: NextRequest) {
     const wasScheduled = Boolean(startsAt && startsAt > now);
 
     const result = await db.transaction(async (tx) => {
+      await lockUserMembershipInvariant(tx, membership.userId);
+
       if (assignment.roleName === 'Tenant Administrator' && !wasScheduled) {
         const finalAdmin = await wouldDisableFinalActiveTenantAdministrator(
           tx,
