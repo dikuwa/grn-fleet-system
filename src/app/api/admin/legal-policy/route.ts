@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { legalPolicyRegister } from '@/db/schema';
 import { hasPermission, requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
@@ -7,6 +7,8 @@ import { Permissions } from '@/lib/permissions';
 import { recordAuditEvent } from '@/lib/audit-event';
 
 const STATUSES = ['in_force', 'uncommenced', 'repealed', 'internal_policy'] as const;
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function textValue(value: unknown, max = 500): string | null {
   if (typeof value !== 'string') return null;
@@ -64,6 +66,10 @@ function entryInput(body: Record<string, unknown>) {
       notes: textValue(body.notes, 4_000),
     },
   };
+}
+
+function legalPolicyRevisionMatches(updatedAt: Date) {
+  return sql`date_trunc('milliseconds', ${legalPolicyRegister.updatedAt}) = ${updatedAt.toISOString()}::timestamptz`;
 }
 
 export async function GET(request: NextRequest) {
@@ -130,6 +136,10 @@ export async function PATCH(request: NextRequest) {
   const parsed = entryInput(body);
   if (!id) return NextResponse.json({ error: 'Entry id is required.' }, { status: 422 });
   if (!parsed.ok) return NextResponse.json({ error: parsed.error }, { status: 422 });
+  if (!UUID_PATTERN.test(id)) {
+    return NextResponse.json({ error: 'Register entry not found.' }, { status: 404 });
+  }
+
   const db = getDb();
   const [before] = await db
     .select()
@@ -143,26 +153,42 @@ export async function PATCH(request: NextRequest) {
     .limit(1);
   if (!before) return NextResponse.json({ error: 'Register entry not found.' }, { status: 404 });
 
-  const [updated] = await db
-    .update(legalPolicyRegister)
-    .set({ ...parsed.value, updatedByUserId: auth.session.user.id, updatedAt: new Date() })
-    .where(
-      and(
-        eq(legalPolicyRegister.id, id),
-        eq(legalPolicyRegister.tenantId, auth.session.tenantId),
-      ),
-    )
-    .returning();
-  await recordAuditEvent({
-    tenantId: auth.session.tenantId,
-    actorUserId: auth.session.user.id,
-    action: 'update',
-    eventType: 'legal_policy_entry_updated',
-    entityType: 'legal_policy_register',
-    entityId: id,
-    before,
-    after: updated,
-    summary: `${updated.citation} updated in the Legal & Policy Register`,
-  });
-  return NextResponse.json({ success: true, data: updated });
+  try {
+    const [updated] = await db
+      .update(legalPolicyRegister)
+      .set({ ...parsed.value, updatedByUserId: auth.session.user.id, updatedAt: new Date() })
+      .where(
+        and(
+          eq(legalPolicyRegister.id, id),
+          eq(legalPolicyRegister.tenantId, auth.session.tenantId),
+          legalPolicyRevisionMatches(before.updatedAt),
+        ),
+      )
+      .returning();
+    if (!updated) {
+      return NextResponse.json(
+        { error: 'This register entry changed while the update was being prepared. Refresh and review the current entry before trying again.' },
+        { status: 409 },
+      );
+    }
+
+    await recordAuditEvent({
+      tenantId: auth.session.tenantId,
+      actorUserId: auth.session.user.id,
+      action: 'update',
+      eventType: 'legal_policy_entry_updated',
+      entityType: 'legal_policy_register',
+      entityId: id,
+      before,
+      after: updated,
+      summary: `${updated.citation} updated in the Legal & Policy Register`,
+    });
+    return NextResponse.json({ success: true, data: updated });
+  } catch (error) {
+    if (String(error).includes('legal_policy_register_tenant_citation_unique')) {
+      return NextResponse.json({ error: 'This citation is already registered.' }, { status: 409 });
+    }
+    console.error('[LegalPolicy] update failed:', error);
+    return NextResponse.json({ error: 'Failed to update register entry.' }, { status: 500 });
+  }
 }
