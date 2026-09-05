@@ -59,6 +59,7 @@ export async function POST(request: NextRequest) {
         { status: 409 },
       );
     }
+    const previousPasswordHash = credential.password;
 
     // Generate a secure temporary password. It is returned only after the exact
     // credential hash reviewed above is successfully claimed in the transaction.
@@ -93,7 +94,7 @@ export async function POST(request: NextRequest) {
             eq(account.id, credential.id),
             eq(account.userId, userId),
             eq(account.providerId, 'email'),
-            eq(account.password, credential.password),
+            eq(account.password, previousPasswordHash),
           ),
         )
         .returning({ id: account.id });
