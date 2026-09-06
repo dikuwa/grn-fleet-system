@@ -1,8 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { deleteBackup, setBackupProtection } from '@/lib/data-protection/backup-service';
-import { assertNoActivePlatformResetExecutionClaim } from '@/lib/data-protection/platform-reset-claim';
+import { deleteBackup } from '@/lib/data-protection/backup-service';
+import {
+  assertNoActivePlatformResetExecutionClaim,
+  setBackupProtectionWithPlatformResetFence,
+} from '@/lib/data-protection/platform-reset-claim';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { isUuid } from '@/lib/uuid';
 
@@ -17,8 +20,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     const body = await request.json();
     if (typeof body.isProtected !== 'boolean')
       return NextResponse.json({ error: 'isProtected boolean is required' }, { status: 400 });
-    if (!body.isProtected) await assertNoActivePlatformResetExecutionClaim(id);
-    const backup = await setBackupProtection(id, body.isProtected);
+    const backup = await setBackupProtectionWithPlatformResetFence(id, body.isProtected);
     return NextResponse.json({ success: true, data: backup });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
