@@ -2,6 +2,8 @@ import { randomUUID } from 'node:crypto';
 import { and, eq, or, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { platformBackups } from '@/db/schema';
+import { tenantResetRequests } from '@/db/schema/reset-requests';
+import { recoveryPointReleaseBlockReason } from './backup-policy';
 
 const DEFAULT_PLATFORM_RESET_CLAIM_TTL_MINUTES = 10;
 const MIN_PLATFORM_RESET_CLAIM_TTL_MINUTES = 6;
@@ -62,8 +64,8 @@ export async function assertNoActivePlatformResetExecutionClaim(backupId: string
 
 /**
  * Change backup protection while serializing platform unprotect with execution
- * claim acquisition. The shared advisory lock makes "no live claim" and the
- * protection update one atomic decision for platform recovery points.
+ * claim acquisition. The shared advisory lock makes the existing recovery-point
+ * release policy, live-claim check and protection update one atomic decision.
  */
 export async function setBackupProtectionWithPlatformResetFence(
   backupId: string,
@@ -78,20 +80,43 @@ export async function setBackupProtectionWithPlatformResetFence(
         id: platformBackups.id,
         scope: platformBackups.scope,
         metadata: platformBackups.metadata,
+        isProtected: platformBackups.isProtected,
+        status: platformBackups.status,
+        source: platformBackups.source,
+        expiresAt: platformBackups.expiresAt,
+        resetRequestId: platformBackups.resetRequestId,
       })
       .from(platformBackups)
       .where(eq(platformBackups.id, backupId))
       .limit(1);
     if (!backup) throw new Error('Backup not found');
 
-    if (
-      !isProtected &&
-      backup.scope === 'platform_operational' &&
-      hasLivePlatformResetExecutionClaim(backup.metadata)
-    ) {
-      throw new Error(
-        'This platform recovery point is locked by an active operational reset and cannot be released yet.',
-      );
+    if (!isProtected) {
+      const [resetRequest] = backup.resetRequestId
+        ? await tx
+            .select({ status: tenantResetRequests.status })
+            .from(tenantResetRequests)
+            .where(eq(tenantResetRequests.id, backup.resetRequestId))
+            .limit(1)
+        : [];
+      const policyBlockReason = recoveryPointReleaseBlockReason({
+        action: 'unprotect',
+        isProtected: backup.isProtected,
+        backupStatus: backup.status,
+        source: backup.source,
+        expiresAt: backup.expiresAt,
+        resetStatus: resetRequest?.status ?? null,
+      });
+      if (policyBlockReason) throw new Error(policyBlockReason);
+
+      if (
+        backup.scope === 'platform_operational' &&
+        hasLivePlatformResetExecutionClaim(backup.metadata)
+      ) {
+        throw new Error(
+          'This platform recovery point is locked by an active operational reset and cannot be released yet.',
+        );
+      }
     }
 
     const [updated] = await tx
