@@ -13,6 +13,7 @@ import { tenantResetRequests, resetRequestSteps } from '@/db/schema/reset-reques
 import { tenants, user } from '@/db/schema';
 import { and, eq, inArray, ne } from 'drizzle-orm';
 import { recordAuditEvent } from '@/lib/audit-event';
+import { isUuid } from '@/lib/uuid';
 import {
   notifyResetRequesterOutcome,
   resolvePlatformResetRequestNotification,
@@ -37,6 +38,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
     if (permCheck instanceof NextResponse) return permCheck;
 
     const { id } = await params;
+    if (!isUuid(id)) return NextResponse.json({ error: 'Reset request not found' }, { status: 404 });
     const db = getDb();
 
     const [request] = await db
@@ -121,6 +123,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     if (permCheck instanceof NextResponse) return permCheck;
 
     const { id } = await params;
+    if (!isUuid(id)) return NextResponse.json({ error: 'Reset request not found' }, { status: 404 });
     const body = await request.json();
     const { action, reviewNotes, reason } = body;
 
