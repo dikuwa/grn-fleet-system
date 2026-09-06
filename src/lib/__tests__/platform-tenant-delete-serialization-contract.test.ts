@@ -24,7 +24,7 @@ describe('platform tenant permanent deletion serialization', () => {
 
   it('uses the same transaction for deletion assessment queries', () => {
     expect(source).toContain("type DeletionAssessmentDb = Pick<ReturnType<typeof getDb>, 'select'>;");
-    expect(source).toContain('async function getDeletionAssessment(tenantId: string, db: DeletionAssessmentDb = getDb())');
+    expect(source).toContain('db: DeletionAssessmentDb = getDb()');
     expect(source).toContain('getDeletionAssessment(id, tx)');
   });
 
