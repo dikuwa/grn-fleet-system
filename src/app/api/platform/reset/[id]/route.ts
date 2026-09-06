@@ -11,7 +11,7 @@ import { Permissions } from '@/lib/permissions';
 import { getDb } from '@/db';
 import { tenantResetRequests, resetRequestSteps } from '@/db/schema/reset-requests';
 import { tenants, user } from '@/db/schema';
-import { and, eq, inArray, ne } from 'drizzle-orm';
+import { and, eq, inArray, isNull, ne } from 'drizzle-orm';
 import { recordAuditEvent } from '@/lib/audit-event';
 import {
   notifyResetRequesterOutcome,
@@ -289,16 +289,30 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       }
     }
 
+    // `updatedAt` may originate from PostgreSQL `defaultNow()` with microsecond
+    // precision while JavaScript Dates preserve only milliseconds. Fence the
+    // business state actually reviewed instead of comparing that lossy token.
+    const actionGuards = [
+      eq(tenantResetRequests.id, id),
+      eq(tenantResetRequests.status, current.status),
+    ];
+    if (action === 'approve' || action === 'renew') {
+      actionGuards.push(
+        eq(tenantResetRequests.validationResults, current.validationResults),
+      );
+    }
+    if (action === 'renew') {
+      actionGuards.push(
+        current.reviewNotes == null
+          ? isNull(tenantResetRequests.reviewNotes)
+          : eq(tenantResetRequests.reviewNotes, current.reviewNotes),
+      );
+    }
+
     const [updated] = await db
       .update(tenantResetRequests)
       .set(updates)
-      .where(
-        and(
-          eq(tenantResetRequests.id, id),
-          eq(tenantResetRequests.status, current.status),
-          eq(tenantResetRequests.updatedAt, current.updatedAt),
-        ),
-      )
+      .where(and(...actionGuards))
       .returning();
 
     if (!updated) {
@@ -311,7 +325,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       );
     }
 
-    // Record audit event only after the exact reviewed revision was claimed.
+    // Record audit event only after the exact reviewed business state was claimed.
     const auditActionLabel =
       action === 'submit'
         ? 'submitted'
