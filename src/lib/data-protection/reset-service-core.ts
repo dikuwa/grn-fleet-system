@@ -263,7 +263,8 @@ export async function executeApprovedTenantOperationalReset(input: {
     freshPreview.fingerprint !== storedFingerprint ||
     freshPreview.dryRunSummary.total !== Number(storedSummary.total ?? -1)
   ) {
-    await db
+    const invalidatedAt = new Date();
+    const [invalidated] = await db
       .update(tenantResetRequests)
       .set({
         backupCreated: false,
@@ -274,12 +275,25 @@ export async function executeApprovedTenantOperationalReset(input: {
         metadata: {
           ...metadata,
           backupSnapshotId: null,
-          resetInvalidatedAt: new Date().toISOString(),
+          resetInvalidatedAt: invalidatedAt.toISOString(),
           resetInvalidatedReason: 'Selected data changed after dry run.',
         },
-        updatedAt: new Date(),
+        updatedAt: invalidatedAt,
       })
-      .where(eq(tenantResetRequests.id, resetRequest.id));
+      .where(
+        and(
+          eq(tenantResetRequests.id, resetRequest.id),
+          eq(tenantResetRequests.status, 'approved'),
+          eq(tenantResetRequests.updatedAt, resetRequest.updatedAt),
+        ),
+      )
+      .returning({ id: tenantResetRequests.id });
+
+    if (!invalidated) {
+      throw new Error(
+        'This reset request changed after execution validation. Refresh the request and review its current state before retrying.',
+      );
+    }
     throw new Error(
       'Selected data changed after the dry run. Run the dry run again and create a new recovery point before executing.',
     );
