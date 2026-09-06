@@ -29,6 +29,14 @@ import { isUuid } from '@/lib/uuid';
 const RESET_OPEN_STATUSES = ['draft', 'pending_review', 'approved', 'in_progress'] as const;
 const RESET_STATUSES = new Set<string>(resetRequestStatusEnum.enumValues);
 const RESET_SCOPES = new Set<string>(resetScopeEnum.enumValues);
+const MAX_RESET_LIST_PAGE = 100_000;
+
+function positiveIntegerParam(value: string | null, fallback: number, maximum: number) {
+  if (value == null || value.trim() === '') return fallback;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1) return fallback;
+  return Math.min(parsed, maximum);
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -43,8 +51,8 @@ export async function GET(request: NextRequest) {
     const scope = searchParams.get('scope') || '';
     const q = searchParams.get('q') || '';
     const view = searchParams.get('view') === 'history' ? 'history' : 'current';
-    const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10) || 1);
-    const limit = Math.min(100, Math.max(1, parseInt(searchParams.get('limit') || '25', 10) || 25));
+    const page = positiveIntegerParam(searchParams.get('page'), 1, MAX_RESET_LIST_PAGE);
+    const limit = positiveIntegerParam(searchParams.get('limit'), 25, 100);
     if (status && !RESET_STATUSES.has(status)) {
       return NextResponse.json({ error: 'Invalid reset status filter' }, { status: 400 });
     }
