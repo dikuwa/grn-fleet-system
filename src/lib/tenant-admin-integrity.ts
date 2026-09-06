@@ -1,5 +1,6 @@
 import { and, eq, gt, isNull, lte, or, sql } from 'drizzle-orm';
 import { roleAssignments, roles, tenantMemberships } from '@/db/schema/tenants';
+import { lockUserMembershipInvariant } from '@/lib/user-membership-integrity';
 
 export async function lockTenantAdministratorInvariant(executor: any, tenantId: string) {
   await executor.execute(
@@ -13,6 +14,7 @@ export async function wouldDisableFinalActiveTenantAdministrator(
   userId: string,
   now = new Date(),
 ) {
+  await lockUserMembershipInvariant(executor, userId);
   await lockTenantAdministratorInvariant(executor, tenantId);
 
   const rows = await executor
