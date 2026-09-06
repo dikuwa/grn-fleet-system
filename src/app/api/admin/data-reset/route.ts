@@ -306,7 +306,6 @@ export async function PATCH(request: NextRequest) {
           eq(tenantResetRequests.id, id),
           eq(tenantResetRequests.tenantId, auth.session.tenantId),
           eq(tenantResetRequests.status, current.status),
-          eq(tenantResetRequests.updatedAt, current.updatedAt),
         ),
       )
       .returning();
@@ -315,7 +314,7 @@ export async function PATCH(request: NextRequest) {
       return NextResponse.json(
         {
           error:
-            'This reset request changed while cancellation was being prepared. Refresh the request and review its current state before retrying.',
+            'This reset request changed state while cancellation was being prepared. Refresh the request and review its current state before retrying.',
         },
         { status: 409 },
       );
