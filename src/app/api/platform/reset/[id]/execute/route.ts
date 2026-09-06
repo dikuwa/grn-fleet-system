@@ -9,7 +9,10 @@ import { eq } from 'drizzle-orm';
 import { executeApprovedTenantOperationalReset } from '@/lib/data-protection/reset-service';
 import { normalizeResetSpec } from '@/lib/reset-catalog';
 import { resetExecutionOwner } from '@/lib/reset-workflow';
-import { resetExecutionHttpStatus } from '@/lib/reset-execution-http';
+import {
+  isResetExecutionReconciliationPending,
+  resetExecutionHttpStatus,
+} from '@/lib/reset-execution-http';
 import {
   notifyPlatformResetExecution,
   notifyResetRequesterOutcome,
@@ -168,7 +171,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     }
     console.error('[Platform Reset Execute] POST failed:', error);
     const message = error instanceof Error ? error.message : String(error);
-    if (claimId && executionContext) {
+    const reconciliationPending = isResetExecutionReconciliationPending(error);
+    if (!reconciliationPending && claimId && executionContext) {
       await Promise.all([
         notifyPlatformResetExecution({
           requestId: resetRequestId,
@@ -192,6 +196,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         console.error('[Platform Reset Execute] Failure notification failed:', notificationError);
       });
     }
-    return NextResponse.json({ error: message }, { status: resetExecutionHttpStatus(error) });
+    return NextResponse.json(
+      { error: message, ...(reconciliationPending ? { code: 'RESET_RECONCILIATION_PENDING' } : {}) },
+      { status: resetExecutionHttpStatus(error) },
+    );
   }
 }
