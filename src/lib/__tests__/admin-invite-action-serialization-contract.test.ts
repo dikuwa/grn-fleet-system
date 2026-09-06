@@ -8,6 +8,19 @@ const source = readFileSync(
 );
 
 describe('admin invitation action serialization', () => {
+  it('uses the shared user-membership advisory lock before revoke row claims', () => {
+    const revokeIndex = source.indexOf("if (action === 'revoke')");
+    const transactionIndex = source.indexOf('await db.transaction(async (tx) => {', revokeIndex);
+    const advisoryLockIndex = source.indexOf('lockUserMembershipInvariant(tx, userId)', transactionIndex);
+    const userRowLockIndex = source.indexOf(".for('update')", advisoryLockIndex);
+    const membershipClaimIndex = source.indexOf('const [revokedMembership] = await tx', userRowLockIndex);
+
+    expect(source).toContain("import { lockUserMembershipInvariant } from '@/lib/user-membership-integrity'");
+    expect(advisoryLockIndex).toBeGreaterThan(transactionIndex);
+    expect(userRowLockIndex).toBeGreaterThan(advisoryLockIndex);
+    expect(membershipClaimIndex).toBeGreaterThan(userRowLockIndex);
+  });
+
   it('claims a still-unverified active invitation before revoking and audits in the same transaction', () => {
     const revokeIndex = source.indexOf("if (action === 'revoke')");
     const transactionIndex = source.indexOf('await db.transaction(async (tx) => {', revokeIndex);
@@ -23,6 +36,20 @@ describe('admin invitation action serialization', () => {
     expect(membershipClaimIndex).toBeGreaterThan(userLockIndex);
     expect(auditIndex).toBeGreaterThan(membershipClaimIndex);
     expect(source.slice(auditIndex)).toContain('}, tx);');
+  });
+
+  it('uses the shared user-membership advisory lock before resend state and credential claims', () => {
+    const resendCredential = source.indexOf('const previousPasswordHash = credentialAccount.password');
+    const transactionIndex = source.indexOf('await db.transaction(async (tx) => {', resendCredential);
+    const advisoryLockIndex = source.indexOf('lockUserMembershipInvariant(tx, userId)', transactionIndex);
+    const userRowLockIndex = source.indexOf(".for('update')", advisoryLockIndex);
+    const membershipRowLockIndex = source.indexOf(".for('update')", userRowLockIndex + 1);
+    const credentialClaimIndex = source.indexOf('const [rotatedCredential] = await tx', membershipRowLockIndex);
+
+    expect(advisoryLockIndex).toBeGreaterThan(transactionIndex);
+    expect(userRowLockIndex).toBeGreaterThan(advisoryLockIndex);
+    expect(membershipRowLockIndex).toBeGreaterThan(userRowLockIndex);
+    expect(credentialClaimIndex).toBeGreaterThan(membershipRowLockIndex);
   });
 
   it('claims the exact previous password before rotating a resend credential', () => {
