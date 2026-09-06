@@ -637,7 +637,7 @@ export async function acceptInvitation(input: AcceptInvitationInput): Promise<{
     if (!tenant) throw new Error('Tenant not found.');
 
     if (shouldStartTenantSetup(claimedInvitation.type, tenant.lifecycleStatus)) {
-      await tx
+      const [advancedTenant] = await tx
         .update(tenants)
         .set({
           lifecycleStatus: 'SETUP_IN_PROGRESS',
@@ -646,7 +646,18 @@ export async function acceptInvitation(input: AcceptInvitationInput): Promise<{
           lifecycleReason: 'Tenant Administrator invitation accepted; initial setup can begin',
           updatedAt: now,
         })
-        .where(eq(tenants.id, invitation.tenantId));
+        .where(
+          and(
+            eq(tenants.id, invitation.tenantId),
+            eq(tenants.lifecycleStatus, tenant.lifecycleStatus),
+          ),
+        )
+        .returning({ id: tenants.id });
+      if (!advancedTenant) {
+        throw new InvitationLifecycleConflictError(
+          'This tenant lifecycle changed while invitation acceptance was being completed. Refresh and retry.',
+        );
+      }
     }
 
     return {
