@@ -59,10 +59,20 @@ describe('reset execution crash evidence and reconciliation', () => {
     expect(reconciliation).toContain('destructivePlanCommitted = null');
   });
 
-  it('reconciles only stale in-progress rows and fences the exact execution start', () => {
-    const staleQuery = reconciliation.indexOf("eq(tenantResetRequests.status, 'in_progress' as const)");
-    const cutoff = reconciliation.indexOf('lt(tenantResetRequests.startedAt, staleBefore)', staleQuery);
-    const update = reconciliation.indexOf('.update(tenantResetRequests)', cutoff);
+  it('reconciles only stale in-progress rows and fences the exact execution state', () => {
+    const staleQuery = reconciliation.indexOf(
+      "eq(tenantResetRequests.status, 'in_progress' as const)",
+    );
+    const cutoff = reconciliation.indexOf(
+      'lt(tenantResetRequests.startedAt, staleBefore)',
+      staleQuery,
+    );
+    const metadataState = reconciliation.indexOf('const metadataState =', cutoff);
+    const metadataExact = reconciliation.indexOf(
+      'eq(tenantResetRequests.metadata, row.metadata)',
+      metadataState,
+    );
+    const update = reconciliation.indexOf('.update(tenantResetRequests)', metadataExact);
     const statusFence = reconciliation.indexOf(
       "eq(tenantResetRequests.status, 'in_progress')",
       update,
@@ -71,12 +81,22 @@ describe('reset execution crash evidence and reconciliation', () => {
       'eq(tenantResetRequests.startedAt, row.startedAt)',
       statusFence,
     );
+    const evidenceFence = reconciliation.indexOf('metadataState', startFence);
 
     expect(staleQuery).toBeGreaterThan(-1);
     expect(cutoff).toBeGreaterThan(staleQuery);
-    expect(update).toBeGreaterThan(cutoff);
+    expect(metadataState).toBeGreaterThan(cutoff);
+    expect(metadataExact).toBeGreaterThan(metadataState);
+    expect(update).toBeGreaterThan(metadataExact);
     expect(statusFence).toBeGreaterThan(update);
     expect(startFence).toBeGreaterThan(statusFence);
+    expect(evidenceFence).toBeGreaterThan(startFence);
+  });
+
+  it('clamps stale execution duration to the PostgreSQL integer range', () => {
+    expect(reconciliation).toContain('const MAX_POSTGRES_INTEGER = 2_147_483_647');
+    expect(reconciliation).toContain('Math.min(\n      MAX_POSTGRES_INTEGER,');
+    expect(reconciliation).toContain('executionTimeMs,');
   });
 
   it('keeps tenant-triggered reconciliation tenant-scoped while platform entry points stay global', () => {
@@ -86,7 +106,9 @@ describe('reset execution crash evidence and reconciliation', () => {
       'reconcileStaleInProgressResets({ tenantId: auth.session.tenantId })',
     );
     expect(platformRoute).toContain('await reconcileStaleInProgressResets();');
-    expect(cronRoute).toContain('const resetReconciliation = await reconcileStaleInProgressResets();');
+    expect(cronRoute).toContain(
+      'const resetReconciliation = await reconcileStaleInProgressResets();',
+    );
   });
 
   it('runs reconciliation from cron before storage configuration can short-circuit', () => {
