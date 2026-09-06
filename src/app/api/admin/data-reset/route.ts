@@ -37,7 +37,7 @@ export async function GET(request: NextRequest) {
     const auth = await requireTenantAdmin(request);
     if (!auth.ok) return auth.error;
 
-    await reconcileStaleInProgressResets();
+    await reconcileStaleInProgressResets({ tenantId: auth.session.tenantId });
 
     const db = getDb();
     const requests = await db
