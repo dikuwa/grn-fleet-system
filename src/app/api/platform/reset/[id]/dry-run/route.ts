@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { getDb } from '@/db';
@@ -43,8 +43,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     // A fresh plan invalidates an earlier recovery point for this request. The
     // old snapshot remains safely retained in Backup & Restore, but execution
-    // requires a new snapshot tied to this exact plan.
-    await db
+    // requires a new snapshot tied to this exact plan. The write is revision-
+    // claimed so a stale preview cannot overwrite a newer approval, backup, or
+    // execution claim that completed while the preview was being calculated.
+    const [updated] = await db
       .update(tenantResetRequests)
       .set({
         validationResults: {
@@ -75,7 +77,24 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         },
         updatedAt: new Date(),
       })
-      .where(eq(tenantResetRequests.id, id));
+      .where(
+        and(
+          eq(tenantResetRequests.id, id),
+          eq(tenantResetRequests.status, resetRequest.status),
+          eq(tenantResetRequests.updatedAt, resetRequest.updatedAt),
+        ),
+      )
+      .returning({ id: tenantResetRequests.id });
+
+    if (!updated) {
+      return NextResponse.json(
+        {
+          error:
+            'This reset request changed while the dry run was being calculated. Refresh the request and run a fresh dry run.',
+        },
+        { status: 409 },
+      );
+    }
 
     // A refreshed plan invalidates any earlier recovery point and therefore
     // also resolves an earlier tenant "ready to execute" action.
