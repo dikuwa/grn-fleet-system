@@ -6,6 +6,7 @@ import { tenantResetRequests } from '@/db/schema/reset-requests';
 const DEFAULT_APPROVAL_TTL_HOURS = 72;
 const DEFAULT_CLAIM_TTL_MINUTES = 15;
 const DEFAULT_RECOVERY_CLAIM_TTL_MINUTES = 10;
+const MIN_RECOVERY_CLAIM_TTL_MINUTES = 6;
 
 function positiveNumber(value: string | undefined, fallback: number) {
   const parsed = Number(value);
@@ -22,9 +23,12 @@ export const RESET_EXECUTION_CLAIM_TTL_MINUTES = positiveNumber(
   DEFAULT_CLAIM_TTL_MINUTES,
 );
 
-export const RESET_RECOVERY_CLAIM_TTL_MINUTES = positiveNumber(
-  process.env.RESET_RECOVERY_CLAIM_TTL_MINUTES,
-  DEFAULT_RECOVERY_CLAIM_TTL_MINUTES,
+export const RESET_RECOVERY_CLAIM_TTL_MINUTES = Math.max(
+  MIN_RECOVERY_CLAIM_TTL_MINUTES,
+  positiveNumber(
+    process.env.RESET_RECOVERY_CLAIM_TTL_MINUTES,
+    DEFAULT_RECOVERY_CLAIM_TTL_MINUTES,
+  ),
 );
 
 export function resetApprovalExpiresAt(reviewedAt: Date | null) {
@@ -221,25 +225,12 @@ export async function releaseResetExecutionClaim(input: {
   claimId: string;
 }) {
   const db = getDb();
-  const [current] = await db
-    .select({ metadata: tenantResetRequests.metadata })
-    .from(tenantResetRequests)
-    .where(
-      and(
-        eq(tenantResetRequests.id, input.resetRequestId),
-        eq(tenantResetRequests.status, 'approved' as const),
-        sql`${tenantResetRequests.metadata}->>'executionClaimId' = ${input.claimId}`,
-      ),
-    )
-    .limit(1);
-  if (!current) return;
-  const metadata = { ...((current.metadata ?? {}) as Record<string, unknown>) };
-  delete metadata.executionClaimId;
-  delete metadata.executionClaimedAt;
-  delete metadata.executionClaimedByUserId;
   await db
     .update(tenantResetRequests)
-    .set({ metadata, updatedAt: new Date() })
+    .set({
+      metadata: sql`${tenantResetRequests.metadata} - 'executionClaimId' - 'executionClaimedAt' - 'executionClaimedByUserId'`,
+      updatedAt: new Date(),
+    })
     .where(
       and(
         eq(tenantResetRequests.id, input.resetRequestId),
@@ -362,25 +353,12 @@ export async function releaseResetRecoveryPointClaim(input: {
   claimId: string;
 }) {
   const db = getDb();
-  const [current] = await db
-    .select({ metadata: tenantResetRequests.metadata })
-    .from(tenantResetRequests)
-    .where(
-      and(
-        eq(tenantResetRequests.id, input.resetRequestId),
-        eq(tenantResetRequests.status, 'approved' as const),
-        sql`${tenantResetRequests.metadata}->>'recoveryPointClaimId' = ${input.claimId}`,
-      ),
-    )
-    .limit(1);
-  if (!current) return;
-  const metadata = { ...((current.metadata ?? {}) as Record<string, unknown>) };
-  delete metadata.recoveryPointClaimId;
-  delete metadata.recoveryPointClaimedAt;
-  delete metadata.recoveryPointClaimedByUserId;
   await db
     .update(tenantResetRequests)
-    .set({ metadata, updatedAt: new Date() })
+    .set({
+      metadata: sql`${tenantResetRequests.metadata} - 'recoveryPointClaimId' - 'recoveryPointClaimedAt' - 'recoveryPointClaimedByUserId'`,
+      updatedAt: new Date(),
+    })
     .where(
       and(
         eq(tenantResetRequests.id, input.resetRequestId),
