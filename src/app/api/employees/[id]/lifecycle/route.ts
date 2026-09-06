@@ -27,6 +27,7 @@ import { getTenantEntitlements } from '@/lib/entitlements';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { checkTenantUserCapacityLocked, lockTenantUserCapacity } from '@/lib/tenant-user-capacity';
 import { lockUserMembershipInvariant } from '@/lib/user-membership-integrity';
+import { lockTenantAdministratorInvariant } from '@/lib/tenant-admin-integrity';
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -36,6 +37,13 @@ class EmployeeLifecycleConflictError extends Error {
   constructor() {
     super('Employee lifecycle revision changed');
     this.name = 'EmployeeLifecycleConflictError';
+  }
+}
+
+class StaffArchiveFinalAdminError extends Error {
+  constructor() {
+    super('Staff archive would disable final Tenant Administrator');
+    this.name = 'StaffArchiveFinalAdminError';
   }
 }
 
@@ -143,10 +151,16 @@ async function assertNoLiveDriverResponsibility(employeeId: string, tenantId: st
   return null;
 }
 
-async function wouldDisableFinalTenantAdmin(userId: string, tenantId: string) {
-  const db = getDb();
-  const now = new Date();
-  const assignments = await db
+async function wouldDisableFinalTenantAdmin(
+  executor: any,
+  userId: string,
+  tenantId: string,
+  now = new Date(),
+) {
+  await lockUserMembershipInvariant(executor, userId);
+  await lockTenantAdministratorInvariant(executor, tenantId);
+
+  const assignments = await executor
     .select({
       userId: tenantMemberships.userId,
       startDate: roleAssignments.startDate,
@@ -165,8 +179,8 @@ async function wouldDisableFinalTenantAdmin(userId: string, tenantId: string) {
 
   const activeAdmins = [...new Set(
     assignments
-      .filter((assignment) => assignmentIsActive(assignment, now))
-      .map((assignment) => assignment.userId),
+      .filter((assignment: { startDate: Date | string | null; endDate: Date | string | null }) => assignmentIsActive(assignment, now))
+      .map((assignment: { userId: string }) => assignment.userId),
   )];
   return activeAdmins.length === 1 && activeAdmins[0] === userId;
 }
@@ -266,73 +280,93 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
 
     let accountArchived = false;
     let globalProfileDisabled = false;
-    if (employee.userId) {
-      const [membership] = await db
-        .select({ id: tenantMemberships.id, status: tenantMemberships.status })
-        .from(tenantMemberships)
-        .where(and(
-          eq(tenantMemberships.userId, employee.userId),
-          eq(tenantMemberships.tenantId, auth.session.tenantId),
-        ))
-        .limit(1);
+    try {
+      const committed = await runLifecycleTransaction(db, async (tx) => {
+        let membership: { id: string; status: string } | undefined;
+        let disableGlobalProfile = false;
 
-      if (membership?.status === 'active') {
-        if (await wouldDisableFinalTenantAdmin(employee.userId, auth.session.tenantId)) {
-          return NextResponse.json(
-            { error: 'This employee is the final active Tenant Administrator. Assign another active Tenant Administrator before archiving.' },
-            { status: 409 },
-          );
+        if (employee.userId) {
+          if (await wouldDisableFinalTenantAdmin(
+            tx,
+            employee.userId,
+            auth.session.tenantId,
+            now,
+          )) {
+            throw new StaffArchiveFinalAdminError();
+          }
+
+          [membership] = await tx
+            .select({ id: tenantMemberships.id, status: tenantMemberships.status })
+            .from(tenantMemberships)
+            .where(and(
+              eq(tenantMemberships.userId, employee.userId),
+              eq(tenantMemberships.tenantId, auth.session.tenantId),
+            ))
+            .limit(1);
+
+          if (membership?.status === 'active') {
+            const otherMemberships = await tx
+              .select({ id: tenantMemberships.id, status: tenantMemberships.status })
+              .from(tenantMemberships)
+              .where(and(
+                eq(tenantMemberships.userId, employee.userId),
+                ne(tenantMemberships.id, membership.id),
+              ));
+            disableGlobalProfile = !otherMemberships.some(
+              (otherMembership: { status: string }) => otherMembership.status !== 'access_removed',
+            );
+          }
         }
 
-        const otherMemberships = await db
-          .select({ id: tenantMemberships.id, status: tenantMemberships.status })
-          .from(tenantMemberships)
-          .where(and(
-            eq(tenantMemberships.userId, employee.userId),
-            ne(tenantMemberships.id, membership.id),
-          ));
-        globalProfileDisabled = !otherMemberships.some(
-          (otherMembership) => otherMembership.status !== 'access_removed',
+        await updateEmployeeRevision(tx, employee, auth.session.tenantId, {
+          employmentStatus: 'archived',
+          availabilityStatus: 'temporarily_unavailable',
+          archivedAt: now,
+          archivedByUserId: auth.session.user.id,
+          updatedAt: now,
+        });
+
+        if (employee.isDriver) {
+          await tx
+            .update(driverProfiles)
+            .set({ availabilityStatus: 'unavailable', unavailableUntil: null, updatedAt: now })
+            .where(eq(driverProfiles.employeeId, id));
+        }
+
+        if (employee.userId && membership?.status === 'active') {
+          const [archivedMembership] = await tx
+            .update(tenantMemberships)
+            .set({ status: 'inactive' })
+            .where(and(
+              eq(tenantMemberships.id, membership.id),
+              eq(tenantMemberships.tenantId, auth.session.tenantId),
+              eq(tenantMemberships.status, 'active'),
+            ))
+            .returning({ id: tenantMemberships.id });
+          if (!archivedMembership) throw new EmployeeLifecycleConflictError();
+          accountArchived = true;
+
+          if (disableGlobalProfile) {
+            const [disabledProfile] = await tx
+              .update(userProfiles)
+              .set({ accountEnabled: false, status: 'disabled', disabledAt: now, updatedAt: now })
+              .where(and(eq(userProfiles.userId, employee.userId), eq(userProfiles.status, 'active')))
+              .returning({ userId: userProfiles.userId });
+            globalProfileDisabled = Boolean(disabledProfile);
+          }
+        }
+      });
+      if (!committed) return lifecycleConflictResponse();
+    } catch (error) {
+      if (error instanceof StaffArchiveFinalAdminError) {
+        return NextResponse.json(
+          { error: 'This employee is the final active Tenant Administrator. Assign another active Tenant Administrator before archiving.' },
+          { status: 409 },
         );
-        accountArchived = true;
       }
+      throw error;
     }
 
-    const committed = await runLifecycleTransaction(db, async (tx) => {
-      await updateEmployeeRevision(tx, employee, auth.session.tenantId, {
-        employmentStatus: 'archived',
-        availabilityStatus: 'temporarily_unavailable',
-        archivedAt: now,
-        archivedByUserId: auth.session.user.id,
-        updatedAt: now,
-      });
-
-      if (employee.isDriver) {
-        await tx
-          .update(driverProfiles)
-          .set({ availabilityStatus: 'unavailable', unavailableUntil: null, updatedAt: now })
-          .where(eq(driverProfiles.employeeId, id));
-      }
-
-      if (employee.userId && accountArchived) {
-        await tx
-          .update(tenantMemberships)
-          .set({ status: 'inactive' })
-          .where(and(
-            eq(tenantMemberships.userId, employee.userId),
-            eq(tenantMemberships.tenantId, auth.session.tenantId),
-            eq(tenantMemberships.status, 'active'),
-          ));
-
-        if (globalProfileDisabled) {
-          await tx
-            .update(userProfiles)
-            .set({ accountEnabled: false, status: 'disabled', disabledAt: now, updatedAt: now })
-            .where(and(eq(userProfiles.userId, employee.userId), eq(userProfiles.status, 'active')));
-        }
-      }
-    });
-    if (!committed) return lifecycleConflictResponse();
     after = { employmentStatus: 'archived', accountArchived, globalProfileDisabled };
   } else if (body.action === 'restore') {
     let accountRestored = false;
