@@ -19,18 +19,23 @@ describe('platform reset action business-state compare-and-set', () => {
     );
   });
 
-  it('fences approval and renewal against the exact reviewed validation state', () => {
+  it('fences approval and renewal against the exact nullable reviewed validation state', () => {
     const actionGuards = source.indexOf('const actionGuards = [');
     const approvalGuard = source.indexOf("if (action === 'approve' || action === 'renew')", actionGuards);
-    const validationGuard = source.indexOf(
-      'eq(tenantResetRequests.validationResults, current.validationResults)',
+    const nullableValidationGuard = source.indexOf(
+      'isNull(tenantResetRequests.validationResults)',
       approvalGuard,
     );
-    const update = source.indexOf('.update(tenantResetRequests)', validationGuard);
+    const exactValidationGuard = source.indexOf(
+      'eq(tenantResetRequests.validationResults, current.validationResults)',
+      nullableValidationGuard,
+    );
+    const update = source.indexOf('.update(tenantResetRequests)', exactValidationGuard);
 
     expect(approvalGuard).toBeGreaterThan(actionGuards);
-    expect(validationGuard).toBeGreaterThan(approvalGuard);
-    expect(update).toBeGreaterThan(validationGuard);
+    expect(nullableValidationGuard).toBeGreaterThan(approvalGuard);
+    expect(exactValidationGuard).toBeGreaterThan(nullableValidationGuard);
+    expect(update).toBeGreaterThan(exactValidationGuard);
   });
 
   it('fences renewal against the prior review note so concurrent renewals cannot both win', () => {
