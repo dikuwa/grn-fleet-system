@@ -12,6 +12,11 @@ function jsonReplacer(_key: string, value: unknown) {
   return typeof value === 'bigint' ? value.toString() : value;
 }
 
+function firstExecuteRow(result: unknown): Record<string, unknown> | undefined {
+  if (Array.isArray(result)) return result[0] as Record<string, unknown> | undefined;
+  return (result as { rows?: Array<Record<string, unknown>> } | null)?.rows?.[0];
+}
+
 /**
  * Restore a platform-operational recovery point as one database transaction.
  *
@@ -96,9 +101,7 @@ export async function restorePlatformOperationalBackupAtomically(input: {
         + (SELECT COUNT(*) FROM notification_dismissals nx WHERE nx.notification_id IN (SELECT id FROM target_notifications))
       )::int AS total
     `));
-    const currentTotal = Number(
-      (targetCountResult.rows?.[0] as Record<string, unknown> | undefined)?.total ?? 0,
-    );
+    const currentTotal = Number(firstExecuteRow(targetCountResult)?.total ?? 0);
     if (currentTotal > 0) {
       throw new Error(
         `Restore blocked: ${currentTotal} current platform operational rows exist. Clear them through Platform Operational Reset before restoring this recovery point.`,
