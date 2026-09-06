@@ -49,6 +49,19 @@ describe('platform operational restore atomicity', () => {
     expect(rowsCase).toBeGreaterThan(arrayCase);
   });
 
+  it('keeps sandbox-backed demo requests and their notifications outside the restore target precheck', () => {
+    const demoNotification = service.indexOf("n.entity_type = 'demo_request'");
+    const sandboxJoin = service.indexOf(
+      'LEFT JOIN demo_sandboxes ds ON ds.demo_request_id = dr.id',
+      demoNotification,
+    );
+    const sandboxGuard = service.indexOf('AND ds.id IS NULL', sandboxJoin);
+
+    expect(demoNotification).toBeGreaterThan(-1);
+    expect(sandboxJoin).toBeGreaterThan(demoNotification);
+    expect(sandboxGuard).toBeGreaterThan(sandboxJoin);
+  });
+
   it('routes platform recovery points through the atomic restore helper', () => {
     expect(route).toContain(
       "import { restorePlatformOperationalBackupAtomically } from '@/lib/data-protection/platform-restore-service';",
