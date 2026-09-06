@@ -22,6 +22,14 @@ const tenantRoute = readFileSync(
   resolve(process.cwd(), 'src/app/api/admin/data-reset/route.ts'),
   'utf8',
 );
+const platformExecuteRoute = readFileSync(
+  resolve(process.cwd(), 'src/app/api/platform/reset/[id]/execute/route.ts'),
+  'utf8',
+);
+const tenantExecuteRoute = readFileSync(
+  resolve(process.cwd(), 'src/app/api/admin/data-reset/[id]/execute/route.ts'),
+  'utf8',
+);
 
 describe('reset execution crash evidence and reconciliation', () => {
   it('records not-started evidence before entering in_progress', () => {
@@ -65,7 +73,7 @@ describe('reset execution crash evidence and reconciliation', () => {
     const warning = service.indexOf('atomicCallWarning = atomicError', committed);
     const committedOutcomes = service.indexOf('recordCommittedOutcomes();', warning);
     const unresolved = service.indexOf(
-      'The request remains in progress for reconciliation',
+      'Reset atomic result is pending reconciliation after execution failure',
       committedOutcomes,
     );
 
@@ -77,6 +85,28 @@ describe('reset execution crash evidence and reconciliation', () => {
     expect(warning).toBeGreaterThan(committed);
     expect(committedOutcomes).toBeGreaterThan(warning);
     expect(unresolved).toBeGreaterThan(committedOutcomes);
+  });
+
+  it('never treats immediate not-started evidence after an atomic error as terminal rollback proof', () => {
+    const atomicCatch = service.indexOf('} catch (error) {', service.indexOf('await executeResetPlanAtomically'));
+    const committedBranch = service.indexOf("if (sameAttempt && evidenceState === 'committed')", atomicCatch);
+    const pendingBranch = service.indexOf('} else {', committedBranch);
+    const finalization = service.indexOf('const integrity = await runIntegrityChecks', pendingBranch);
+    const notStartedTerminalBranch = service.indexOf("evidenceState === 'not_started'", committedBranch);
+
+    expect(committedBranch).toBeGreaterThan(atomicCatch);
+    expect(pendingBranch).toBeGreaterThan(committedBranch);
+    expect(finalization).toBeGreaterThan(pendingBranch);
+    expect(notStartedTerminalBranch === -1 || notStartedTerminalBranch > finalization).toBe(true);
+  });
+
+  it('suppresses terminal failure notifications while reconciliation is pending', () => {
+    for (const route of [platformExecuteRoute, tenantExecuteRoute]) {
+      expect(route).toContain('isResetExecutionReconciliationPending');
+      expect(route).toContain('const reconciliationPending = isResetExecutionReconciliationPending(error)');
+      expect(route).toContain('if (!reconciliationPending && claimId && executionContext)');
+      expect(route).toContain("code: 'RESET_RECONCILIATION_PENDING'");
+    }
   });
 
   it('classifies stale executions without guessing legacy commit state', () => {
