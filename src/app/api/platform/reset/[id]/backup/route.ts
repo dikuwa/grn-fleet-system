@@ -12,6 +12,7 @@ import { normalizeResetSpec } from '@/lib/reset-catalog';
 import { resetExecutionOwner } from '@/lib/reset-workflow';
 import { notifyResetRequesterReady } from '@/lib/platform/reset-notifications';
 import { isResetApprovalExpired } from '@/lib/reset-execution-guard';
+import { isUuid } from '@/lib/uuid';
 
 export const maxDuration = 300;
 
@@ -24,6 +25,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (permCheck instanceof NextResponse) return permCheck;
 
     const { id } = await params;
+    if (!isUuid(id)) return NextResponse.json({ error: 'Reset request not found' }, { status: 404 });
     const db = getDb();
     const [resetRequest] = await db
       .select()
