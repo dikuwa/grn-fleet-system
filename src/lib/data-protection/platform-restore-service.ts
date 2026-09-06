@@ -88,7 +88,13 @@ export async function restorePlatformOperationalBackupAtomically(input: {
             )
             OR (
               n.entity_type = 'demo_request'
-              AND EXISTS (SELECT 1 FROM demo_requests dr WHERE dr.id::text = n.entity_id::text)
+              AND EXISTS (
+                SELECT 1
+                FROM demo_requests dr
+                LEFT JOIN demo_sandboxes ds ON ds.demo_request_id = dr.id
+                WHERE dr.id::text = n.entity_id::text
+                  AND ds.id IS NULL
+              )
             )
           )
       )
