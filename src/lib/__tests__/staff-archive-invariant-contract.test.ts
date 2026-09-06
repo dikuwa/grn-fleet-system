@@ -8,10 +8,20 @@ const source = readFileSync(
 );
 
 describe('staff archive tenant/user invariants', () => {
+  it('uses the global user then tenant-admin lock order for the archive recount', () => {
+    const helper = source.indexOf('async function wouldDisableFinalTenantAdmin(');
+    const userLock = source.indexOf('lockUserMembershipInvariant(executor, userId)', helper);
+    const tenantLock = source.indexOf('lockTenantAdministratorInvariant(executor, tenantId)', userLock);
+
+    expect(helper).toBeGreaterThan(-1);
+    expect(userLock).toBeGreaterThan(helper);
+    expect(tenantLock).toBeGreaterThan(userLock);
+  });
+
   it('checks final-admin coverage inside the archive transaction before fresh membership reads', () => {
     const archive = source.indexOf("body.action === 'archive'");
     const transaction = source.indexOf('runLifecycleTransaction', archive);
-    const finalAdmin = source.indexOf('wouldDisableFinalActiveTenantAdministrator(', transaction);
+    const finalAdmin = source.indexOf('wouldDisableFinalTenantAdmin(', transaction);
     const membershipRead = source.indexOf('.from(tenantMemberships)', finalAdmin);
 
     expect(transaction).toBeGreaterThan(archive);
@@ -22,11 +32,12 @@ describe('staff archive tenant/user invariants', () => {
   it('re-reads tenant and other memberships before claiming the employee revision', () => {
     const archive = source.indexOf("body.action === 'archive'");
     const transaction = source.indexOf('runLifecycleTransaction', archive);
-    const membershipRead = source.indexOf('.from(tenantMemberships)', transaction);
+    const finalAdmin = source.indexOf('wouldDisableFinalTenantAdmin(', transaction);
+    const membershipRead = source.indexOf('.from(tenantMemberships)', finalAdmin);
     const otherMembershipRead = source.indexOf('.from(tenantMemberships)', membershipRead + 1);
     const employeeClaim = source.indexOf('updateEmployeeRevision(tx, employee', otherMembershipRead);
 
-    expect(membershipRead).toBeGreaterThan(transaction);
+    expect(membershipRead).toBeGreaterThan(finalAdmin);
     expect(otherMembershipRead).toBeGreaterThan(membershipRead);
     expect(employeeClaim).toBeGreaterThan(otherMembershipRead);
   });
