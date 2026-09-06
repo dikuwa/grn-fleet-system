@@ -270,6 +270,65 @@ function countsFromExecutionMetadata(metadata: Record<string, unknown>): Platfor
   return Object.fromEntries(keys.map((key) => [key, Number(record[key])])) as PlatformResetCounts;
 }
 
+async function readCommittedPlatformResetEvidence(input: {
+  backupId: string;
+  expectedFingerprint: string;
+}) {
+  const db = getDb();
+  const [backup] = await db
+    .select({
+      id: platformBackups.id,
+      scope: platformBackups.scope,
+      status: platformBackups.status,
+      isProtected: platformBackups.isProtected,
+      metadata: platformBackups.metadata,
+    })
+    .from(platformBackups)
+    .where(eq(platformBackups.id, input.backupId))
+    .limit(1);
+  if (!backup) return null;
+
+  const metadata = (backup.metadata ?? {}) as Record<string, unknown>;
+  if (metadata.platformResetExecutionState !== 'committed') return null;
+
+  const counts = countsFromExecutionMetadata(metadata);
+  const planFingerprint =
+    typeof metadata.platformResetExecutionPlanFingerprint === 'string'
+      ? metadata.platformResetExecutionPlanFingerprint
+      : null;
+  const executionSnapshotFingerprint =
+    typeof metadata.platformResetExecutionSnapshotFingerprint === 'string'
+      ? metadata.platformResetExecutionSnapshotFingerprint
+      : null;
+  const verifiedSnapshotFingerprint =
+    typeof metadata.platformSnapshotFingerprint === 'string'
+      ? metadata.platformSnapshotFingerprint
+      : null;
+
+  const valid =
+    backup.scope === 'platform_operational' &&
+    backup.status === 'ready' &&
+    backup.isProtected === true &&
+    metadata.platformSnapshotVersion === 2 &&
+    metadata.platformResetExecutionVersion === 1 &&
+    counts &&
+    planFingerprint === input.expectedFingerprint &&
+    Boolean(executionSnapshotFingerprint) &&
+    executionSnapshotFingerprint === verifiedSnapshotFingerprint;
+  if (!valid) {
+    throw new Error(
+      'Committed platform reset evidence is incomplete or does not match the requested verified reset plan. Manual reconciliation is required before retrying.',
+    );
+  }
+
+  return {
+    backupId: backup.id,
+    counts,
+    planFingerprint,
+    snapshotFingerprint: executionSnapshotFingerprint,
+  };
+}
+
 async function resolveCommittedPlatformResetAfterError(input: {
   backupId: string;
   executionClaimId: string;
@@ -326,6 +385,23 @@ export async function executeVerifiedPlatformOperationalReset(input: {
     throw new Error('Type exactly: RESET PLATFORM');
   }
 
+  // Resolve a previously committed attempt from database evidence before any
+  // archive/storage I/O. This keeps a lost-response retry idempotent even while
+  // object storage is unavailable, while malformed committed evidence fails
+  // closed rather than falling through into another destructive execution.
+  const committedEvidence = await readCommittedPlatformResetEvidence({
+    backupId: input.backupId,
+    expectedFingerprint: input.expectedFingerprint,
+  });
+  if (committedEvidence) {
+    return {
+      result: 'completed' as const,
+      removed: committedEvidence.counts,
+      backupId: committedEvidence.backupId,
+      preserved: PLATFORM_OPERATIONAL_PRESERVED,
+    };
+  }
+
   const { backup, payload } = await readPlatformOperationalBackup(input.backupId);
   const backupChecksum = backup.checksum;
   if (!backupChecksum) throw new Error('Platform recovery archive checksum is missing');
@@ -341,8 +417,8 @@ export async function executeVerifiedPlatformOperationalReset(input: {
     throw new Error('Create a fresh verified platform recovery point before executing this reset.');
   }
 
-  // A retry against the same recovery point after a confirmed earlier commit is
-  // idempotent: return the durable result rather than attempting a second reset.
+  // Defensive archive-backed fallback for callers that race with a durable
+  // committed marker appearing after the database-first preflight read.
   if (
     backupMetadata.platformResetExecutionVersion === 1 &&
     backupMetadata.platformResetExecutionState === 'committed'
