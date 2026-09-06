@@ -26,6 +26,33 @@ describe('reset and backup API UUID guards', () => {
     expect(guard).toBeGreaterThan(params);
   });
 
+  it('validates root reset enum filters before query construction', () => {
+    const source = read('src/app/api/platform/reset/route.ts');
+    const statusSet = source.indexOf('const RESET_STATUSES = new Set<string>(resetRequestStatusEnum.enumValues)');
+    const scopeSet = source.indexOf('const RESET_SCOPES = new Set<string>(resetScopeEnum.enumValues)');
+    const statusGuard = source.indexOf('if (status && !RESET_STATUSES.has(status))');
+    const scopeGuard = source.indexOf('if (scope && !RESET_SCOPES.has(scope))', statusGuard);
+    const db = source.indexOf('const db = getDb()', scopeGuard);
+
+    expect(statusSet).toBeGreaterThan(-1);
+    expect(scopeSet).toBeGreaterThan(statusSet);
+    expect(statusGuard).toBeGreaterThan(scopeSet);
+    expect(scopeGuard).toBeGreaterThan(statusGuard);
+    expect(db).toBeGreaterThan(scopeGuard);
+  });
+
+  it('validates root reset target and tenant UUID before tenant lookup', () => {
+    const source = read('src/app/api/platform/reset/route.ts');
+    const targetGuard = source.indexOf("if (target !== 'tenant' && target !== 'platform')");
+    const tenantGuard = source.indexOf("if (target === 'tenant' && tenantId && !isUuid(tenantId))", targetGuard);
+    const tenantLookup = source.indexOf('.where(eq(tenants.id, tenantId))', tenantGuard);
+
+    expect(source).toContain("import { isUuid } from '@/lib/uuid';");
+    expect(targetGuard).toBeGreaterThan(-1);
+    expect(tenantGuard).toBeGreaterThan(targetGuard);
+    expect(tenantLookup).toBeGreaterThan(tenantGuard);
+  });
+
   it('validates tenant-admin cancellation ids before reset-request predicates', () => {
     const source = read('src/app/api/admin/data-reset/route.ts');
     const bodyId = source.indexOf("const id = typeof body.id === 'string' ? body.id : ''");
