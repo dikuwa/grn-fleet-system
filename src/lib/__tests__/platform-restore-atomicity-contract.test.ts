@@ -19,7 +19,11 @@ describe('platform operational restore atomicity', () => {
     const tableLock = service.indexOf('LOCK TABLE platform_backups', advisory);
     const backupRead = service.indexOf('.from(platformBackups)', tableLock);
     const targetCount = service.indexOf('WITH target_notifications AS', backupRead);
-    const restoreLoop = service.indexOf('for (const table of PLATFORM_OPERATIONAL_TABLES)', targetCount);
+    const normalizedCount = service.indexOf('firstExecuteRow(targetCountResult)', targetCount);
+    const restoreLoop = service.indexOf(
+      'for (const table of PLATFORM_OPERATIONAL_TABLES)',
+      normalizedCount,
+    );
     const markRestored = service.indexOf('.update(platformBackups)', restoreLoop);
     const restoredFence = service.indexOf('isNull(platformBackups.restoredAt)', markRestored);
 
@@ -29,9 +33,20 @@ describe('platform operational restore atomicity', () => {
     expect(tableLock).toBeGreaterThan(advisory);
     expect(backupRead).toBeGreaterThan(tableLock);
     expect(targetCount).toBeGreaterThan(backupRead);
-    expect(restoreLoop).toBeGreaterThan(targetCount);
+    expect(normalizedCount).toBeGreaterThan(targetCount);
+    expect(restoreLoop).toBeGreaterThan(normalizedCount);
     expect(markRestored).toBeGreaterThan(restoreLoop);
     expect(restoredFence).toBeGreaterThan(markRestored);
+  });
+
+  it('reads raw execute rows from both postgres.js arrays and Neon rows objects', () => {
+    const helper = service.indexOf('function firstExecuteRow(result: unknown)');
+    const arrayCase = service.indexOf('if (Array.isArray(result))', helper);
+    const rowsCase = service.indexOf('.rows?.[0]', arrayCase);
+
+    expect(helper).toBeGreaterThan(-1);
+    expect(arrayCase).toBeGreaterThan(helper);
+    expect(rowsCase).toBeGreaterThan(arrayCase);
   });
 
   it('routes platform recovery points through the atomic restore helper', () => {
