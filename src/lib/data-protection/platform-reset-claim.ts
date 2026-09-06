@@ -486,7 +486,7 @@ export async function acquirePlatformResetExecutionClaim(input: {
     }
 
     const now = new Date();
-    const [existing] = await tx
+    const existingClaims = await tx
       .select({ id: platformBackups.id, metadata: platformBackups.metadata })
       .from(platformBackups)
       .where(
@@ -494,9 +494,8 @@ export async function acquirePlatformResetExecutionClaim(input: {
           eq(platformBackups.scope, 'platform_operational'),
           sql`${platformBackups.metadata}->>'platformExecutionClaimId' IS NOT NULL`,
         ),
-      )
-      .limit(1);
-    if (existing) {
+      );
+    for (const existing of existingClaims) {
       const reconciliation = await reconcilePlatformResetExecutionClaim(
         tx,
         existing.id,
