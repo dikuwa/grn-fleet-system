@@ -300,7 +300,7 @@ export function isActiveInvitationIdentityProfile(profile: {
 
 /**
  * Accept an invitation atomically:
- *  - Claims the single-use invitation inside the transaction
+ *  - Claims the exact single-use invitation token inside the transaction
  *  - Reuses an existing account without changing its password
  *  - Rejects globally disabled identities instead of reactivating them indirectly
  *  - Ensures every accepted identity has a user_profiles security/lifecycle row
@@ -331,18 +331,21 @@ export async function acceptInvitation(input: AcceptInvitationInput): Promise<{
   }
 
   const email = input.email.trim().toLowerCase();
+  const invitationTokenHash = hashToken(input.rawToken);
   const passwordHash = input.password ? await bcrypt.hash(input.password, 10) : null;
   const now = new Date();
 
   return db.transaction(async (tx) => {
-    // Atomically claim the invitation. If another acceptance already won the
-    // race, no row is returned. A later failure rolls this status update back.
+    // Atomically claim this exact token. A concurrent resend/regeneration that
+    // rotates the token invalidates the stale link even if its preflight lookup
+    // happened before the rotation.
     const [claimedInvitation] = await tx
       .update(tenantInvitations)
       .set({ status: 'accepted', acceptedAt: now, updatedAt: now })
       .where(
         and(
           eq(tenantInvitations.id, invitation.id),
+          eq(tenantInvitations.token, invitationTokenHash),
           or(eq(tenantInvitations.status, 'pending'), eq(tenantInvitations.status, 'sent')),
           gte(tenantInvitations.expiresAt, now),
         ),
@@ -350,7 +353,7 @@ export async function acceptInvitation(input: AcceptInvitationInput): Promise<{
       .returning();
 
     if (!claimedInvitation) {
-      throw new Error('This invitation has already been used or has expired.');
+      throw new Error('This invitation has already been used, changed, or has expired.');
     }
 
     // Capacity is tenant-scoped and account/profile state is user-scoped. Keep
