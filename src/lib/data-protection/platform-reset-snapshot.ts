@@ -22,7 +22,11 @@ import {
 } from './platform-reset-service';
 
 type SnapshotTable = PlatformBackupPayload['tables'][number];
-type SnapshotExecutor = ReturnType<typeof getDb> | any;
+// The repository intentionally exposes one DB facade over Neon HTTP and
+// postgres.js transaction executors. Snapshot code uses the common Drizzle
+// select/delete surface shared by both.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type SnapshotExecutor = any;
 
 function canonicalize(value: unknown): unknown {
   if (typeof value === 'bigint') return value.toString();
@@ -50,18 +54,25 @@ export function platformOperationalSnapshotFingerprint(tables: SnapshotTable[]) 
   return createHash('sha256').update(JSON.stringify(normalized)).digest('hex');
 }
 
-export async function capturePlatformOperationalSnapshot(executor: SnapshotExecutor = getDb()) {
-  const [enquiryRows, demoRows] = await Promise.all([
+export async function capturePlatformOperationalSnapshot(
+  executor: SnapshotExecutor = getDb(),
+) {
+  const [enquiryRows, demoIdRows] = await Promise.all([
     executor.select().from(cmsEnquiries),
     executor
-      .select({ row: demoRequests })
+      .select({ id: demoRequests.id })
       .from(demoRequests)
       .leftJoin(demoSandboxes, eq(demoSandboxes.demoRequestId, demoRequests.id))
       .where(isNull(demoSandboxes.id)),
   ]);
-  const demoRequestRows = demoRows.map((entry: { row: typeof demoRequests.$inferSelect }) => entry.row);
+  const demoRequestIds = demoIdRows.map((row: { id: string }) => row.id);
+  const demoRequestRows = demoRequestIds.length
+    ? await executor
+        .select()
+        .from(demoRequests)
+        .where(inArray(demoRequests.id, demoRequestIds))
+    : [];
   const enquiryIds = enquiryRows.map((row: typeof cmsEnquiries.$inferSelect) => row.id);
-  const demoRequestIds = demoRequestRows.map((row: typeof demoRequests.$inferSelect) => row.id);
   const entityIds = [...enquiryIds, ...demoRequestIds];
   const disposableNotificationConditions = [
     inArray(notifications.status, ['resolved', 'dismissed', 'archived']),
@@ -100,12 +111,30 @@ export async function capturePlatformOperationalSnapshot(executor: SnapshotExecu
     : [[], [], []];
 
   const tables: SnapshotTable[] = [
-    { table: 'cms_enquiries', rows: enquiryRows as Array<Record<string, unknown>> },
-    { table: 'demo_requests', rows: demoRequestRows as Array<Record<string, unknown>> },
-    { table: 'notifications', rows: notificationRows as Array<Record<string, unknown>> },
-    { table: 'notification_deliveries', rows: deliveryRows as Array<Record<string, unknown>> },
-    { table: 'notification_reads', rows: readRows as Array<Record<string, unknown>> },
-    { table: 'notification_dismissals', rows: dismissalRows as Array<Record<string, unknown>> },
+    {
+      table: 'cms_enquiries',
+      rows: enquiryRows as unknown as Array<Record<string, unknown>>,
+    },
+    {
+      table: 'demo_requests',
+      rows: demoRequestRows as unknown as Array<Record<string, unknown>>,
+    },
+    {
+      table: 'notifications',
+      rows: notificationRows as unknown as Array<Record<string, unknown>>,
+    },
+    {
+      table: 'notification_deliveries',
+      rows: deliveryRows as unknown as Array<Record<string, unknown>>,
+    },
+    {
+      table: 'notification_reads',
+      rows: readRows as unknown as Array<Record<string, unknown>>,
+    },
+    {
+      table: 'notification_dismissals',
+      rows: dismissalRows as unknown as Array<Record<string, unknown>>,
+    },
   ];
   const counts = {
     enquiries: enquiryRows.length,
@@ -135,7 +164,7 @@ export async function capturePlatformOperationalSnapshot(executor: SnapshotExecu
   };
 }
 
-async function failPlatformRecoveryPoint(backupId: string, reason: string) {
+async function persistFailedPlatformRecoveryPoint(backupId: string, reason: string) {
   const db = getDb();
   await db
     .update(platformBackups)
@@ -155,36 +184,81 @@ export async function createVerifiedPlatformOperationalBackup(input: {
   const backup = await createPlatformOperationalBackup(input);
   const { payload } = await readPlatformOperationalBackup(backup.id);
   const archiveSnapshotFingerprint = platformOperationalSnapshotFingerprint(payload.tables);
-  const current = await capturePlatformOperationalSnapshot();
-
-  if (
-    current.planFingerprint !== input.expectedFingerprint ||
-    current.snapshotFingerprint !== archiveSnapshotFingerprint
-  ) {
-    const reason =
-      'Platform operational data changed while the recovery point was being created. Refresh the impact preview and create a fresh recovery point.';
-    await failPlatformRecoveryPoint(backup.id, reason);
-    throw new Error(reason);
-  }
-
   const db = getDb();
-  const verifiedAt = new Date();
-  const [verified] = await db
-    .update(platformBackups)
-    .set({
-      metadata: sql`COALESCE(${platformBackups.metadata}, '{}'::jsonb) || jsonb_build_object(
-        'platformSnapshotVersion', 2,
-        'platformSnapshotFingerprint', ${archiveSnapshotFingerprint},
-        'platformSnapshotVerifiedAt', ${verifiedAt.toISOString()}
-      )`,
-      updatedAt: verifiedAt,
-    })
-    .where(and(eq(platformBackups.id, backup.id), eq(platformBackups.status, 'ready')))
-    .returning();
-  if (!verified) {
-    throw new Error('The platform recovery point changed while snapshot verification was finalizing.');
+  const verification = await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtext('govfleet-platform-operational-backup-snapshot'))`,
+    );
+    await tx.execute(
+      sql.raw(
+        'LOCK TABLE platform_backups, cms_enquiries, demo_requests, demo_sandboxes, notifications, notification_deliveries, notification_reads, notification_dismissals IN SHARE ROW EXCLUSIVE MODE',
+      ),
+    );
+
+    const [currentBackup] = await tx
+      .select({
+        status: platformBackups.status,
+        storageKey: platformBackups.storageKey,
+        checksum: platformBackups.checksum,
+      })
+      .from(platformBackups)
+      .where(eq(platformBackups.id, backup.id))
+      .limit(1);
+    if (
+      !currentBackup ||
+      currentBackup.status !== 'ready' ||
+      !currentBackup.storageKey ||
+      currentBackup.checksum !== backup.checksum
+    ) {
+      return { ok: false as const, reason: 'The platform recovery point changed before snapshot verification could finish.' };
+    }
+
+    const current = await capturePlatformOperationalSnapshot(tx);
+    if (
+      current.planFingerprint !== input.expectedFingerprint ||
+      current.snapshotFingerprint !== archiveSnapshotFingerprint
+    ) {
+      const reason =
+        'Platform operational data changed while the recovery point was being created. Refresh the impact preview and create a fresh recovery point.';
+      await tx
+        .update(platformBackups)
+        .set({
+          status: 'failed',
+          isProtected: false,
+          failureReason: reason,
+          updatedAt: new Date(),
+        })
+        .where(and(eq(platformBackups.id, backup.id), eq(platformBackups.status, 'ready')));
+      return { ok: false as const, reason };
+    }
+
+    const verifiedAt = new Date();
+    const [verified] = await tx
+      .update(platformBackups)
+      .set({
+        metadata: sql`COALESCE(${platformBackups.metadata}, '{}'::jsonb) || jsonb_build_object(
+          'platformSnapshotVersion', 2,
+          'platformSnapshotFingerprint', ${archiveSnapshotFingerprint},
+          'platformSnapshotVerifiedAt', ${verifiedAt.toISOString()}
+        )`,
+        updatedAt: verifiedAt,
+      })
+      .where(and(eq(platformBackups.id, backup.id), eq(platformBackups.status, 'ready')))
+      .returning();
+    if (!verified) {
+      return {
+        ok: false as const,
+        reason: 'The platform recovery point changed while snapshot verification was finalizing.',
+      };
+    }
+    return { ok: true as const, backup: verified };
+  });
+
+  if (!verification.ok) {
+    await persistFailedPlatformRecoveryPoint(backup.id, verification.reason);
+    throw new Error(verification.reason);
   }
-  return verified;
+  return verification.backup;
 }
 
 export async function executeVerifiedPlatformOperationalReset(input: {
