@@ -2,11 +2,11 @@ import { NextRequest, NextResponse } from 'next/server';
 import { revalidatePath } from 'next/cache';
 import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
+import { previewPlatformOperationalReset } from '@/lib/data-protection/platform-reset-service';
 import {
-  createPlatformOperationalBackup,
-  executePlatformOperationalReset,
-  previewPlatformOperationalReset,
-} from '@/lib/data-protection/platform-reset-service';
+  createVerifiedPlatformOperationalBackup,
+  executeVerifiedPlatformOperationalReset,
+} from '@/lib/data-protection/platform-reset-snapshot';
 import {
   acquirePlatformResetExecutionClaim,
   releasePlatformResetExecutionClaim,
@@ -51,7 +51,7 @@ export async function POST(request: NextRequest) {
       );
 
     if (action === 'backup') {
-      const backup = await createPlatformOperationalBackup({
+      const backup = await createVerifiedPlatformOperationalBackup({
         actorUserId: auth.session.user.id,
         expectedFingerprint,
       });
@@ -80,7 +80,7 @@ export async function POST(request: NextRequest) {
       executionClaimId = claim.claimId;
       executionBackupId = backupId;
 
-      const result = await executePlatformOperationalReset({
+      const result = await executeVerifiedPlatformOperationalReset({
         actorUserId: auth.session.user.id,
         actorTenantId: auth.session.tenantId,
         expectedFingerprint,
@@ -108,7 +108,7 @@ export async function POST(request: NextRequest) {
       });
     }
     const message = error instanceof Error ? error.message : String(error);
-    const conflict = /changed|recovery|checksum|type exactly|archive/i.test(message);
+    const conflict = /changed|recovery|checksum|type exactly|archive|verified snapshot/i.test(message);
     return NextResponse.json({ error: message }, { status: conflict ? 409 : 500 });
   }
 }
