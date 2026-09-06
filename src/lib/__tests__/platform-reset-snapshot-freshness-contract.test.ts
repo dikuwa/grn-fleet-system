@@ -43,6 +43,8 @@ describe('platform operational snapshot freshness', () => {
       'current.snapshotFingerprint !== archiveSnapshotFingerprint',
       recapture,
     );
+    const recordCount = source.indexOf('recordCount: current.counts.total', mismatch);
+    const countsMetadata = source.indexOf("'counts', jsonb_build_object(", recordCount);
     const metadata = source.indexOf("'platformSnapshotVersion', 2", mismatch);
 
     expect(create).toBeGreaterThan(-1);
@@ -52,6 +54,8 @@ describe('platform operational snapshot freshness', () => {
     expect(tableLock).toBeGreaterThan(transaction);
     expect(recapture).toBeGreaterThan(tableLock);
     expect(mismatch).toBeGreaterThan(recapture);
+    expect(recordCount).toBeGreaterThan(mismatch);
+    expect(countsMetadata).toBeGreaterThan(recordCount);
     expect(metadata).toBeGreaterThan(mismatch);
   });
 
