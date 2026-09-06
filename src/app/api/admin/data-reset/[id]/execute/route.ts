@@ -10,6 +10,7 @@ import { executeApprovedTenantOperationalReset } from '@/lib/data-protection/res
 import { normalizeResetSpec } from '@/lib/reset-catalog';
 import { resetExecutionOwner } from '@/lib/reset-workflow';
 import { resetExecutionHttpStatus } from '@/lib/reset-execution-http';
+import { isUuid } from '@/lib/uuid';
 import {
   notifyPlatformResetExecution,
   notifyResetRequesterOutcome,
@@ -47,6 +48,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (permission instanceof NextResponse) return permission;
 
     const { id } = await params;
+    if (!isUuid(id)) return NextResponse.json({ error: 'Reset request not found.' }, { status: 404 });
     resetRequestId = id;
     const body = await request.json().catch(() => ({}));
     const confirmationPhrase =
