@@ -19,6 +19,7 @@ import {
   resetApprovalExpiresAt,
 } from '@/lib/reset-execution-guard';
 import { resetExecutionOwner } from '@/lib/reset-workflow';
+import { isUuid } from '@/lib/uuid';
 
 const OPEN_STATUSES = ['draft', 'pending_review', 'approved', 'in_progress'] as const;
 
@@ -232,7 +233,12 @@ export async function POST(request: NextRequest) {
         entityType: 'reset_request',
         entityId: created.id,
         summary: `${tenant.name} requested a governed reset plan.`,
-        after: { status: 'pending_review', scope: resetScopeForSpec(resetSpec), resetSpec, reason },
+        after: {
+          status: 'pending_review',
+          scope: resetScopeForSpec(resetSpec),
+          resetSpec,
+          reason,
+        },
       }),
       notifyPlatformResetRequested({
         requestId: created.id,
@@ -264,6 +270,9 @@ export async function PATCH(request: NextRequest) {
         { status: 400 },
       );
     }
+    if (!isUuid(id)) {
+      return NextResponse.json({ error: 'request id must be a valid UUID' }, { status: 400 });
+    }
 
     const db = getDb();
     const [current] = await db
@@ -276,7 +285,8 @@ export async function PATCH(request: NextRequest) {
         ),
       )
       .limit(1);
-    if (!current) return NextResponse.json({ error: 'Reset request not found' }, { status: 404 });
+    if (!current)
+      return NextResponse.json({ error: 'Reset request not found' }, { status: 404 });
     if (!['draft', 'pending_review'].includes(current.status)) {
       return NextResponse.json(
         {
