@@ -2,7 +2,9 @@ import { NextRequest, NextResponse } from 'next/server';
 import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { deleteBackup, setBackupProtection } from '@/lib/data-protection/backup-service';
+import { assertNoActivePlatformResetExecutionClaim } from '@/lib/data-protection/platform-reset-claim';
 import { recordAuditEvent } from '@/lib/audit-event';
+import { isUuid } from '@/lib/uuid';
 
 export async function PATCH(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
@@ -11,15 +13,21 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     const permCheck = await requirePermission(auth.session, Permissions.RESET_MANAGE);
     if (permCheck instanceof NextResponse) return permCheck;
     const { id } = await params;
+    if (!isUuid(id)) return NextResponse.json({ error: 'Backup not found' }, { status: 404 });
     const body = await request.json();
     if (typeof body.isProtected !== 'boolean')
       return NextResponse.json({ error: 'isProtected boolean is required' }, { status: 400 });
+    if (!body.isProtected) await assertNoActivePlatformResetExecutionClaim(id);
     const backup = await setBackupProtection(id, body.isProtected);
     return NextResponse.json({ success: true, data: backup });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const conflict = /protected|required|cannot be released/i.test(message);
-    return NextResponse.json({ error: message }, { status: conflict ? 409 : 500 });
+    const status = /not found/i.test(message)
+      ? 404
+      : /protected|required|cannot be released|active operational reset|locked/i.test(message)
+        ? 409
+        : 500;
+    return NextResponse.json({ error: message }, { status });
   }
 }
 
@@ -33,6 +41,8 @@ export async function DELETE(
     const permCheck = await requirePermission(auth.session, Permissions.RESET_MANAGE);
     if (permCheck instanceof NextResponse) return permCheck;
     const { id } = await params;
+    if (!isUuid(id)) return NextResponse.json({ error: 'Backup not found' }, { status: 404 });
+    await assertNoActivePlatformResetExecutionClaim(id);
     const backup = await deleteBackup(id);
     await recordAuditEvent({
       tenantId: backup.tenantId ?? auth.session.tenantId,
@@ -52,7 +62,11 @@ export async function DELETE(
     return NextResponse.json({ success: true });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const conflict = /protected|required|cannot be released/i.test(message);
-    return NextResponse.json({ error: message }, { status: conflict ? 409 : 500 });
+    const status = /not found/i.test(message)
+      ? 404
+      : /protected|required|cannot be released|active operational reset|locked/i.test(message)
+        ? 409
+        : 500;
+    return NextResponse.json({ error: message }, { status });
   }
 }
