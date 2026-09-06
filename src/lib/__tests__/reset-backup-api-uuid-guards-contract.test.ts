@@ -38,6 +38,21 @@ describe('reset and backup API UUID guards', () => {
     expect(db).toBeGreaterThan(guard);
   });
 
+  it('normalizes malformed backup list pagination before SQL-backed listing', () => {
+    const source = read('src/app/api/platform/backups/route.ts');
+    const parser = source.indexOf('function positiveIntegerParam(value: string | null, fallback: number)');
+    const integerGuard = source.indexOf('Number.isInteger(parsed) && parsed > 0 ? parsed : fallback', parser);
+    const page = source.indexOf("const page = positiveIntegerParam(searchParams.get('page'), 1)", integerGuard);
+    const limit = source.indexOf("const limit = positiveIntegerParam(searchParams.get('limit'), 20)", page);
+    const list = source.indexOf('listBackups({ view, page, limit })', limit);
+
+    expect(parser).toBeGreaterThan(-1);
+    expect(integerGuard).toBeGreaterThan(parser);
+    expect(page).toBeGreaterThan(integerGuard);
+    expect(limit).toBeGreaterThan(page);
+    expect(list).toBeGreaterThan(limit);
+  });
+
   it('validates manual backup retention and tenant existence before storage work', () => {
     const source = read('src/app/api/platform/backups/route.ts');
     const tenantId = source.indexOf("const tenantId = typeof body.tenantId === 'string'");
