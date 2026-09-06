@@ -12,6 +12,17 @@ const route = readFileSync(
 );
 
 describe('invitation acceptance capacity and identity serialization', () => {
+  it('claims the exact token that passed preflight validation', () => {
+    const accept = service.indexOf('export async function acceptInvitation');
+    const tokenHash = service.indexOf('const invitationTokenHash = hashToken(input.rawToken)', accept);
+    const claim = service.indexOf('const [claimedInvitation] = await tx', tokenHash);
+    const tokenClaim = service.indexOf('eq(tenantInvitations.token, invitationTokenHash)', claim);
+
+    expect(tokenHash).toBeGreaterThan(accept);
+    expect(claim).toBeGreaterThan(tokenHash);
+    expect(tokenClaim).toBeGreaterThan(claim);
+  });
+
   it('uses tenant capacity then shared identity lock before profile and membership state', () => {
     const accept = service.indexOf('export async function acceptInvitation');
     const transaction = service.indexOf('return db.transaction(async (tx) => {', accept);
