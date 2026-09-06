@@ -38,17 +38,23 @@ describe('reset and backup API UUID guards', () => {
     expect(db).toBeGreaterThan(guard);
   });
 
-  it('validates manual backup tenant ids and maps a missing tenant to 404', () => {
+  it('validates manual backup retention and tenant existence before storage work', () => {
     const source = read('src/app/api/platform/backups/route.ts');
     const tenantId = source.indexOf("const tenantId = typeof body.tenantId === 'string'");
-    const guard = source.indexOf('if (!isUuid(tenantId))', tenantId);
-    const create = source.indexOf('await createTenantOperationalBackup({', guard);
-    const missing = source.indexOf("/^Tenant not found\\.?$/i.test(message)", create);
+    const retention = source.indexOf('const retentionDays = body.retentionDays == null ? 30 : Number(body.retentionDays)', tenantId);
+    const uuidGuard = source.indexOf('if (!isUuid(tenantId))', retention);
+    const retentionGuard = source.indexOf('if (!Number.isInteger(retentionDays)', uuidGuard);
+    const tenantLookup = source.indexOf('.from(tenants)', retentionGuard);
+    const missingTenant = source.indexOf("if (!tenant) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 })", tenantLookup);
+    const create = source.indexOf('await createTenantOperationalBackup({', missingTenant);
 
     expect(tenantId).toBeGreaterThan(-1);
-    expect(guard).toBeGreaterThan(tenantId);
-    expect(create).toBeGreaterThan(guard);
-    expect(missing).toBeGreaterThan(create);
+    expect(retention).toBeGreaterThan(tenantId);
+    expect(uuidGuard).toBeGreaterThan(retention);
+    expect(retentionGuard).toBeGreaterThan(uuidGuard);
+    expect(tenantLookup).toBeGreaterThan(retentionGuard);
+    expect(missingTenant).toBeGreaterThan(tenantLookup);
+    expect(create).toBeGreaterThan(missingTenant);
   });
 
   it('maps a valid but unavailable backup download to 404 without hiding storage failures', () => {
@@ -76,17 +82,29 @@ describe('reset and backup API UUID guards', () => {
     expect(source).not.toContain('archive could not be downloaded|');
   });
 
-  it('validates schedule tenant/id inputs and returns 404 for missing deletes', () => {
+  it('validates schedule tenant/id and retention inputs and returns 404 for missing deletes', () => {
     const source = read('src/app/api/platform/backups/schedules/route.ts');
-    const tenantGuard = source.indexOf('if (tenantId && !isUuid(tenantId))');
-    const patchGuard = source.indexOf('if (!isUuid(id))', tenantGuard);
-    const deleteHandler = source.indexOf('export async function DELETE', patchGuard);
+    const retentionParser = source.indexOf('function parseRetentionDays(value: unknown, fallback: number)');
+    const finiteGuard = source.indexOf('if (!Number.isInteger(parsed) || parsed < 1 || parsed > 3650) return null', retentionParser);
+    const tenantGuard = source.indexOf('if (tenantId && !isUuid(tenantId))', finiteGuard);
+    const postRetention = source.indexOf('const retentionDays = parseRetentionDays(body.retentionDays, 90)', tenantGuard);
+    const postRetentionGuard = source.indexOf('if (retentionDays == null)', postRetention);
+    const patchGuard = source.indexOf('if (!isUuid(id))', postRetentionGuard);
+    const patchRetention = source.indexOf('const retentionDays = parseRetentionDays(body.retentionDays, current.retentionDays)', patchGuard);
+    const patchRetentionGuard = source.indexOf('if (retentionDays == null)', patchRetention);
+    const deleteHandler = source.indexOf('export async function DELETE', patchRetentionGuard);
     const deleteGuard = source.indexOf('if (!isUuid(id))', deleteHandler);
     const returning = source.indexOf('.returning({ id: platformBackupSchedules.id })', deleteGuard);
     const missing = source.indexOf('if (!deleted)', returning);
 
-    expect(tenantGuard).toBeGreaterThan(-1);
-    expect(patchGuard).toBeGreaterThan(tenantGuard);
+    expect(retentionParser).toBeGreaterThan(-1);
+    expect(finiteGuard).toBeGreaterThan(retentionParser);
+    expect(tenantGuard).toBeGreaterThan(finiteGuard);
+    expect(postRetention).toBeGreaterThan(tenantGuard);
+    expect(postRetentionGuard).toBeGreaterThan(postRetention);
+    expect(patchGuard).toBeGreaterThan(postRetentionGuard);
+    expect(patchRetention).toBeGreaterThan(patchGuard);
+    expect(patchRetentionGuard).toBeGreaterThan(patchRetention);
     expect(deleteGuard).toBeGreaterThan(deleteHandler);
     expect(returning).toBeGreaterThan(deleteGuard);
     expect(missing).toBeGreaterThan(returning);
