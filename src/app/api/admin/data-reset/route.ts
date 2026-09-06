@@ -195,9 +195,6 @@ export async function POST(request: NextRequest) {
       .onConflictDoNothing()
       .returning();
 
-    // The partial unique creation-slot index is the final race guard. A second
-    // request that lost a simultaneous insert returns a normal conflict instead
-    // of surfacing a database error or producing duplicate governance records.
     if (!created) {
       const competingRows = await db
         .select({
@@ -296,20 +293,33 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
+    const cancelledAt = new Date();
     const [updated] = await db
       .update(tenantResetRequests)
       .set({
         status: 'cancelled',
         failureReason: 'Cancelled by Tenant Administrator',
-        updatedAt: new Date(),
+        updatedAt: cancelledAt,
       })
       .where(
         and(
           eq(tenantResetRequests.id, id),
           eq(tenantResetRequests.tenantId, auth.session.tenantId),
+          eq(tenantResetRequests.status, current.status),
+          eq(tenantResetRequests.updatedAt, current.updatedAt),
         ),
       )
       .returning();
+
+    if (!updated) {
+      return NextResponse.json(
+        {
+          error:
+            'This reset request changed while cancellation was being prepared. Refresh the request and review its current state before retrying.',
+        },
+        { status: 409 },
+      );
+    }
 
     await Promise.all([
       resolvePlatformResetRequestNotification(id),
