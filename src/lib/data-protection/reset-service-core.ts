@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { and, eq, getTableName, sql } from 'drizzle-orm';
 import { getDb, schema } from '@/db';
 import { platformBackups } from '@/db/schema/data-protection';
@@ -154,6 +154,11 @@ async function executeResetPlanAtomically(
   plan: ResetPlan,
   advancedPlan: AdvancedResetPlan,
   resetSpec: ResetSpec,
+  evidence: {
+    resetRequestId: string;
+    executionAttemptId: string;
+    committedAt: Date;
+  },
 ) {
   await runAtomicMutations((executor) => {
     const mutations: unknown[] = [];
@@ -176,6 +181,30 @@ async function executeResetPlanAtomically(
       if (step.before)
         mutations.push(executor.delete(resetTable(step.table)).where(step.condition));
     }
+
+    // Persist the destructive-commit evidence in the same transaction/batch as
+    // the deletes. The SELECT intentionally raises on a lost execution attempt;
+    // that failure rolls back the whole atomic mutation group instead of leaving
+    // destructive changes without durable evidence.
+    mutations.push(
+      executor.execute(sql`
+        WITH evidence AS (
+          UPDATE ${tenantResetRequests}
+          SET metadata = COALESCE(${tenantResetRequests.metadata}, '{}'::jsonb) || jsonb_build_object(
+            'executionEvidenceVersion', 1,
+            'executionAttemptId', ${evidence.executionAttemptId},
+            'executionTransactionState', 'committed',
+            'executionTransactionCommittedAt', ${evidence.committedAt.toISOString()}
+          )
+          WHERE ${tenantResetRequests.id} = ${evidence.resetRequestId}
+            AND ${tenantResetRequests.status} = 'in_progress'
+            AND ${tenantResetRequests.metadata}->>'executionAttemptId' = ${evidence.executionAttemptId}
+            AND ${tenantResetRequests.metadata}->>'executionTransactionState' = 'not_started'
+          RETURNING 1
+        )
+        SELECT CASE WHEN EXISTS (SELECT 1 FROM evidence) THEN 1 ELSE 1 / 0 END
+      `),
+    );
     return mutations;
   });
 }
@@ -300,6 +329,15 @@ export async function executeApprovedTenantOperationalReset(input: {
   }
 
   const executionStartedAt = new Date();
+  const executionAttemptId = randomUUID();
+  const executionMetadata = {
+    ...metadata,
+    executionEvidenceVersion: 1,
+    executionAttemptId,
+    executionAttemptStartedAt: executionStartedAt.toISOString(),
+    executionTransactionState: 'not_started',
+    executionTransactionCommittedAt: null,
+  };
   const executionClaimed = await db.transaction(async (tx) => {
     const [claimed] = await tx
       .update(tenantResetRequests)
@@ -307,6 +345,7 @@ export async function executeApprovedTenantOperationalReset(input: {
         status: 'in_progress',
         startedAt: executionStartedAt,
         failureReason: null,
+        metadata: executionMetadata,
         updatedAt: executionStartedAt,
       })
       .where(
@@ -351,7 +390,11 @@ export async function executeApprovedTenantOperationalReset(input: {
   }> = [];
   let failed = false;
   try {
-    await executeResetPlanAtomically(plan, advancedPlan, resetSpec);
+    await executeResetPlanAtomically(plan, advancedPlan, resetSpec, {
+      resetRequestId: resetRequest.id,
+      executionAttemptId,
+      committedAt: new Date(),
+    });
     const completedSteps = [
       ...(resetSpec.categories.includes('operations') ? plan.steps : []),
       ...advancedPlan.steps,
@@ -394,6 +437,8 @@ export async function executeApprovedTenantOperationalReset(input: {
     preserved: freshPreview.preserved,
     review: freshPreview.review,
     integrity,
+    executionAttemptId,
+    destructivePlanCommitted: !failed,
     storageFilesRemoved: [] as string[],
     storageFilesPreserved: plan.fileKeys.length,
   };
@@ -431,6 +476,7 @@ export async function executeApprovedTenantOperationalReset(input: {
           and(
             eq(tenantResetRequests.id, resetRequest.id),
             eq(tenantResetRequests.status, 'in_progress'),
+            sql`${tenantResetRequests.metadata}->>'executionAttemptId' = ${executionAttemptId}`,
           ),
         )
         .returning({ id: tenantResetRequests.id });
@@ -462,6 +508,7 @@ export async function executeApprovedTenantOperationalReset(input: {
         and(
           eq(tenantResetRequests.id, resetRequest.id),
           eq(tenantResetRequests.status, 'in_progress'),
+          sql`${tenantResetRequests.metadata}->>'executionAttemptId' = ${executionAttemptId}`,
         ),
       )
       .returning({ id: tenantResetRequests.id });
@@ -485,6 +532,7 @@ export async function executeApprovedTenantOperationalReset(input: {
       backupSnapshotId: backup.id,
       backupStorageKey: backup.storageKey,
       integrityPassed,
+      executionAttemptId,
     },
   });
 
