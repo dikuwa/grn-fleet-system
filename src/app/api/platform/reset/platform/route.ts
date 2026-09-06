@@ -23,6 +23,11 @@ async function authorize(request: NextRequest) {
   return auth;
 }
 
+function platformResetReconciliationPending(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /platform reset execution is pending reconciliation/i.test(message);
+}
+
 export async function GET(request: NextRequest) {
   try {
     const auth = await authorize(request);
@@ -90,6 +95,7 @@ export async function POST(request: NextRequest) {
         expectedFingerprint,
         backupId,
         confirmationPhrase,
+        executionClaimId,
       });
       await releasePlatformResetExecutionClaim({
         backupId,
@@ -103,7 +109,8 @@ export async function POST(request: NextRequest) {
     }
     return NextResponse.json({ error: 'Action must be backup or execute' }, { status: 400 });
   } catch (error) {
-    if (executionClaimId && executionBackupId) {
+    const reconciliationPending = platformResetReconciliationPending(error);
+    if (!reconciliationPending && executionClaimId && executionBackupId) {
       await releasePlatformResetExecutionClaim({
         backupId: executionBackupId,
         claimId: executionClaimId,
@@ -112,7 +119,15 @@ export async function POST(request: NextRequest) {
       });
     }
     const message = error instanceof Error ? error.message : String(error);
-    const conflict = /changed|recovery|checksum|type exactly|archive|verified snapshot/i.test(message);
-    return NextResponse.json({ error: message }, { status: conflict ? 409 : 500 });
+    const conflict =
+      reconciliationPending ||
+      /changed|recovery|checksum|type exactly|archive|verified snapshot/i.test(message);
+    return NextResponse.json(
+      {
+        error: message,
+        ...(reconciliationPending ? { code: 'PLATFORM_RESET_RECONCILIATION_PENDING' } : {}),
+      },
+      { status: conflict ? 409 : 500 },
+    );
   }
 }
