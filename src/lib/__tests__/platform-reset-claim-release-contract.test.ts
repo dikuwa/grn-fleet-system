@@ -26,16 +26,31 @@ describe('platform reset recovery-point release protection', () => {
     expect(acquireLock).toBeGreaterThan(acquire);
   });
 
-  it('checks the live claim before unprotecting inside the serialized transaction', () => {
+  it('preserves the existing recovery-point policy and live claim before unprotecting', () => {
     const protection = claim.indexOf('export async function setBackupProtectionWithPlatformResetFence');
-    const liveClaim = claim.indexOf('hasLivePlatformResetExecutionClaim(backup.metadata)', protection);
+    const policy = claim.indexOf('recoveryPointReleaseBlockReason({', protection);
+    const policyFailure = claim.indexOf('if (policyBlockReason) throw new Error(policyBlockReason)', policy);
+    const liveClaim = claim.indexOf('hasLivePlatformResetExecutionClaim(backup.metadata)', policyFailure);
     const update = claim.indexOf('.update(platformBackups)', liveClaim);
     const setProtection = claim.indexOf('.set({ isProtected, updatedAt: new Date() })', update);
 
     expect(protection).toBeGreaterThan(-1);
-    expect(liveClaim).toBeGreaterThan(protection);
+    expect(policy).toBeGreaterThan(protection);
+    expect(policyFailure).toBeGreaterThan(policy);
+    expect(liveClaim).toBeGreaterThan(policyFailure);
     expect(update).toBeGreaterThan(liveClaim);
     expect(setProtection).toBeGreaterThan(update);
+  });
+
+  it('checks the linked reset status while evaluating recovery-point release policy', () => {
+    const protection = claim.indexOf('export async function setBackupProtectionWithPlatformResetFence');
+    const resetLookup = claim.indexOf('.from(tenantResetRequests)', protection);
+    const policy = claim.indexOf('recoveryPointReleaseBlockReason({', resetLookup);
+    const resetStatus = claim.indexOf('resetStatus: resetRequest?.status ?? null', policy);
+
+    expect(resetLookup).toBeGreaterThan(protection);
+    expect(policy).toBeGreaterThan(resetLookup);
+    expect(resetStatus).toBeGreaterThan(policy);
   });
 
   it('requires the selected platform recovery point to remain protected while claiming execution', () => {
