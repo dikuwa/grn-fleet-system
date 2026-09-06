@@ -10,6 +10,7 @@ import {
   acceptInvitation,
   findInvitationByToken,
   getInvitationAccountState,
+  InvitationCapacityError,
 } from '@/lib/platform/invitations';
 
 // ---------------------------------------------------------------------------
@@ -78,6 +79,9 @@ export async function POST(request: NextRequest) {
     });
   } catch (error) {
     console.error('[AcceptInvite POST] Error:', error);
+    if (error instanceof InvitationCapacityError) {
+      return NextResponse.json({ error: error.message }, { status: 409 });
+    }
     return NextResponse.json(
       { error: error instanceof Error ? error.message : 'Failed to accept invitation' },
       { status: 400 },
