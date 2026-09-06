@@ -42,9 +42,9 @@ describe('platform reset execution claim', () => {
     expect(claim).toContain('Math.max(\n  MIN_PLATFORM_RESET_CLAIM_TTL_MINUTES');
   });
 
-  it('acquires before destructive execution and releases on both success and failure', () => {
+  it('acquires before verified destructive execution and releases on both success and failure', () => {
     const acquire = route.indexOf('await acquirePlatformResetExecutionClaim({');
-    const execute = route.indexOf('await executePlatformOperationalReset({', acquire);
+    const execute = route.indexOf('await executeVerifiedPlatformOperationalReset({', acquire);
     const successRelease = route.indexOf('await releasePlatformResetExecutionClaim({', execute);
     const catchBlock = route.indexOf('} catch (error) {', successRelease);
     const failureRelease = route.indexOf('await releasePlatformResetExecutionClaim({', catchBlock);
