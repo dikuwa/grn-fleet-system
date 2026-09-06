@@ -113,9 +113,9 @@ export async function POST(
     const { raw, hash } = generateInvitationToken();
     const expiresAt = new Date(Date.now() + INVITATION_TTL_DAYS * 24 * 60 * 60 * 1000);
 
-    // Claim exactly the lifecycle state that was reviewed above. If acceptance,
-    // cancellation, expiry processing, or another regeneration wins first, this
-    // request must not resurrect or overwrite that newer invitation state.
+    // Claim exactly the lifecycle state and token that were reviewed above. If
+    // acceptance, cancellation, expiry processing, or another regeneration wins
+    // first, this request must not resurrect or overwrite that newer state.
     const [rotatedInvitation] = await db
       .update(tenantInvitations)
       .set({
@@ -128,6 +128,7 @@ export async function POST(
       })
       .where(and(
         eq(tenantInvitations.id, result.invitation.id),
+        eq(tenantInvitations.token, result.invitation.token),
         eq(tenantInvitations.status, result.invitation.status),
       ))
       .returning({ id: tenantInvitations.id });
