@@ -377,55 +377,98 @@ export async function executeApprovedTenantOperationalReset(input: {
 
   const integrity = await runIntegrityChecks(db as unknown as ResetDb, resetRequest.tenantId);
   const integrityPassed = criticalChecksPassed(integrity);
-  const success = !failed && integrityPassed;
-  const completedAt = new Date();
-
-  for (const [index, outcome] of outcomes.entries()) {
-    await db.insert(resetRequestSteps).values({
-      resetRequestId: resetRequest.id,
-      stepOrder: index,
-      stepName: outcome.label,
-      tableName: outcome.table,
-      recordsDeleted: outcome.removed,
-      recordsPreserved: Math.max(0, outcome.planned - outcome.removed),
-      status: outcome.error ? 'failed' : 'completed',
-      startedAt: new Date(startedAt),
-      completedAt,
-      error: outcome.error ?? null,
-      details: { planned: outcome.planned, removed: outcome.removed },
-    });
-  }
-
+  let success = !failed && integrityPassed;
+  let completedAt = new Date();
   const totalRemoved = outcomes.reduce((sum, outcome) => sum + outcome.removed, 0);
   const failureReason = success
     ? null
     : outcomes.find((outcome) => outcome.error)?.error ||
       'One or more critical integrity checks failed after reset.';
+  const finalResults = {
+    // Keep the reviewed impact immutable. A failed atomic plan removes zero
+    // rows, but must not rewrite its reviewed impact to look like a zero-row
+    // request in history.
+    dryRunSummary: freshPreview.dryRunSummary,
+    totalRemoved,
+    steps: outcomes,
+    preserved: freshPreview.preserved,
+    review: freshPreview.review,
+    integrity,
+    storageFilesRemoved: [] as string[],
+    storageFilesPreserved: plan.fileKeys.length,
+  };
 
-  await db
-    .update(tenantResetRequests)
-    .set({
-      status: success ? 'completed' : 'failed',
-      completedAt,
-      executionTimeMs: Date.now() - startedAt,
-      results: {
-        // Keep the reviewed impact immutable. A failed atomic plan removes zero
-        // rows, but must not rewrite its reviewed impact to look like a zero-row
-        // request in history.
-        dryRunSummary: freshPreview.dryRunSummary,
-        totalRemoved,
-        steps: outcomes,
-        preserved: freshPreview.preserved,
-        review: freshPreview.review,
-        integrity,
-        storageFilesRemoved: [],
-        storageFilesPreserved: plan.fileKeys.length,
-      },
-      failureReason,
-      rollbackPossible: true,
-      updatedAt: completedAt,
-    })
-    .where(eq(tenantResetRequests.id, resetRequest.id));
+  try {
+    await db.transaction(async (tx) => {
+      for (const [index, outcome] of outcomes.entries()) {
+        await tx.insert(resetRequestSteps).values({
+          resetRequestId: resetRequest.id,
+          stepOrder: index,
+          stepName: outcome.label,
+          tableName: outcome.table,
+          recordsDeleted: outcome.removed,
+          recordsPreserved: Math.max(0, outcome.planned - outcome.removed),
+          status: outcome.error ? 'failed' : 'completed',
+          startedAt: new Date(startedAt),
+          completedAt,
+          error: outcome.error ?? null,
+          details: { planned: outcome.planned, removed: outcome.removed },
+        });
+      }
+
+      const [finalized] = await tx
+        .update(tenantResetRequests)
+        .set({
+          status: success ? 'completed' : 'failed',
+          completedAt,
+          executionTimeMs: Date.now() - startedAt,
+          results: finalResults,
+          failureReason,
+          rollbackPossible: true,
+          updatedAt: completedAt,
+        })
+        .where(
+          and(
+            eq(tenantResetRequests.id, resetRequest.id),
+            eq(tenantResetRequests.status, 'in_progress'),
+          ),
+        )
+        .returning({ id: tenantResetRequests.id });
+
+      if (!finalized) {
+        throw new Error('Reset finalization lost the in-progress request state.');
+      }
+    });
+  } catch (error) {
+    success = false;
+    completedAt = new Date();
+    const finalizationError = error instanceof Error ? error.message : String(error);
+    const [markedFailed] = await db
+      .update(tenantResetRequests)
+      .set({
+        status: 'failed',
+        completedAt,
+        executionTimeMs: Date.now() - startedAt,
+        results: {
+          ...finalResults,
+          finalizationError,
+          destructivePlanCommitted: !failed,
+        },
+        failureReason: `Reset finalization failed after execution: ${finalizationError}`,
+        rollbackPossible: true,
+        updatedAt: completedAt,
+      })
+      .where(
+        and(
+          eq(tenantResetRequests.id, resetRequest.id),
+          eq(tenantResetRequests.status, 'in_progress'),
+        ),
+      )
+      .returning({ id: tenantResetRequests.id });
+
+    if (!markedFailed) throw error;
+    throw new Error(`Reset finalization failed after execution: ${finalizationError}`);
+  }
 
   await recordAuditEvent({
     tenantId: resetRequest.tenantId,
