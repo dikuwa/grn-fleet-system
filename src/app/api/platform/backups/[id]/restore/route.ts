@@ -4,7 +4,7 @@ import { getDb } from '@/db';
 import { platformBackups } from '@/db/schema';
 import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { restorePlatformOperationalBackup } from '@/lib/data-protection/platform-reset-service';
+import { restorePlatformOperationalBackupAtomically } from '@/lib/data-protection/platform-restore-service';
 import { restoreTenantOperationalBackup } from '@/lib/data-protection/restore-service';
 
 export const maxDuration = 300;
@@ -29,7 +29,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (!backup) return NextResponse.json({ error: 'Backup not found' }, { status: 404 });
     const result =
       backup.scope === 'platform_operational'
-        ? await restorePlatformOperationalBackup({
+        ? await restorePlatformOperationalBackupAtomically({
             backupId: id,
             actorUserId: session.user.id,
             actorTenantId: session.tenantId,
@@ -43,7 +43,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     return NextResponse.json({ success: true, data: result });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const conflict = /blocked|confirmation|already been restored|clean/i.test(message);
+    const conflict = /blocked|confirmation|already been restored|clean|changed/i.test(message);
     return NextResponse.json({ error: message }, { status: conflict ? 409 : 500 });
   }
 }
