@@ -10,6 +10,7 @@ import { executeApprovedTenantOperationalReset } from '@/lib/data-protection/res
 import { normalizeResetSpec } from '@/lib/reset-catalog';
 import { resetExecutionOwner } from '@/lib/reset-workflow';
 import { resetExecutionHttpStatus } from '@/lib/reset-execution-http';
+import { isUuid } from '@/lib/uuid';
 import {
   notifyPlatformResetExecution,
   notifyResetRequesterOutcome,
@@ -28,9 +29,10 @@ export const maxDuration = 300;
  * Preconditions are enforced by the reset service: approved request, successful
  * fresh dry run, verified durable recovery point, unchanged plan fingerprint,
  * and exact `RESET <TENANT_CODE>` typed confirmation. A short-lived execution
- * claim closes the double-click/concurrent-request window before destructive
- * work begins, and approved plans expire instead of remaining executable
- * indefinitely.
+ * claim closes the double-click/concurrent-request window before that transition without
+ * introducing another database status or migration. Stale claims may be
+ * reclaimed after a short TTL so an interrupted request cannot lock a reset
+ * forever.
  */
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   let claimId: string | null = null;
@@ -50,6 +52,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (permCheck instanceof NextResponse) return permCheck;
 
     const { id } = await params;
+    if (!isUuid(id)) return NextResponse.json({ error: 'Reset request not found.' }, { status: 404 });
     resetRequestId = id;
     const body = await request.json().catch(() => ({}));
     const confirmationPhrase =
