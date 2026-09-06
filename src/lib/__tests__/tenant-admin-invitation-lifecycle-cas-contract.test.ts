@@ -8,15 +8,17 @@ const source = readFileSync(
 );
 
 describe('tenant administrator invitation lifecycle compare-and-set', () => {
-  it('claims the previously reviewed invitation status before regeneration', () => {
+  it('claims the previously reviewed invitation token and status before regeneration', () => {
     const rotation = source.indexOf('const [rotatedInvitation] = await db');
     const idClaim = source.indexOf('eq(tenantInvitations.id, result.invitation.id)', rotation);
-    const statusClaim = source.indexOf('eq(tenantInvitations.status, result.invitation.status)', idClaim);
+    const tokenClaim = source.indexOf('eq(tenantInvitations.token, result.invitation.token)', idClaim);
+    const statusClaim = source.indexOf('eq(tenantInvitations.status, result.invitation.status)', tokenClaim);
     const returning = source.indexOf('.returning({ id: tenantInvitations.id })', statusClaim);
 
     expect(rotation).toBeGreaterThan(-1);
     expect(idClaim).toBeGreaterThan(rotation);
-    expect(statusClaim).toBeGreaterThan(idClaim);
+    expect(tokenClaim).toBeGreaterThan(idClaim);
+    expect(statusClaim).toBeGreaterThan(tokenClaim);
     expect(returning).toBeGreaterThan(statusClaim);
     expect(source).toContain('if (!rotatedInvitation) throw new Error(INVITATION_LIFECYCLE_CONFLICT)');
   });
