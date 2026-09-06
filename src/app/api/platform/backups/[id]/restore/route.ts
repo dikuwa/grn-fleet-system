@@ -49,7 +49,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       /blocked|confirmation|already been restored|clean|changed|not ready|integrity|checksum|unsupported backup format|tenant identity|archive is empty|archive could not be found|archive is invalid|does not match|no longer linked/i.test(
         message,
       );
-    const status = /not found/i.test(message) ? 404 : conflict ? 409 : 500;
+    const status = conflict ? 409 : /not found/i.test(message) ? 404 : 500;
     return NextResponse.json({ error: message }, { status });
   }
 }
