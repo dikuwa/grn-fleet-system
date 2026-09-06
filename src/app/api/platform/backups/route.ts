@@ -1,4 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { eq } from 'drizzle-orm';
+import { getDb } from '@/db';
+import { tenants } from '@/db/schema/tenants';
 import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import {
@@ -62,11 +65,25 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const tenantId = typeof body.tenantId === 'string' ? body.tenantId : '';
     const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
-    const retentionDays = Number(body.retentionDays || 30);
+    const retentionDays = body.retentionDays == null ? 30 : Number(body.retentionDays);
     if (!tenantId) return NextResponse.json({ error: 'tenantId is required' }, { status: 400 });
     if (!isUuid(tenantId)) {
       return NextResponse.json({ error: 'tenantId must be a valid UUID' }, { status: 400 });
     }
+    if (!Number.isInteger(retentionDays) || retentionDays < 1 || retentionDays > 3650) {
+      return NextResponse.json(
+        { error: 'retentionDays must be an integer between 1 and 3650' },
+        { status: 400 },
+      );
+    }
+
+    const db = getDb();
+    const [tenant] = await db
+      .select({ id: tenants.id })
+      .from(tenants)
+      .where(eq(tenants.id, tenantId))
+      .limit(1);
+    if (!tenant) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
 
     const backup = await createTenantOperationalBackup({
       tenantId,
