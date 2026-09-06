@@ -9,6 +9,7 @@ import {
 } from '@/lib/data-protection/platform-reset-snapshot';
 import {
   acquirePlatformResetExecutionClaim,
+  markPlatformResetExecutionClaimPendingReconciliation,
   releasePlatformResetExecutionClaim,
 } from '@/lib/data-protection/platform-reset-claim';
 import { isUuid } from '@/lib/uuid';
@@ -110,6 +111,17 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ error: 'Action must be backup or execute' }, { status: 400 });
   } catch (error) {
     const reconciliationPending = platformResetReconciliationPending(error);
+    if (reconciliationPending && executionClaimId && executionBackupId) {
+      await markPlatformResetExecutionClaimPendingReconciliation({
+        backupId: executionBackupId,
+        claimId: executionClaimId,
+      }).catch((markError) => {
+        console.error(
+          '[Platform Operational Reset] Could not persist reconciliation-pending claim state:',
+          markError,
+        );
+      });
+    }
     if (!reconciliationPending && executionClaimId && executionBackupId) {
       await releasePlatformResetExecutionClaim({
         backupId: executionBackupId,
