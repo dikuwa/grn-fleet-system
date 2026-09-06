@@ -45,7 +45,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     return NextResponse.json({ success: true, data: result });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const conflict = /blocked|confirmation|already been restored|clean|changed/i.test(message);
+    const conflict =
+      /blocked|confirmation|already been restored|clean|changed|not ready|integrity|checksum|unsupported backup format|tenant identity|archive is empty|archive could not be found|archive is invalid|does not match|no longer linked/i.test(
+        message,
+      );
     const status = /not found/i.test(message) ? 404 : conflict ? 409 : 500;
     return NextResponse.json({ error: message }, { status });
   }
