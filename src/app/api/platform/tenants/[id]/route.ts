@@ -8,7 +8,7 @@
  */
 
 import { NextRequest, NextResponse } from 'next/server';
-import { count, eq } from 'drizzle-orm';
+import { and, count, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { tenants, tenantBranding, tenantMemberships } from '@/db/schema/tenants';
 import { employees } from '@/db/schema/people';
@@ -132,7 +132,8 @@ export async function PATCH(
     };
 
     const lifecycleTarget = body.lifecycleStatus;
-    if (lifecycleTarget !== undefined && lifecycleTarget !== existing.lifecycleStatus) {
+    const lifecycleChanges = lifecycleTarget !== undefined && lifecycleTarget !== existing.lifecycleStatus;
+    if (lifecycleChanges) {
       const allowed = LIFECYCLE_TRANSITIONS[existing.lifecycleStatus] ?? [];
       if (!allowed.includes(lifecycleTarget)) {
         return NextResponse.json(
@@ -170,10 +171,29 @@ export async function PATCH(
     tenantUpdate.updatedAt = new Date();
 
     if (Object.keys(tenantUpdate).length > 1) {
-      await db.update(tenants).set(tenantUpdate).where(eq(tenants.id, id));
+      if (lifecycleChanges) {
+        const [updatedLifecycle] = await db
+          .update(tenants)
+          .set(tenantUpdate)
+          .where(and(
+            eq(tenants.id, id),
+            eq(tenants.lifecycleStatus, existing.lifecycleStatus),
+          ))
+          .returning({ id: tenants.id });
+        if (!updatedLifecycle) {
+          return NextResponse.json(
+            {
+              error: 'This tenant lifecycle changed while the update was being prepared. Refresh the tenant and review its current state before retrying.',
+            },
+            { status: 409 },
+          );
+        }
+      } else {
+        await db.update(tenants).set(tenantUpdate).where(eq(tenants.id, id));
+      }
     }
 
-    if (lifecycleTarget !== undefined && lifecycleTarget !== existing.lifecycleStatus) {
+    if (lifecycleChanges) {
       await recordAuditEvent({
         tenantId: existing.id,
         actorUserId: session.user.id,
