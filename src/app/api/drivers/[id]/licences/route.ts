@@ -1,7 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { NextRequest, NextResponse } from 'next/server';
 import sharp from 'sharp';
-import { createWorker } from 'tesseract.js';
 import { getDb } from '@/db';
 import {
   auditEvents,
@@ -24,6 +23,10 @@ import { Permissions } from '@/lib/permissions';
 import { WorkspaceIds } from '@/lib/workspaces';
 import { buildKey, deleteFile, isStorageConfigured, uploadFile } from '@/lib/storage';
 import { licenceOcrConfidence, parseNamibianLicenceOcr } from '@/lib/driver-licence-ocr';
+import {
+  recognizeManyWithTesseract,
+  TesseractOcrTimeoutError,
+} from '@/lib/tesseract-ocr';
 import { createScopedNotifications, resolveActiveRoleRecipients } from '@/lib/notification-service';
 import { runAtomicMutations } from '@/lib/db-atomic';
 
@@ -271,8 +274,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       (file): file is File => file instanceof File && file.type.startsWith('image/'),
     );
     if (images.length) {
-      const worker = await createWorker('eng');
       try {
+        const preparedImages: Buffer[] = [];
         for (const image of images) {
           const original = Buffer.from(await image.arrayBuffer());
           const stats = await sharp(original).stats();
@@ -280,23 +283,28 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
             stats.channels.slice(0, 3).reduce((sum, channel) => sum + channel.mean, 0) / 3;
           if (brightness < 55) qualityWarnings.push('dark_image');
           if (brightness > 225) qualityWarnings.push('possible_glare');
-          const prepared = await sharp(original)
-            .rotate()
-            .resize({ width: 1800, withoutEnlargement: true })
-            .grayscale()
-            .normalize()
-            .sharpen()
-            .png()
-            .toBuffer();
-          const result = await worker.recognize(prepared);
-          rawText += `\n${result.data.text}`;
-          meanConfidence += result.data.confidence;
+          preparedImages.push(
+            await sharp(original)
+              .rotate()
+              .resize({ width: 1800, withoutEnlargement: true })
+              .grayscale()
+              .normalize()
+              .sharpen()
+              .png()
+              .toBuffer(),
+          );
         }
-        meanConfidence /= images.length;
-      } catch {
+
+        const results = await recognizeManyWithTesseract(preparedImages);
+        rawText = results.map((result) => result.data.text).join('\n');
+        meanConfidence = results.length
+          ? results.reduce((sum, result) => sum + result.data.confidence, 0) / results.length
+          : 0;
+      } catch (error) {
+        if (error instanceof TesseractOcrTimeoutError) {
+          qualityWarnings.push('ocr_timeout_manual_entry_required');
+        }
         qualityWarnings.push('ocr_failed_manual_entry_required');
-      } finally {
-        await worker.terminate();
       }
     }
 
