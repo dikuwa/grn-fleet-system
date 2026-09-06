@@ -11,6 +11,7 @@ import {
   acquirePlatformResetExecutionClaim,
   releasePlatformResetExecutionClaim,
 } from '@/lib/data-protection/platform-reset-claim';
+import { isUuid } from '@/lib/uuid';
 
 export const maxDuration = 300;
 
@@ -66,6 +67,9 @@ export async function POST(request: NextRequest) {
           { error: 'Create a verified platform recovery point first' },
           { status: 409 },
         );
+      if (!isUuid(backupId)) {
+        return NextResponse.json({ error: 'backupId must be a valid UUID' }, { status: 400 });
+      }
 
       const claim = await acquirePlatformResetExecutionClaim({
         backupId,

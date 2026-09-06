@@ -20,6 +20,7 @@ import {
   acquireResetExecutionClaim,
   releaseResetExecutionClaim,
 } from '@/lib/reset-execution-guard';
+import { isUuid } from '@/lib/uuid';
 
 export const maxDuration = 300;
 
@@ -47,6 +48,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (permission instanceof NextResponse) return permission;
 
     const { id } = await params;
+    if (!isUuid(id))
+      return NextResponse.json({ error: 'Reset request not found.' }, { status: 404 });
     resetRequestId = id;
     const body = await request.json().catch(() => ({}));
     const confirmationPhrase =

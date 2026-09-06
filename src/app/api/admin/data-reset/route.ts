@@ -19,6 +19,7 @@ import {
   resetApprovalExpiresAt,
 } from '@/lib/reset-execution-guard';
 import { resetExecutionOwner } from '@/lib/reset-workflow';
+import { isUuid } from '@/lib/uuid';
 
 const OPEN_STATUSES = ['draft', 'pending_review', 'approved', 'in_progress'] as const;
 
@@ -194,9 +195,6 @@ export async function POST(request: NextRequest) {
       .onConflictDoNothing()
       .returning();
 
-    // The partial unique creation-slot index is the final race guard. A second
-    // request that lost a simultaneous insert returns a normal conflict instead
-    // of surfacing a database error or producing duplicate governance records.
     if (!created) {
       const competingRows = await db
         .select({
@@ -232,7 +230,12 @@ export async function POST(request: NextRequest) {
         entityType: 'reset_request',
         entityId: created.id,
         summary: `${tenant.name} requested a governed reset plan.`,
-        after: { status: 'pending_review', scope: resetScopeForSpec(resetSpec), resetSpec, reason },
+        after: {
+          status: 'pending_review',
+          scope: resetScopeForSpec(resetSpec),
+          resetSpec,
+          reason,
+        },
       }),
       notifyPlatformResetRequested({
         requestId: created.id,
@@ -264,6 +267,9 @@ export async function PATCH(request: NextRequest) {
         { status: 400 },
       );
     }
+    if (!isUuid(id)) {
+      return NextResponse.json({ error: 'request id must be a valid UUID' }, { status: 400 });
+    }
 
     const db = getDb();
     const [current] = await db
@@ -276,7 +282,8 @@ export async function PATCH(request: NextRequest) {
         ),
       )
       .limit(1);
-    if (!current) return NextResponse.json({ error: 'Reset request not found' }, { status: 404 });
+    if (!current)
+      return NextResponse.json({ error: 'Reset request not found' }, { status: 404 });
     if (!['draft', 'pending_review'].includes(current.status)) {
       return NextResponse.json(
         {
@@ -286,20 +293,32 @@ export async function PATCH(request: NextRequest) {
       );
     }
 
+    const cancelledAt = new Date();
     const [updated] = await db
       .update(tenantResetRequests)
       .set({
         status: 'cancelled',
         failureReason: 'Cancelled by Tenant Administrator',
-        updatedAt: new Date(),
+        updatedAt: cancelledAt,
       })
       .where(
         and(
           eq(tenantResetRequests.id, id),
           eq(tenantResetRequests.tenantId, auth.session.tenantId),
+          eq(tenantResetRequests.status, current.status),
         ),
       )
       .returning();
+
+    if (!updated) {
+      return NextResponse.json(
+        {
+          error:
+            'This reset request changed state while cancellation was being prepared. Refresh the request and review its current state before retrying.',
+        },
+        { status: 409 },
+      );
+    }
 
     await Promise.all([
       resolvePlatformResetRequestNotification(id),
