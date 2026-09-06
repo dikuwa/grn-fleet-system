@@ -46,6 +46,13 @@ export class InvitationCapacityError extends Error {
   }
 }
 
+export class InvitationLifecycleConflictError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'InvitationLifecycleConflictError';
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Token helpers
 // ---------------------------------------------------------------------------
@@ -217,42 +224,124 @@ async function getTenantName(tenantId: string): Promise<string> {
 // Mark sent / resend
 // ---------------------------------------------------------------------------
 
-/** Mark an invitation as sent. */
-export async function markInvitationSent(invitationId: string): Promise<void> {
+async function getInvitationLifecycleSnapshot(invitationId: string) {
   const db = getDb();
-  await db
-    .update(tenantInvitations)
-    .set({ status: 'sent', sentAt: new Date(), updatedAt: new Date() })
-    .where(eq(tenantInvitations.id, invitationId));
+  const [invitation] = await db
+    .select({
+      id: tenantInvitations.id,
+      token: tenantInvitations.token,
+      status: tenantInvitations.status,
+    })
+    .from(tenantInvitations)
+    .where(eq(tenantInvitations.id, invitationId))
+    .limit(1);
+  return invitation ?? null;
 }
 
-/** Resend an invitation — rotates the token, extends expiry. */
+/** Mark a newly-created invitation as sent without resurrecting a newer state. */
+export async function markInvitationSent(invitationId: string): Promise<void> {
+  const db = getDb();
+  const snapshot = await getInvitationLifecycleSnapshot(invitationId);
+  if (!snapshot || snapshot.status !== 'pending') {
+    throw new InvitationLifecycleConflictError(
+      'This invitation changed before delivery could be marked as sent.',
+    );
+  }
+
+  const [markedSent] = await db
+    .update(tenantInvitations)
+    .set({ status: 'sent', sentAt: new Date(), updatedAt: new Date() })
+    .where(
+      and(
+        eq(tenantInvitations.id, invitationId),
+        eq(tenantInvitations.token, snapshot.token),
+        eq(tenantInvitations.status, snapshot.status),
+      ),
+    )
+    .returning({ id: tenantInvitations.id });
+
+  if (!markedSent) {
+    throw new InvitationLifecycleConflictError(
+      'This invitation changed before delivery could be marked as sent.',
+    );
+  }
+}
+
+/** Resend an invitation — rotates the token, extends expiry, and preserves terminal states. */
 export async function resendInvitation(
   invitationId: string,
   ttlDays?: number,
 ): Promise<{ rawToken: string }> {
   const db = getDb();
+  const snapshot = await getInvitationLifecycleSnapshot(invitationId);
+  if (
+    !snapshot ||
+    !['pending', 'sent', 'expired'].includes(snapshot.status)
+  ) {
+    throw new InvitationLifecycleConflictError(
+      'This invitation can no longer be resent in its current lifecycle state.',
+    );
+  }
+
   const { raw, hash } = generateInvitationToken();
-  await db
+  const [resent] = await db
     .update(tenantInvitations)
     .set({
       token: hash,
       status: 'sent',
       sentAt: new Date(),
+      acceptedAt: null,
       expiresAt: new Date(Date.now() + (ttlDays ?? INVITATION_TTL_DAYS) * 24 * 60 * 60 * 1000),
       updatedAt: new Date(),
     })
-    .where(eq(tenantInvitations.id, invitationId));
+    .where(
+      and(
+        eq(tenantInvitations.id, invitationId),
+        eq(tenantInvitations.token, snapshot.token),
+        eq(tenantInvitations.status, snapshot.status),
+      ),
+    )
+    .returning({ id: tenantInvitations.id });
+
+  if (!resent) {
+    throw new InvitationLifecycleConflictError(
+      'This invitation changed while resend was being processed. Refresh and retry.',
+    );
+  }
   return { rawToken: raw };
 }
 
-/** Cancel an invitation (no longer usable). */
+/** Cancel a live/expired invitation without overwriting acceptance or a newer token rotation. */
 export async function cancelInvitation(invitationId: string): Promise<void> {
   const db = getDb();
-  await db
+  const snapshot = await getInvitationLifecycleSnapshot(invitationId);
+  if (!snapshot) {
+    throw new InvitationLifecycleConflictError('This invitation no longer exists.');
+  }
+  if (snapshot.status === 'cancelled') return;
+  if (!['pending', 'sent', 'expired'].includes(snapshot.status)) {
+    throw new InvitationLifecycleConflictError(
+      'This invitation can no longer be cancelled in its current lifecycle state.',
+    );
+  }
+
+  const [cancelled] = await db
     .update(tenantInvitations)
     .set({ status: 'cancelled', updatedAt: new Date() })
-    .where(eq(tenantInvitations.id, invitationId));
+    .where(
+      and(
+        eq(tenantInvitations.id, invitationId),
+        eq(tenantInvitations.token, snapshot.token),
+        eq(tenantInvitations.status, snapshot.status),
+      ),
+    )
+    .returning({ id: tenantInvitations.id });
+
+  if (!cancelled) {
+    throw new InvitationLifecycleConflictError(
+      'This invitation changed while cancellation was being processed. Refresh and retry.',
+    );
+  }
 }
 
 /** Mark expired invitations past their expiry date. */
