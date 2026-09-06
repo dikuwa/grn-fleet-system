@@ -46,9 +46,10 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
 
     // A fresh plan invalidates an earlier recovery point for this request. The
     // old snapshot remains safely retained in Backup & Restore, but execution
-    // requires a new snapshot tied to this exact plan. The write is revision-
-    // claimed so a stale preview cannot overwrite a newer approval, backup, or
-    // execution claim that completed while the preview was being calculated.
+    // requires a new snapshot tied to this exact plan. Fence the exact business
+    // state that was used to calculate this preview. `updatedAt` is deliberately
+    // not used because PostgreSQL default timestamps may carry microseconds that
+    // are lost when round-tripped through a JavaScript Date.
     const [updated] = await db
       .update(tenantResetRequests)
       .set({
@@ -84,7 +85,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         and(
           eq(tenantResetRequests.id, id),
           eq(tenantResetRequests.status, resetRequest.status),
-          eq(tenantResetRequests.updatedAt, resetRequest.updatedAt),
+          eq(tenantResetRequests.validationResults, resetRequest.validationResults),
+          eq(tenantResetRequests.metadata, resetRequest.metadata),
         ),
       )
       .returning({ id: tenantResetRequests.id });
