@@ -3,6 +3,7 @@ import { and, eq, or, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { platformBackups } from '@/db/schema';
 import { tenantResetRequests } from '@/db/schema/reset-requests';
+import { deleteFile } from '@/lib/storage';
 import { recoveryPointReleaseBlockReason } from './backup-policy';
 
 const DEFAULT_PLATFORM_RESET_CLAIM_TTL_MINUTES = 10;
@@ -90,6 +91,9 @@ export async function setBackupProtectionWithPlatformResetFence(
       .where(eq(platformBackups.id, backupId))
       .limit(1);
     if (!backup) throw new Error('Backup not found');
+    if (backup.status === 'deleting') {
+      throw new Error('Backup deletion is already in progress');
+    }
 
     if (!isProtected) {
       const [resetRequest] = backup.resetRequestId
@@ -127,6 +131,102 @@ export async function setBackupProtectionWithPlatformResetFence(
     if (!updated) throw new Error('Backup not found');
     return updated;
   });
+}
+
+/**
+ * Reserve a backup for deletion under the same advisory lock used by platform
+ * reset execution claims. Once the transaction commits the backup is no longer
+ * `ready`, so a later execution claim cannot select it while durable storage is
+ * being removed. If storage deletion fails, fail closed rather than returning
+ * the backup to an executable state whose archive presence may be uncertain.
+ */
+export async function deleteBackupWithPlatformResetFence(backupId: string) {
+  const db = getDb();
+  const backup = await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${PLATFORM_RESET_CLAIM_LOCK}))`);
+
+    const [current] = await tx
+      .select()
+      .from(platformBackups)
+      .where(eq(platformBackups.id, backupId))
+      .limit(1);
+    if (!current) throw new Error('Backup not found');
+    if (current.status === 'deleting') throw new Error('Backup deletion is already in progress');
+
+    const [resetRequest] = current.resetRequestId
+      ? await tx
+          .select({ status: tenantResetRequests.status })
+          .from(tenantResetRequests)
+          .where(eq(tenantResetRequests.id, current.resetRequestId))
+          .limit(1)
+      : [];
+    const policyBlockReason = recoveryPointReleaseBlockReason({
+      action: 'delete',
+      isProtected: current.isProtected,
+      backupStatus: current.status,
+      source: current.source,
+      expiresAt: current.expiresAt,
+      resetStatus: resetRequest?.status ?? null,
+    });
+    if (policyBlockReason) throw new Error(policyBlockReason);
+
+    if (
+      current.scope === 'platform_operational' &&
+      hasLivePlatformResetExecutionClaim(current.metadata)
+    ) {
+      throw new Error(
+        'This platform recovery point is locked by an active operational reset and cannot be released yet.',
+      );
+    }
+
+    const [reserved] = await tx
+      .update(platformBackups)
+      .set({ status: 'deleting', failureReason: null, updatedAt: new Date() })
+      .where(
+        and(
+          eq(platformBackups.id, backupId),
+          eq(platformBackups.status, current.status),
+          eq(platformBackups.isProtected, current.isProtected),
+        ),
+      )
+      .returning();
+    if (!reserved) {
+      throw new Error('Backup changed while deletion was being reserved. Refresh and try again.');
+    }
+    return reserved;
+  });
+
+  try {
+    if (backup.storageKey) await deleteFile(backup.storageKey);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await db
+      .update(platformBackups)
+      .set({
+        status: 'failed',
+        failureReason: `Backup deletion failed: ${message}`,
+        updatedAt: new Date(),
+      })
+      .where(and(eq(platformBackups.id, backupId), eq(platformBackups.status, 'deleting')));
+    throw error;
+  }
+
+  const [deleted] = await db
+    .update(platformBackups)
+    .set({
+      status: 'deleted',
+      storageKey: null,
+      failureReason: null,
+      updatedAt: new Date(),
+    })
+    .where(and(eq(platformBackups.id, backupId), eq(platformBackups.status, 'deleting')))
+    .returning();
+  if (!deleted) {
+    throw new Error(
+      'Backup deletion state changed after durable storage removal. Review the backup before retrying.',
+    );
+  }
+  return deleted;
 }
 
 export type PlatformResetExecutionClaimResult =
