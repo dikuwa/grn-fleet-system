@@ -23,8 +23,9 @@ function firstExecuteRow(result: unknown): Record<string, unknown> | undefined {
  * The durable archive is downloaded and verified before locks are acquired.
  * Inside the transaction we serialize platform restores, lock every table that
  * participates in the reset/restore family, revalidate the backup row and the
- * current disposable-data target, restore every table, and mark the recovery
- * point restored. A failure at any point rolls back the whole restore.
+ * current disposable-data target, restore every table, invalidate any prior
+ * reset-execution evidence for this recovery point, and mark it restored. A
+ * failure at any point rolls back the whole restore.
  */
 export async function restorePlatformOperationalBackupAtomically(input: {
   backupId: string;
@@ -133,6 +134,14 @@ export async function restorePlatformOperationalBackupAtomically(input: {
       .set({
         restoredAt,
         restoredByUserId: input.actorUserId,
+        metadata: sql`COALESCE(${platformBackups.metadata}, '{}'::jsonb)
+          - 'platformResetExecutionVersion'
+          - 'platformResetExecutionClaimId'
+          - 'platformResetExecutionState'
+          - 'platformResetExecutionCommittedAt'
+          - 'platformResetExecutionPlanFingerprint'
+          - 'platformResetExecutionSnapshotFingerprint'
+          - 'platformResetExecutionCounts'`,
         updatedAt: restoredAt,
       })
       .where(
