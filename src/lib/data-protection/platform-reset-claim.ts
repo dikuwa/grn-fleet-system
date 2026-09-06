@@ -19,6 +19,46 @@ export const PLATFORM_RESET_EXECUTION_CLAIM_TTL_MINUTES = Math.max(
   ),
 );
 
+export function hasLivePlatformResetExecutionClaim(
+  metadata: unknown,
+  now = new Date(),
+) {
+  const record = (metadata ?? {}) as Record<string, unknown>;
+  const claimId =
+    typeof record.platformExecutionClaimId === 'string'
+      ? record.platformExecutionClaimId.trim()
+      : '';
+  const claimedAt =
+    typeof record.platformExecutionClaimedAt === 'string'
+      ? new Date(record.platformExecutionClaimedAt)
+      : null;
+  if (!claimId || !claimedAt || Number.isNaN(claimedAt.getTime())) return false;
+  return (
+    claimedAt.getTime() >=
+    now.getTime() - PLATFORM_RESET_EXECUTION_CLAIM_TTL_MINUTES * 60 * 1000
+  );
+}
+
+export async function assertNoActivePlatformResetExecutionClaim(backupId: string) {
+  const db = getDb();
+  const [backup] = await db
+    .select({
+      scope: platformBackups.scope,
+      metadata: platformBackups.metadata,
+    })
+    .from(platformBackups)
+    .where(eq(platformBackups.id, backupId))
+    .limit(1);
+  if (
+    backup?.scope === 'platform_operational' &&
+    hasLivePlatformResetExecutionClaim(backup.metadata)
+  ) {
+    throw new Error(
+      'This platform recovery point is locked by an active operational reset and cannot be released yet.',
+    );
+  }
+}
+
 export type PlatformResetExecutionClaimResult =
   | { ok: true; claimId: string }
   | {
@@ -51,6 +91,7 @@ export async function acquirePlatformResetExecutionClaim(input: {
           eq(platformBackups.id, input.backupId),
           eq(platformBackups.scope, 'platform_operational'),
           eq(platformBackups.status, 'ready'),
+          eq(platformBackups.isProtected, true),
         ),
       )
       .limit(1);
@@ -59,7 +100,7 @@ export async function acquirePlatformResetExecutionClaim(input: {
         ok: false as const,
         status: 404 as const,
         code: 'not_found' as const,
-        message: 'Verified platform recovery point not found',
+        message: 'Verified protected platform recovery point not found',
       };
     }
 
@@ -104,6 +145,7 @@ export async function acquirePlatformResetExecutionClaim(input: {
           eq(platformBackups.id, input.backupId),
           eq(platformBackups.scope, 'platform_operational'),
           eq(platformBackups.status, 'ready'),
+          eq(platformBackups.isProtected, true),
           or(
             sql`${platformBackups.metadata}->>'platformExecutionClaimId' IS NULL`,
             sql`${platformBackups.metadata}->>'platformExecutionClaimId' = ''`,
