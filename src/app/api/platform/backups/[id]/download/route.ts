@@ -19,7 +19,7 @@ export async function GET(
     return NextResponse.json({ success: true, data: { url, expiresInSeconds: 900 } });
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    const status = /not found/i.test(message) ? 404 : 500;
+    const status = /not found|not available for download/i.test(message) ? 404 : 500;
     return NextResponse.json({ error: message }, { status });
   }
 }
