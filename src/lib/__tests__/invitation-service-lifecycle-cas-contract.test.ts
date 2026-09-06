@@ -48,6 +48,21 @@ describe('shared invitation lifecycle compare-and-set', () => {
     expect(statusClaim).toBeGreaterThan(tokenClaim);
   });
 
+  it('claims the tenant lifecycle state before advancing onboarding', () => {
+    const setup = source.indexOf('if (shouldStartTenantSetup(claimedInvitation.type, tenant.lifecycleStatus))');
+    const update = source.indexOf('const [advancedTenant] = await tx', setup);
+    const tenantIdClaim = source.indexOf('eq(tenants.id, invitation.tenantId)', update);
+    const lifecycleClaim = source.indexOf('eq(tenants.lifecycleStatus, tenant.lifecycleStatus)', tenantIdClaim);
+    const returning = source.indexOf('.returning({ id: tenants.id })', lifecycleClaim);
+
+    expect(setup).toBeGreaterThan(-1);
+    expect(update).toBeGreaterThan(setup);
+    expect(tenantIdClaim).toBeGreaterThan(update);
+    expect(lifecycleClaim).toBeGreaterThan(tenantIdClaim);
+    expect(returning).toBeGreaterThan(lifecycleClaim);
+    expect(source).toContain('if (!advancedTenant)');
+  });
+
   it('uses an explicit lifecycle conflict error for lost claims', () => {
     expect(source).toContain('export class InvitationLifecycleConflictError extends Error');
     expect(source).toContain("this.name = 'InvitationLifecycleConflictError'");
