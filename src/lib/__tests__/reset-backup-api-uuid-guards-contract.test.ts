@@ -142,14 +142,14 @@ describe('reset and backup API UUID guards', () => {
     expect(source).not.toContain('/not found|storage not available/i');
   });
 
-  it('maps expected restore-state and archive-integrity preconditions to 409', () => {
+  it('maps expected restore-state and archive-integrity preconditions to 409 before generic not-found mapping', () => {
     const source = read('src/app/api/platform/backups/[id]/restore/route.ts');
     const restore = source.indexOf('await restoreTenantOperationalBackup({');
     const classifier = source.indexOf(
       '/blocked|confirmation|already been restored|clean|changed|not ready|integrity|checksum|unsupported backup format|tenant identity|archive is empty|archive could not be found|archive is invalid|does not match|no longer linked/i.test(',
       restore,
     );
-    const status = source.indexOf('const status = /not found/i.test(message) ? 404 : conflict ? 409 : 500', classifier);
+    const status = source.indexOf('const status = conflict ? 409 : /not found/i.test(message) ? 404 : 500', classifier);
 
     expect(restore).toBeGreaterThan(-1);
     expect(classifier).toBeGreaterThan(restore);
