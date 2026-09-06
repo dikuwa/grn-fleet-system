@@ -38,30 +38,34 @@ describe('platform operational reset commit evidence', () => {
   it('writes claim-bound committed evidence after deletes inside the same transaction', () => {
     const transaction = snapshot.indexOf('current = await db.transaction(async (tx) =>');
     const firstDelete = snapshot.indexOf('.delete(notificationDeliveries)', transaction);
-    const marker = snapshot.indexOf("'platformResetExecutionState', 'committed'", firstDelete);
-    const claimId = snapshot.indexOf("'platformResetExecutionClaimId'", marker);
+    const claimId = snapshot.indexOf("'platformResetExecutionClaimId'", firstDelete);
+    const marker = snapshot.indexOf("'platformResetExecutionState'", claimId);
+    const committed = snapshot.indexOf("'committed'", marker);
     const claimFence = snapshot.indexOf(
       "metadata}->>'platformExecutionClaimId' = ${input.executionClaimId}",
-      marker,
+      committed,
     );
     const transactionReturn = snapshot.indexOf('return {\n        counts: snapshot.counts', claimFence);
 
     expect(transaction).toBeGreaterThan(-1);
     expect(firstDelete).toBeGreaterThan(transaction);
-    expect(marker).toBeGreaterThan(firstDelete);
-    expect(claimId).toBeGreaterThan(marker);
-    expect(claimFence).toBeGreaterThan(marker);
+    expect(claimId).toBeGreaterThan(firstDelete);
+    expect(marker).toBeGreaterThan(claimId);
+    expect(committed).toBeGreaterThan(marker);
+    expect(claimFence).toBeGreaterThan(committed);
     expect(transactionReturn).toBeGreaterThan(claimFence);
   });
 
   it('records the audit event in the destructive transaction after the marker', () => {
-    const marker = snapshot.indexOf("'platformResetExecutionState', 'committed'");
-    const audit = snapshot.indexOf('await recordAuditEvent(', marker);
+    const marker = snapshot.indexOf("'platformResetExecutionState'");
+    const committed = snapshot.indexOf("'committed'", marker);
+    const audit = snapshot.indexOf('await recordAuditEvent(', committed);
     const txArgument = snapshot.indexOf('        tx,', audit);
     const transactionReturn = snapshot.indexOf('return {\n        counts: snapshot.counts', txArgument);
 
     expect(marker).toBeGreaterThan(-1);
-    expect(audit).toBeGreaterThan(marker);
+    expect(committed).toBeGreaterThan(marker);
+    expect(audit).toBeGreaterThan(committed);
     expect(txArgument).toBeGreaterThan(audit);
     expect(transactionReturn).toBeGreaterThan(txArgument);
   });
