@@ -9,10 +9,11 @@ import {
   generateInvitationToken,
   invitationAcceptUrl,
   INVITATION_TTL_DAYS,
-  markInvitationSent,
 } from '@/lib/platform/invitations';
 import { sendInvitationEmail } from '@/lib/platform/email-templates';
 import { recordAuditEvent } from '@/lib/audit-event';
+
+const INVITATION_LIFECYCLE_CONFLICT = 'invitation_lifecycle_conflict';
 
 async function requirePlatformTenantManage(request: NextRequest) {
   const auth = await requireRequestAuth(request);
@@ -112,7 +113,10 @@ export async function POST(
     const { raw, hash } = generateInvitationToken();
     const expiresAt = new Date(Date.now() + INVITATION_TTL_DAYS * 24 * 60 * 60 * 1000);
 
-    await db
+    // Claim exactly the lifecycle state that was reviewed above. If acceptance,
+    // cancellation, expiry processing, or another regeneration wins first, this
+    // request must not resurrect or overwrite that newer invitation state.
+    const [rotatedInvitation] = await db
       .update(tenantInvitations)
       .set({
         token: hash,
@@ -122,7 +126,12 @@ export async function POST(
         expiresAt,
         updatedAt: new Date(),
       })
-      .where(eq(tenantInvitations.id, result.invitation.id));
+      .where(and(
+        eq(tenantInvitations.id, result.invitation.id),
+        eq(tenantInvitations.status, result.invitation.status),
+      ))
+      .returning({ id: tenantInvitations.id });
+    if (!rotatedInvitation) throw new Error(INVITATION_LIFECYCLE_CONFLICT);
 
     const acceptUrl = invitationAcceptUrl(raw);
     const emailConfigured = Boolean(process.env.RESEND_API_KEY);
@@ -140,7 +149,18 @@ export async function POST(
       });
       emailSent = sendResult.success;
       if (sendResult.success) {
-        await markInvitationSent(result.invitation.id);
+        // Delivery must only advance the exact token we rotated above. If the
+        // recipient already accepted it, never rewrite accepted -> sent.
+        const [markedSent] = await db
+          .update(tenantInvitations)
+          .set({ status: 'sent', sentAt: new Date(), updatedAt: new Date() })
+          .where(and(
+            eq(tenantInvitations.id, result.invitation.id),
+            eq(tenantInvitations.token, hash),
+            eq(tenantInvitations.status, 'pending'),
+          ))
+          .returning({ id: tenantInvitations.id });
+        if (!markedSent) throw new Error(INVITATION_LIFECYCLE_CONFLICT);
       } else {
         emailError = sendResult.error || 'Email delivery failed';
       }
@@ -182,6 +202,14 @@ export async function POST(
     });
   } catch (error) {
     console.error('[AdminInvitation] POST failed:', error);
+    if (error instanceof Error && error.message === INVITATION_LIFECYCLE_CONFLICT) {
+      return NextResponse.json(
+        {
+          error: 'This Tenant Administrator invitation changed while regeneration was being processed. Refresh the tenant and review its current invitation state before retrying.',
+        },
+        { status: 409 },
+      );
+    }
     return NextResponse.json({ error: 'Could not regenerate administrator invitation' }, { status: 500 });
   }
 }
