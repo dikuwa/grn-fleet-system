@@ -380,6 +380,10 @@ export async function executeApprovedTenantOperationalReset(input: {
     });
 
   const startedAt = Date.now();
+  const completedSteps = [
+    ...(resetSpec.categories.includes('operations') ? plan.steps : []),
+    ...advancedPlan.steps,
+  ];
   const outcomes: Array<{
     table: string;
     label: string;
@@ -387,17 +391,7 @@ export async function executeApprovedTenantOperationalReset(input: {
     removed: number;
     error?: string;
   }> = [];
-  let failed = false;
-  try {
-    await executeResetPlanAtomically(plan, advancedPlan, resetSpec, {
-      resetRequestId: resetRequest.id,
-      executionAttemptId,
-      committedAt: new Date(),
-    });
-    const completedSteps = [
-      ...(resetSpec.categories.includes('operations') ? plan.steps : []),
-      ...advancedPlan.steps,
-    ];
+  const recordCommittedOutcomes = () => {
     completedSteps.forEach((step) =>
       outcomes.push({
         table: step.table,
@@ -406,15 +400,59 @@ export async function executeApprovedTenantOperationalReset(input: {
         removed: step.before,
       }),
     );
-  } catch (error) {
-    failed = true;
-    outcomes.push({
-      table: 'reset_plan',
-      label: 'Atomic reset plan',
-      planned: freshPreview.dryRunSummary.total,
-      removed: 0,
-      error: error instanceof Error ? error.message : String(error),
+  };
+  let failed = false;
+  let atomicCallWarning: string | null = null;
+  try {
+    await executeResetPlanAtomically(plan, advancedPlan, resetSpec, {
+      resetRequestId: resetRequest.id,
+      executionAttemptId,
+      committedAt: new Date(),
     });
+    recordCommittedOutcomes();
+  } catch (error) {
+    const atomicError = error instanceof Error ? error.message : String(error);
+    let evidenceRow:
+      | { status: string; metadata: Record<string, unknown> | null }
+      | undefined;
+    try {
+      [evidenceRow] = await db
+        .select({ status: tenantResetRequests.status, metadata: tenantResetRequests.metadata })
+        .from(tenantResetRequests)
+        .where(eq(tenantResetRequests.id, resetRequest.id))
+        .limit(1);
+    } catch (verificationError) {
+      throw new Error(
+        `Reset atomic result could not be verified after an execution error: ${verificationError instanceof Error ? verificationError.message : String(verificationError)}`,
+      );
+    }
+
+    const evidenceMetadata = (evidenceRow?.metadata ?? {}) as Record<string, unknown>;
+    const sameAttempt = evidenceMetadata.executionAttemptId === executionAttemptId;
+    const evidenceState = evidenceMetadata.executionTransactionState;
+    if (sameAttempt && evidenceState === 'committed') {
+      // Neon HTTP can commit the server-side transaction and still lose the
+      // response. Durable commit evidence wins over the ambiguous transport
+      // error, so preserve the committed outcome and continue integrity checks.
+      atomicCallWarning = atomicError;
+      recordCommittedOutcomes();
+    } else if (sameAttempt && evidenceRow?.status === 'in_progress' && evidenceState === 'not_started') {
+      failed = true;
+      outcomes.push({
+        table: 'reset_plan',
+        label: 'Atomic reset plan',
+        planned: freshPreview.dryRunSummary.total,
+        removed: 0,
+        error: atomicError,
+      });
+    } else {
+      // The transaction result is ambiguous and the exact attempt evidence can
+      // no longer prove either rollback or commit. Leave the request in progress
+      // so the stale reconciler can classify it from durable evidence later.
+      throw new Error(
+        `Reset atomic result is ambiguous after execution failure. The request remains in progress for reconciliation. Original error: ${atomicError}`,
+      );
+    }
   }
 
   const integrity = await runIntegrityChecks(db as unknown as ResetDb, resetRequest.tenantId);
@@ -438,6 +476,7 @@ export async function executeApprovedTenantOperationalReset(input: {
     integrity,
     executionAttemptId,
     destructivePlanCommitted: !failed,
+    atomicCallWarning,
     storageFilesRemoved: [] as string[],
     storageFilesPreserved: plan.fileKeys.length,
   };
@@ -532,6 +571,7 @@ export async function executeApprovedTenantOperationalReset(input: {
       backupStorageKey: backup.storageKey,
       integrityPassed,
       executionAttemptId,
+      atomicCallWarning,
     },
   });
 
