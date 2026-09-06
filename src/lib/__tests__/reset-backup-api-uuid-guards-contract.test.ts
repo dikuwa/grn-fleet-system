@@ -51,6 +51,16 @@ describe('reset and backup API UUID guards', () => {
     expect(missing).toBeGreaterThan(create);
   });
 
+  it('maps a valid but unavailable backup download to 404 without hiding storage failures', () => {
+    const source = read('src/app/api/platform/backups/[id]/download/route.ts');
+    const download = source.indexOf('await getBackupDownloadUrl(id)');
+    const mapping = source.indexOf('/not found|not available for download/i.test(message)', download);
+
+    expect(download).toBeGreaterThan(-1);
+    expect(mapping).toBeGreaterThan(download);
+    expect(source).not.toContain('/not found|storage not available/i');
+  });
+
   it('validates schedule tenant/id inputs and returns 404 for missing deletes', () => {
     const source = read('src/app/api/platform/backups/schedules/route.ts');
     const tenantGuard = source.indexOf('if (tenantId && !isUuid(tenantId))');
