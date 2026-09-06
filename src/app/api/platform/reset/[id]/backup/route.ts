@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { eq } from 'drizzle-orm';
+import { and, eq, sql } from 'drizzle-orm';
 import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { getDb } from '@/db';
@@ -11,11 +11,18 @@ import { recordAuditEvent } from '@/lib/audit-event';
 import { normalizeResetSpec } from '@/lib/reset-catalog';
 import { resetExecutionOwner } from '@/lib/reset-workflow';
 import { notifyResetRequesterReady } from '@/lib/platform/reset-notifications';
-import { isResetApprovalExpired } from '@/lib/reset-execution-guard';
+import {
+  acquireResetRecoveryPointClaim,
+  isResetApprovalExpired,
+  releaseResetRecoveryPointClaim,
+} from '@/lib/reset-execution-guard';
+import { resetExecutionHttpStatus } from '@/lib/reset-execution-http';
 
 export const maxDuration = 300;
 
 export async function POST(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  let recoveryClaimId: string | null = null;
+  let resetRequestId = '';
   try {
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
@@ -24,6 +31,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (permCheck instanceof NextResponse) return permCheck;
 
     const { id } = await params;
+    resetRequestId = id;
     const db = getDb();
     const [resetRequest] = await db
       .select()
@@ -76,6 +84,19 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       );
     }
 
+    const recoveryClaim = await acquireResetRecoveryPointClaim({
+      resetRequestId: resetRequest.id,
+      expectedUpdatedAt: resetRequest.updatedAt,
+      actorUserId: session.user.id,
+    });
+    if (!recoveryClaim.ok) {
+      return NextResponse.json(
+        { error: recoveryClaim.message, code: recoveryClaim.code },
+        { status: recoveryClaim.status },
+      );
+    }
+    recoveryClaimId = recoveryClaim.claimId;
+
     const backup = await createTenantOperationalBackup({
       tenantId: resetRequest.tenantId,
       source: 'pre_reset',
@@ -87,13 +108,42 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       advancedPlan,
     });
 
-    if (backup.recordCount !== preview.dryRunSummary.total) {
+    const [claimedRevision] = await db
+      .select({
+        status: tenantResetRequests.status,
+        reviewedAt: tenantResetRequests.reviewedAt,
+        validationResults: tenantResetRequests.validationResults,
+        metadata: tenantResetRequests.metadata,
+      })
+      .from(tenantResetRequests)
+      .where(
+        and(
+          eq(tenantResetRequests.id, resetRequest.id),
+          eq(tenantResetRequests.status, 'approved'),
+          sql`${tenantResetRequests.metadata}->>'recoveryPointClaimId' = ${recoveryClaimId}`,
+        ),
+      )
+      .limit(1);
+    const claimedValidation = (claimedRevision?.validationResults ?? {}) as Record<string, unknown>;
+    const sameReviewedAt =
+      claimedRevision?.reviewedAt?.getTime() === resetRequest.reviewedAt?.getTime();
+    const sameFingerprint = claimedValidation.fingerprint === storedFingerprint;
+
+    if (
+      !claimedRevision ||
+      !sameReviewedAt ||
+      !sameFingerprint ||
+      backup.recordCount !== preview.dryRunSummary.total
+    ) {
       await db
         .update(platformBackups)
         .set({
           status: 'failed',
           isProtected: false,
-          failureReason: `Backup row count ${backup.recordCount} did not match dry-run row count ${preview.dryRunSummary.total}.`,
+          failureReason:
+            backup.recordCount !== preview.dryRunSummary.total
+              ? `Backup row count ${backup.recordCount} did not match dry-run row count ${preview.dryRunSummary.total}.`
+              : 'The reset approval or reviewed impact changed while the recovery point was being created.',
           updatedAt: new Date(),
         })
         .where(eq(platformBackups.id, backup.id));
@@ -102,14 +152,22 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         .set({
           backupCreated: false,
           backupLocation: null,
+          backupSizeBytes: null,
+          backupRecordCount: null,
           rollbackPossible: false,
           updatedAt: new Date(),
         })
-        .where(eq(tenantResetRequests.id, resetRequest.id));
+        .where(
+          and(
+            eq(tenantResetRequests.id, resetRequest.id),
+            eq(tenantResetRequests.status, 'approved'),
+            sql`${tenantResetRequests.metadata}->>'recoveryPointClaimId' = ${recoveryClaimId}`,
+          ),
+        );
       return NextResponse.json(
         {
           error:
-            'Recovery point verification failed because the data changed. Run a new dry run and try again.',
+            'Recovery point verification failed because the reviewed reset changed. Refresh, run a new dry run, and create a fresh recovery point.',
         },
         { status: 409 },
       );
@@ -149,12 +207,26 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       });
     }
 
+    await releaseResetRecoveryPointClaim({
+      resetRequestId: resetRequest.id,
+      claimId: recoveryClaimId,
+    });
+    recoveryClaimId = null;
+
     return NextResponse.json({ success: true, data: backup }, { status: 201 });
   } catch (error) {
+    if (recoveryClaimId && resetRequestId) {
+      await releaseResetRecoveryPointClaim({
+        resetRequestId,
+        claimId: recoveryClaimId,
+      }).catch((releaseError) => {
+        console.error('[Platform Reset Backup] Could not release recovery claim:', releaseError);
+      });
+    }
     console.error('[Platform Reset Backup] POST failed:', error);
     return NextResponse.json(
       { error: error instanceof Error ? error.message : String(error) },
-      { status: 500 },
+      { status: resetExecutionHttpStatus(error) },
     );
   }
 }
