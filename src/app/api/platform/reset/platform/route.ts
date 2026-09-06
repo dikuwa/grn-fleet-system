@@ -9,6 +9,7 @@ import {
 } from '@/lib/data-protection/platform-reset-snapshot';
 import {
   acquirePlatformResetExecutionClaim,
+  markPlatformResetExecutionClaimPendingReconciliation,
   releasePlatformResetExecutionClaim,
 } from '@/lib/data-protection/platform-reset-claim';
 import { isUuid } from '@/lib/uuid';
@@ -21,6 +22,11 @@ async function authorize(request: NextRequest) {
   const permission = await requirePermission(auth.session, Permissions.RESET_MANAGE);
   if (permission instanceof NextResponse) return { ok: false as const, error: permission };
   return auth;
+}
+
+function platformResetReconciliationPending(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /platform reset execution is pending reconciliation/i.test(message);
 }
 
 export async function GET(request: NextRequest) {
@@ -90,6 +96,7 @@ export async function POST(request: NextRequest) {
         expectedFingerprint,
         backupId,
         confirmationPhrase,
+        executionClaimId,
       });
       await releasePlatformResetExecutionClaim({
         backupId,
@@ -103,7 +110,19 @@ export async function POST(request: NextRequest) {
     }
     return NextResponse.json({ error: 'Action must be backup or execute' }, { status: 400 });
   } catch (error) {
-    if (executionClaimId && executionBackupId) {
+    const reconciliationPending = platformResetReconciliationPending(error);
+    if (reconciliationPending && executionClaimId && executionBackupId) {
+      await markPlatformResetExecutionClaimPendingReconciliation({
+        backupId: executionBackupId,
+        claimId: executionClaimId,
+      }).catch((markError) => {
+        console.error(
+          '[Platform Operational Reset] Could not persist reconciliation-pending claim state:',
+          markError,
+        );
+      });
+    }
+    if (!reconciliationPending && executionClaimId && executionBackupId) {
       await releasePlatformResetExecutionClaim({
         backupId: executionBackupId,
         claimId: executionClaimId,
@@ -112,7 +131,15 @@ export async function POST(request: NextRequest) {
       });
     }
     const message = error instanceof Error ? error.message : String(error);
-    const conflict = /changed|recovery|checksum|type exactly|archive|verified snapshot/i.test(message);
-    return NextResponse.json({ error: message }, { status: conflict ? 409 : 500 });
+    const conflict =
+      reconciliationPending ||
+      /changed|recovery|checksum|type exactly|archive|verified snapshot/i.test(message);
+    return NextResponse.json(
+      {
+        error: message,
+        ...(reconciliationPending ? { code: 'PLATFORM_RESET_RECONCILIATION_PENDING' } : {}),
+      },
+      { status: conflict ? 409 : 500 },
+    );
   }
 }

@@ -12,6 +12,13 @@ const DEFAULT_BACKUP_DELETION_CLAIM_TTL_MINUTES = 15;
 const MIN_BACKUP_DELETION_CLAIM_TTL_MINUTES = 6;
 const PLATFORM_RESET_CLAIM_LOCK = 'govfleet-platform-operational-reset-claim';
 
+// The repository exposes the same Drizzle surface on the default DB facade and
+// transaction executors. Keeping this local avoids coupling claim reconciliation
+// to one concrete driver while still ensuring every recovery check runs in the
+// transaction holding the shared advisory/row locks.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+type ClaimExecutor = any;
+
 function positiveNumber(value: string | undefined, fallback: number) {
   const parsed = Number(value);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
@@ -33,10 +40,7 @@ export const BACKUP_DELETION_CLAIM_TTL_MINUTES = Math.max(
   ),
 );
 
-export function hasLivePlatformResetExecutionClaim(
-  metadata: unknown,
-  now = new Date(),
-) {
+function platformResetClaimMetadata(metadata: unknown) {
   const record = (metadata ?? {}) as Record<string, unknown>;
   const claimId =
     typeof record.platformExecutionClaimId === 'string'
@@ -46,11 +50,124 @@ export function hasLivePlatformResetExecutionClaim(
     typeof record.platformExecutionClaimedAt === 'string'
       ? new Date(record.platformExecutionClaimedAt)
       : null;
-  if (!claimId || !claimedAt || Number.isNaN(claimedAt.getTime())) return false;
+  const pendingReconciliation =
+    record.platformExecutionClaimState === 'pending_reconciliation';
+  return { record, claimId, claimedAt, pendingReconciliation };
+}
+
+export function hasLivePlatformResetExecutionClaim(
+  metadata: unknown,
+  now = new Date(),
+) {
+  const { claimId, claimedAt, pendingReconciliation } = platformResetClaimMetadata(metadata);
+  if (!claimId) return false;
+  if (pendingReconciliation) return true;
+  if (!claimedAt || Number.isNaN(claimedAt.getTime())) return false;
   return (
     claimedAt.getTime() >=
     now.getTime() - PLATFORM_RESET_EXECUTION_CLAIM_TTL_MINUTES * 60 * 1000
   );
+}
+
+function platformResetClaimNeedsSettlement(metadata: unknown) {
+  return Boolean(platformResetClaimMetadata(metadata).claimId);
+}
+
+function committedEvidenceForClaim(metadata: Record<string, unknown>, claimId: string) {
+  return (
+    metadata.platformResetExecutionVersion === 1 &&
+    metadata.platformResetExecutionClaimId === claimId &&
+    metadata.platformResetExecutionState === 'committed'
+  );
+}
+
+/**
+ * Reconcile an existing platform execution claim while the caller owns the
+ * global advisory lock. Fresh active claims stay blocked. Stale or explicitly
+ * reconciliation-pending claims are row-locked so this read waits for any
+ * destructive transaction to settle before deciding whether the lease can be
+ * cleared. TTL expiry is therefore never used as proof that reset work did not
+ * commit.
+ */
+async function reconcilePlatformResetExecutionClaim(
+  tx: ClaimExecutor,
+  backupId: string,
+  metadata: unknown,
+  now = new Date(),
+) {
+  const initial = platformResetClaimMetadata(metadata);
+  if (!initial.claimId) return { blocked: false as const };
+
+  const staleBefore = new Date(
+    now.getTime() - PLATFORM_RESET_EXECUTION_CLAIM_TTL_MINUTES * 60 * 1000,
+  );
+  const initialFresh =
+    initial.claimedAt &&
+    !Number.isNaN(initial.claimedAt.getTime()) &&
+    initial.claimedAt.getTime() >= staleBefore.getTime();
+  if (!initial.pendingReconciliation && initialFresh) {
+    return { blocked: true as const };
+  }
+
+  // Waiting on this row makes the evidence classification happen only after an
+  // in-flight destructive transaction that owns/updates the backup has settled.
+  await tx.execute(sql`SELECT id FROM platform_backups WHERE id = ${backupId} FOR UPDATE`);
+  const [row] = await tx
+    .select({ metadata: platformBackups.metadata })
+    .from(platformBackups)
+    .where(eq(platformBackups.id, backupId))
+    .limit(1);
+  if (!row) return { blocked: false as const };
+
+  const current = platformResetClaimMetadata(row.metadata);
+  if (!current.claimId) return { blocked: false as const };
+  if (current.claimId !== initial.claimId) return { blocked: true as const };
+
+  const currentFresh =
+    current.claimedAt &&
+    !Number.isNaN(current.claimedAt.getTime()) &&
+    current.claimedAt.getTime() >= staleBefore.getTime();
+  if (!current.pendingReconciliation && currentFresh) {
+    return { blocked: true as const };
+  }
+
+  const evidenceClaimId =
+    typeof current.record.platformResetExecutionClaimId === 'string'
+      ? current.record.platformResetExecutionClaimId
+      : null;
+  const evidenceState =
+    typeof current.record.platformResetExecutionState === 'string'
+      ? current.record.platformResetExecutionState
+      : null;
+  if (
+    evidenceClaimId === current.claimId &&
+    evidenceState &&
+    !committedEvidenceForClaim(current.record, current.claimId)
+  ) {
+    // Unknown/non-committed durable evidence for this exact attempt is not safe
+    // to reinterpret as an orphan. Keep the non-expiring pending claim fenced.
+    return { blocked: true as const };
+  }
+
+  const [cleared] = await tx
+    .update(platformBackups)
+    .set({
+      metadata: sql`COALESCE(${platformBackups.metadata}, '{}'::jsonb)
+        - 'platformExecutionClaimId'
+        - 'platformExecutionClaimedAt'
+        - 'platformExecutionClaimedByUserId'
+        - 'platformExecutionClaimState'`,
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(platformBackups.id, backupId),
+        sql`${platformBackups.metadata}->>'platformExecutionClaimId' = ${current.claimId}`,
+      ),
+    )
+    .returning({ id: platformBackups.id });
+
+  return { blocked: !cleared };
 }
 
 export function hasLiveBackupDeletionClaim(metadata: unknown, now = new Date()) {
@@ -70,28 +187,36 @@ export function hasLiveBackupDeletionClaim(metadata: unknown, now = new Date()) 
 
 export async function assertNoActivePlatformResetExecutionClaim(backupId: string) {
   const db = getDb();
-  const [backup] = await db
-    .select({
-      scope: platformBackups.scope,
-      metadata: platformBackups.metadata,
-    })
-    .from(platformBackups)
-    .where(eq(platformBackups.id, backupId))
-    .limit(1);
-  if (
-    backup?.scope === 'platform_operational' &&
-    hasLivePlatformResetExecutionClaim(backup.metadata)
-  ) {
-    throw new Error(
-      'This platform recovery point is locked by an active operational reset and cannot be released yet.',
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${PLATFORM_RESET_CLAIM_LOCK}))`);
+    const [backup] = await tx
+      .select({
+        scope: platformBackups.scope,
+        metadata: platformBackups.metadata,
+      })
+      .from(platformBackups)
+      .where(eq(platformBackups.id, backupId))
+      .limit(1);
+    if (backup?.scope !== 'platform_operational' || !platformResetClaimNeedsSettlement(backup.metadata)) {
+      return;
+    }
+    const reconciliation = await reconcilePlatformResetExecutionClaim(
+      tx,
+      backupId,
+      backup.metadata,
     );
-  }
+    if (reconciliation.blocked) {
+      throw new Error(
+        'This platform recovery point is locked by an active or reconciliation-pending operational reset and cannot be released yet.',
+      );
+    }
+  });
 }
 
 /**
  * Change backup protection while serializing platform unprotect with execution
  * claim acquisition. The shared advisory lock makes the existing recovery-point
- * release policy, live-claim check and protection update one atomic decision.
+ * release policy, claim reconciliation and protection update one atomic decision.
  */
 export async function setBackupProtectionWithPlatformResetFence(
   backupId: string,
@@ -140,11 +265,18 @@ export async function setBackupProtectionWithPlatformResetFence(
 
       if (
         backup.scope === 'platform_operational' &&
-        hasLivePlatformResetExecutionClaim(backup.metadata)
+        platformResetClaimNeedsSettlement(backup.metadata)
       ) {
-        throw new Error(
-          'This platform recovery point is locked by an active operational reset and cannot be released yet.',
+        const reconciliation = await reconcilePlatformResetExecutionClaim(
+          tx,
+          backup.id,
+          backup.metadata,
         );
+        if (reconciliation.blocked) {
+          throw new Error(
+            'This platform recovery point is locked by an active or reconciliation-pending operational reset and cannot be released yet.',
+          );
+        }
       }
     }
 
@@ -205,11 +337,19 @@ export async function deleteBackupWithPlatformResetFence(backupId: string) {
 
       if (
         current.scope === 'platform_operational' &&
-        hasLivePlatformResetExecutionClaim(current.metadata)
+        platformResetClaimNeedsSettlement(current.metadata)
       ) {
-        throw new Error(
-          'This platform recovery point is locked by an active operational reset and cannot be released yet.',
+        const reconciliation = await reconcilePlatformResetExecutionClaim(
+          tx,
+          current.id,
+          current.metadata,
+          now,
         );
+        if (reconciliation.blocked) {
+          throw new Error(
+            'This platform recovery point is locked by an active or reconciliation-pending operational reset and cannot be released yet.',
+          );
+        }
       }
     }
 
@@ -346,28 +486,31 @@ export async function acquirePlatformResetExecutionClaim(input: {
     }
 
     const now = new Date();
-    const staleBefore = new Date(
-      now.getTime() - PLATFORM_RESET_EXECUTION_CLAIM_TTL_MINUTES * 60 * 1000,
-    );
-    const [active] = await tx
-      .select({ id: platformBackups.id })
+    const existingClaims = await tx
+      .select({ id: platformBackups.id, metadata: platformBackups.metadata })
       .from(platformBackups)
       .where(
         and(
           eq(platformBackups.scope, 'platform_operational'),
           sql`${platformBackups.metadata}->>'platformExecutionClaimId' IS NOT NULL`,
-          sql`NULLIF(${platformBackups.metadata}->>'platformExecutionClaimedAt', '')::timestamptz >= ${staleBefore}`,
         ),
-      )
-      .limit(1);
-    if (active) {
-      return {
-        ok: false as const,
-        status: 409 as const,
-        code: 'claimed' as const,
-        message:
-          'Another platform operational reset is already in progress. Refresh the platform reset status before trying again.',
-      };
+      );
+    for (const existing of existingClaims) {
+      const reconciliation = await reconcilePlatformResetExecutionClaim(
+        tx,
+        existing.id,
+        existing.metadata,
+        now,
+      );
+      if (reconciliation.blocked) {
+        return {
+          ok: false as const,
+          status: 409 as const,
+          code: 'claimed' as const,
+          message:
+            'Another platform operational reset is active or pending reconciliation. Refresh the platform reset status before trying again.',
+        };
+      }
     }
 
     const claimId = randomUUID();
@@ -377,7 +520,8 @@ export async function acquirePlatformResetExecutionClaim(input: {
         metadata: sql`COALESCE(${platformBackups.metadata}, '{}'::jsonb) || jsonb_build_object(
           'platformExecutionClaimId', ${claimId},
           'platformExecutionClaimedAt', ${now.toISOString()},
-          'platformExecutionClaimedByUserId', ${input.actorUserId}
+          'platformExecutionClaimedByUserId', ${input.actorUserId},
+          'platformExecutionClaimState', 'active'
         )`,
         updatedAt: now,
       })
@@ -390,7 +534,6 @@ export async function acquirePlatformResetExecutionClaim(input: {
           or(
             sql`${platformBackups.metadata}->>'platformExecutionClaimId' IS NULL`,
             sql`${platformBackups.metadata}->>'platformExecutionClaimId' = ''`,
-            sql`NULLIF(${platformBackups.metadata}->>'platformExecutionClaimedAt', '')::timestamptz < ${staleBefore}`,
           )!,
         ),
       )
@@ -410,7 +553,7 @@ export async function acquirePlatformResetExecutionClaim(input: {
   });
 }
 
-export async function releasePlatformResetExecutionClaim(input: {
+export async function markPlatformResetExecutionClaimPendingReconciliation(input: {
   backupId: string;
   claimId: string;
 }) {
@@ -418,10 +561,10 @@ export async function releasePlatformResetExecutionClaim(input: {
   await db
     .update(platformBackups)
     .set({
-      metadata: sql`COALESCE(${platformBackups.metadata}, '{}'::jsonb)
-        - 'platformExecutionClaimId'
-        - 'platformExecutionClaimedAt'
-        - 'platformExecutionClaimedByUserId'`,
+      metadata: sql`COALESCE(${platformBackups.metadata}, '{}'::jsonb) || jsonb_build_object(
+        'platformExecutionClaimState', 'pending_reconciliation',
+        'platformExecutionReconciliationPendingAt', ${new Date().toISOString()}
+      )`,
       updatedAt: new Date(),
     })
     .where(
@@ -430,4 +573,31 @@ export async function releasePlatformResetExecutionClaim(input: {
         sql`${platformBackups.metadata}->>'platformExecutionClaimId' = ${input.claimId}`,
       ),
     );
+}
+
+export async function releasePlatformResetExecutionClaim(input: {
+  backupId: string;
+  claimId: string;
+}) {
+  const db = getDb();
+  await db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${PLATFORM_RESET_CLAIM_LOCK}))`);
+    await tx
+      .update(platformBackups)
+      .set({
+        metadata: sql`COALESCE(${platformBackups.metadata}, '{}'::jsonb)
+          - 'platformExecutionClaimId'
+          - 'platformExecutionClaimedAt'
+          - 'platformExecutionClaimedByUserId'
+          - 'platformExecutionClaimState'
+          - 'platformExecutionReconciliationPendingAt'`,
+        updatedAt: new Date(),
+      })
+      .where(
+        and(
+          eq(platformBackups.id, input.backupId),
+          sql`${platformBackups.metadata}->>'platformExecutionClaimId' = ${input.claimId}`,
+        ),
+      );
+  });
 }

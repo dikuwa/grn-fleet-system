@@ -30,21 +30,25 @@ describe('platform reset recovery-point release protection', () => {
     expect(acquireLock).toBeGreaterThan(acquire);
   });
 
-  it('preserves the existing recovery-point policy and live claim before unprotecting', () => {
+  it('preserves the existing recovery-point policy and reconciles reset claims before unprotecting', () => {
     const protection = claim.indexOf('export async function setBackupProtectionWithPlatformResetFence');
     const deletingGuard = claim.indexOf("if (backup.status === 'deleting')", protection);
     const policy = claim.indexOf('recoveryPointReleaseBlockReason({', deletingGuard);
     const policyFailure = claim.indexOf('if (policyBlockReason) throw new Error(policyBlockReason)', policy);
-    const liveClaim = claim.indexOf('hasLivePlatformResetExecutionClaim(backup.metadata)', policyFailure);
-    const update = claim.indexOf('.update(platformBackups)', liveClaim);
+    const claimPresent = claim.indexOf('platformResetClaimNeedsSettlement(backup.metadata)', policyFailure);
+    const reconcile = claim.indexOf('reconcilePlatformResetExecutionClaim(', claimPresent);
+    const blocked = claim.indexOf('if (reconciliation.blocked)', reconcile);
+    const update = claim.indexOf('.update(platformBackups)', blocked);
     const setProtection = claim.indexOf('.set({ isProtected, updatedAt: new Date() })', update);
 
     expect(protection).toBeGreaterThan(-1);
     expect(deletingGuard).toBeGreaterThan(protection);
     expect(policy).toBeGreaterThan(deletingGuard);
     expect(policyFailure).toBeGreaterThan(policy);
-    expect(liveClaim).toBeGreaterThan(policyFailure);
-    expect(update).toBeGreaterThan(liveClaim);
+    expect(claimPresent).toBeGreaterThan(policyFailure);
+    expect(reconcile).toBeGreaterThan(claimPresent);
+    expect(blocked).toBeGreaterThan(reconcile);
+    expect(update).toBeGreaterThan(blocked);
     expect(setProtection).toBeGreaterThan(update);
   });
 
@@ -59,12 +63,14 @@ describe('platform reset recovery-point release protection', () => {
     expect(resetStatus).toBeGreaterThan(policy);
   });
 
-  it('reserves deletion before durable storage removal and fails closed on storage errors', () => {
+  it('reconciles reset claims before reserving deletion, then fails closed on storage errors', () => {
     const deletion = claim.indexOf('export async function deleteBackupWithPlatformResetFence');
     const lock = claim.indexOf('pg_advisory_xact_lock(hashtext(${PLATFORM_RESET_CLAIM_LOCK}))', deletion);
     const policy = claim.indexOf("action: 'delete'", lock);
-    const liveClaim = claim.indexOf('hasLivePlatformResetExecutionClaim(current.metadata)', policy);
-    const reserve = claim.indexOf("status: 'deleting'", liveClaim);
+    const claimPresent = claim.indexOf('platformResetClaimNeedsSettlement(current.metadata)', policy);
+    const reconcile = claim.indexOf('reconcilePlatformResetExecutionClaim(', claimPresent);
+    const blocked = claim.indexOf('if (reconciliation.blocked)', reconcile);
+    const reserve = claim.indexOf("status: 'deleting'", blocked);
     const leaseId = claim.indexOf("'backupDeletionClaimId'", reserve);
     const storageDelete = claim.indexOf('await deleteFile(backup.storageKey)', leaseId);
     const failedClosed = claim.indexOf("status: 'failed'", storageDelete);
@@ -75,8 +81,10 @@ describe('platform reset recovery-point release protection', () => {
     expect(deletion).toBeGreaterThan(-1);
     expect(lock).toBeGreaterThan(deletion);
     expect(policy).toBeGreaterThan(lock);
-    expect(liveClaim).toBeGreaterThan(policy);
-    expect(reserve).toBeGreaterThan(liveClaim);
+    expect(claimPresent).toBeGreaterThan(policy);
+    expect(reconcile).toBeGreaterThan(claimPresent);
+    expect(blocked).toBeGreaterThan(reconcile);
+    expect(reserve).toBeGreaterThan(blocked);
     expect(leaseId).toBeGreaterThan(reserve);
     expect(storageDelete).toBeGreaterThan(leaseId);
     expect(failedClosed).toBeGreaterThan(storageDelete);
@@ -116,7 +124,7 @@ describe('platform reset recovery-point release protection', () => {
     expect(updateProtected).toBeGreaterThan(update);
   });
 
-  it('keeps live global claims visible regardless of backup status', () => {
+  it('keeps global claims visible regardless of backup status so they can be reconciled', () => {
     const active = claim.indexOf("platformExecutionClaimId' IS NOT NULL");
     const activeWindow = claim.slice(Math.max(0, active - 500), active + 500);
 

@@ -21,10 +21,14 @@ function firstExecuteRow(result: unknown): Record<string, unknown> | undefined {
  * Restore a platform-operational recovery point as one database transaction.
  *
  * The durable archive is downloaded and verified before locks are acquired.
- * Inside the transaction we serialize platform restores, lock every table that
+ * Inside the transaction we first take the same global reset-claim advisory
+ * lock used by execution claim acquisition. That keeps a reset retry from
+ * classifying old committed evidence while restore is making that evidence
+ * obsolete. We then serialize platform restores, lock every table that
  * participates in the reset/restore family, revalidate the backup row and the
- * current disposable-data target, restore every table, and mark the recovery
- * point restored. A failure at any point rolls back the whole restore.
+ * current disposable-data target, restore every table, invalidate any prior
+ * reset-execution evidence for this recovery point, and mark it restored. A
+ * failure at any point rolls back the whole restore.
  */
 export async function restorePlatformOperationalBackupAtomically(input: {
   backupId: string;
@@ -40,8 +44,30 @@ export async function restorePlatformOperationalBackupAtomically(input: {
   const db = getDb();
   const restoredAt = new Date();
   const restored = await db.transaction(async (tx) => {
-    // Serialize platform restore attempts first, then prevent ordinary writers
-    // from creating a partial/phantom target while the archive is applied.
+    // Claim acquisition, release and restore all serialize on this lock. Holding
+    // it for the restore transaction makes "no active claim" and committed
+    // evidence invalidation one atomic lifecycle decision.
+    await tx.execute(
+      sql`SELECT pg_advisory_xact_lock(hashtext('govfleet-platform-operational-reset-claim'))`,
+    );
+    const [resetClaim] = await tx
+      .select({ id: platformBackups.id })
+      .from(platformBackups)
+      .where(
+        and(
+          eq(platformBackups.scope, 'platform_operational'),
+          sql`${platformBackups.metadata}->>'platformExecutionClaimId' IS NOT NULL`,
+        ),
+      )
+      .limit(1);
+    if (resetClaim) {
+      throw new Error(
+        'Restore blocked while a platform operational reset is active or pending reconciliation. Refresh the reset status and retry after it settles.',
+      );
+    }
+
+    // Serialize platform restore attempts, then prevent ordinary writers from
+    // creating a partial/phantom target while the archive is applied.
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext('govfleet-platform-operational-restore'))`);
     await tx.execute(
       sql.raw(
@@ -133,6 +159,14 @@ export async function restorePlatformOperationalBackupAtomically(input: {
       .set({
         restoredAt,
         restoredByUserId: input.actorUserId,
+        metadata: sql`COALESCE(${platformBackups.metadata}, '{}'::jsonb)
+          - 'platformResetExecutionVersion'
+          - 'platformResetExecutionClaimId'
+          - 'platformResetExecutionState'
+          - 'platformResetExecutionCommittedAt'
+          - 'platformResetExecutionPlanFingerprint'
+          - 'platformResetExecutionSnapshotFingerprint'
+          - 'platformResetExecutionCounts'`,
         updatedAt: restoredAt,
       })
       .where(

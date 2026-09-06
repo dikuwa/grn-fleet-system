@@ -28,6 +28,16 @@ type SnapshotTable = PlatformBackupPayload['tables'][number];
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type SnapshotExecutor = any;
 
+type PlatformResetCounts = {
+  enquiries: number;
+  demoRequests: number;
+  notifications: number;
+  notificationDeliveries: number;
+  notificationReads: number;
+  notificationDismissals: number;
+  total: number;
+};
+
 function canonicalize(value: unknown): unknown {
   if (typeof value === 'bigint') return value.toString();
   if (value instanceof Date) return value.toISOString();
@@ -54,9 +64,7 @@ export function platformOperationalSnapshotFingerprint(tables: SnapshotTable[]) 
   return createHash('sha256').update(JSON.stringify(normalized)).digest('hex');
 }
 
-export async function capturePlatformOperationalSnapshot(
-  executor: SnapshotExecutor = getDb(),
-) {
+export async function capturePlatformOperationalSnapshot(executor: SnapshotExecutor = getDb()) {
   const [enquiryRows, demoIdRows] = await Promise.all([
     executor.select().from(cmsEnquiries),
     executor
@@ -67,10 +75,7 @@ export async function capturePlatformOperationalSnapshot(
   ]);
   const demoRequestIds = demoIdRows.map((row: { id: string }) => row.id);
   const demoRequestRows = demoRequestIds.length
-    ? await executor
-        .select()
-        .from(demoRequests)
-        .where(inArray(demoRequests.id, demoRequestIds))
+    ? await executor.select().from(demoRequests).where(inArray(demoRequests.id, demoRequestIds))
     : [];
   const enquiryIds = enquiryRows.map((row: typeof cmsEnquiries.$inferSelect) => row.id);
   const entityIds = [...enquiryIds, ...demoRequestIds];
@@ -88,9 +93,7 @@ export async function capturePlatformOperationalSnapshot(
   const notificationRows = await executor
     .select()
     .from(notifications)
-    .where(
-      and(eq(notifications.workspace, 'platform_admin'), or(...disposableNotificationConditions)),
-    );
+    .where(and(eq(notifications.workspace, 'platform_admin'), or(...disposableNotificationConditions)));
   const notificationIds = notificationRows.map((row: typeof notifications.$inferSelect) => row.id);
 
   const [deliveryRows, readRows, dismissalRows] = notificationIds.length
@@ -111,32 +114,20 @@ export async function capturePlatformOperationalSnapshot(
     : [[], [], []];
 
   const tables: SnapshotTable[] = [
-    {
-      table: 'cms_enquiries',
-      rows: enquiryRows as unknown as Array<Record<string, unknown>>,
-    },
-    {
-      table: 'demo_requests',
-      rows: demoRequestRows as unknown as Array<Record<string, unknown>>,
-    },
-    {
-      table: 'notifications',
-      rows: notificationRows as unknown as Array<Record<string, unknown>>,
-    },
+    { table: 'cms_enquiries', rows: enquiryRows as unknown as Array<Record<string, unknown>> },
+    { table: 'demo_requests', rows: demoRequestRows as unknown as Array<Record<string, unknown>> },
+    { table: 'notifications', rows: notificationRows as unknown as Array<Record<string, unknown>> },
     {
       table: 'notification_deliveries',
       rows: deliveryRows as unknown as Array<Record<string, unknown>>,
     },
-    {
-      table: 'notification_reads',
-      rows: readRows as unknown as Array<Record<string, unknown>>,
-    },
+    { table: 'notification_reads', rows: readRows as unknown as Array<Record<string, unknown>> },
     {
       table: 'notification_dismissals',
       rows: dismissalRows as unknown as Array<Record<string, unknown>>,
     },
   ];
-  const counts = {
+  const counts: PlatformResetCounts = {
     enquiries: enquiryRows.length,
     demoRequests: demoRequestRows.length,
     notifications: notificationRows.length,
@@ -155,11 +146,7 @@ export async function capturePlatformOperationalSnapshot(
     tables,
     counts,
     ids: { enquiryIds, demoRequestIds, notificationIds },
-    planFingerprint: platformOperationalResetFingerprint({
-      enquiryIds,
-      demoRequestIds,
-      notificationIds,
-    }),
+    planFingerprint: platformOperationalResetFingerprint({ enquiryIds, demoRequestIds, notificationIds }),
     snapshotFingerprint: platformOperationalSnapshotFingerprint(tables),
   };
 }
@@ -185,11 +172,7 @@ export async function createVerifiedPlatformOperationalBackup(input: {
     );
 
     const [currentBackup] = await tx
-      .select({
-        status: platformBackups.status,
-        storageKey: platformBackups.storageKey,
-        checksum: platformBackups.checksum,
-      })
+      .select({ status: platformBackups.status, storageKey: platformBackups.storageKey, checksum: platformBackups.checksum })
       .from(platformBackups)
       .where(eq(platformBackups.id, backup.id))
       .limit(1);
@@ -199,10 +182,7 @@ export async function createVerifiedPlatformOperationalBackup(input: {
       !currentBackup.storageKey ||
       currentBackup.checksum !== backupChecksum
     ) {
-      return {
-        ok: false as const,
-        reason: 'The platform recovery point changed before snapshot verification could finish.',
-      };
+      return { ok: false as const, reason: 'The platform recovery point changed before snapshot verification could finish.' };
     }
 
     const current = await capturePlatformOperationalSnapshot(tx);
@@ -214,12 +194,7 @@ export async function createVerifiedPlatformOperationalBackup(input: {
         'Platform operational data changed while the recovery point was being created. Refresh the impact preview and create a fresh recovery point.';
       const [failed] = await tx
         .update(platformBackups)
-        .set({
-          status: 'failed',
-          isProtected: false,
-          failureReason: reason,
-          updatedAt: new Date(),
-        })
+        .set({ status: 'failed', isProtected: false, failureReason: reason, updatedAt: new Date() })
         .where(
           and(
             eq(platformBackups.id, backup.id),
@@ -278,15 +253,153 @@ export async function createVerifiedPlatformOperationalBackup(input: {
   return verification.backup;
 }
 
+function countsFromExecutionMetadata(metadata: Record<string, unknown>): PlatformResetCounts | null {
+  const value = metadata.platformResetExecutionCounts;
+  if (!value || typeof value !== 'object') return null;
+  const record = value as Record<string, unknown>;
+  const keys = [
+    'enquiries',
+    'demoRequests',
+    'notifications',
+    'notificationDeliveries',
+    'notificationReads',
+    'notificationDismissals',
+    'total',
+  ] as const;
+  if (keys.some((key) => typeof record[key] !== 'number')) return null;
+  return Object.fromEntries(keys.map((key) => [key, Number(record[key])])) as PlatformResetCounts;
+}
+
+async function readCommittedPlatformResetEvidence(input: {
+  backupId: string;
+  expectedFingerprint: string;
+}) {
+  const db = getDb();
+  const [backup] = await db
+    .select({
+      id: platformBackups.id,
+      scope: platformBackups.scope,
+      status: platformBackups.status,
+      isProtected: platformBackups.isProtected,
+      metadata: platformBackups.metadata,
+    })
+    .from(platformBackups)
+    .where(eq(platformBackups.id, input.backupId))
+    .limit(1);
+  if (!backup) return null;
+
+  const metadata = (backup.metadata ?? {}) as Record<string, unknown>;
+  if (metadata.platformResetExecutionState !== 'committed') return null;
+
+  const counts = countsFromExecutionMetadata(metadata);
+  const planFingerprint =
+    typeof metadata.platformResetExecutionPlanFingerprint === 'string'
+      ? metadata.platformResetExecutionPlanFingerprint
+      : null;
+  const executionSnapshotFingerprint =
+    typeof metadata.platformResetExecutionSnapshotFingerprint === 'string'
+      ? metadata.platformResetExecutionSnapshotFingerprint
+      : null;
+  const verifiedSnapshotFingerprint =
+    typeof metadata.platformSnapshotFingerprint === 'string'
+      ? metadata.platformSnapshotFingerprint
+      : null;
+
+  const valid =
+    backup.scope === 'platform_operational' &&
+    backup.status === 'ready' &&
+    backup.isProtected === true &&
+    metadata.platformSnapshotVersion === 2 &&
+    metadata.platformResetExecutionVersion === 1 &&
+    counts &&
+    planFingerprint === input.expectedFingerprint &&
+    Boolean(executionSnapshotFingerprint) &&
+    executionSnapshotFingerprint === verifiedSnapshotFingerprint;
+  if (!valid) {
+    throw new Error(
+      'Committed platform reset evidence is incomplete or does not match the requested verified reset plan. Manual reconciliation is required before retrying.',
+    );
+  }
+
+  return {
+    backupId: backup.id,
+    counts,
+    planFingerprint,
+    snapshotFingerprint: executionSnapshotFingerprint,
+  };
+}
+
+async function resolveCommittedPlatformResetAfterError(input: {
+  backupId: string;
+  executionClaimId: string;
+}) {
+  const db = getDb();
+  try {
+    return await db.transaction(async (tx) => {
+      // Row locking waits for any in-flight transaction touching this backup to
+      // settle before evidence is classified. This avoids reading an old MVCC
+      // version while the destructive transaction is still committing.
+      await tx.execute(sql`SELECT id FROM platform_backups WHERE id = ${input.backupId} FOR UPDATE`);
+      const [row] = await tx
+        .select({ metadata: platformBackups.metadata })
+        .from(platformBackups)
+        .where(eq(platformBackups.id, input.backupId))
+        .limit(1);
+      const metadata = (row?.metadata ?? {}) as Record<string, unknown>;
+      if (
+        metadata.platformResetExecutionVersion === 1 &&
+        metadata.platformResetExecutionClaimId === input.executionClaimId &&
+        metadata.platformResetExecutionState === 'committed'
+      ) {
+        const counts = countsFromExecutionMetadata(metadata);
+        const planFingerprint =
+          typeof metadata.platformResetExecutionPlanFingerprint === 'string'
+            ? metadata.platformResetExecutionPlanFingerprint
+            : null;
+        const snapshotFingerprint =
+          typeof metadata.platformResetExecutionSnapshotFingerprint === 'string'
+            ? metadata.platformResetExecutionSnapshotFingerprint
+            : null;
+        if (counts && planFingerprint && snapshotFingerprint) {
+          return { committed: true as const, counts, planFingerprint, snapshotFingerprint };
+        }
+      }
+      return { committed: false as const };
+    });
+  } catch (error) {
+    throw new Error(
+      `Platform reset execution is pending reconciliation because durable commit evidence could not be verified: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
 export async function executeVerifiedPlatformOperationalReset(input: {
   actorUserId: string;
   actorTenantId: string;
   expectedFingerprint: string;
   backupId: string;
   confirmationPhrase: string;
+  executionClaimId: string;
 }) {
   if (!matchesPlatformExecutionResetPhrase(input.confirmationPhrase)) {
     throw new Error('Type exactly: RESET PLATFORM');
+  }
+
+  // Resolve a previously committed attempt from database evidence before any
+  // archive/storage I/O. This keeps a lost-response retry idempotent even while
+  // object storage is unavailable, while malformed committed evidence fails
+  // closed rather than falling through into another destructive execution.
+  const committedEvidence = await readCommittedPlatformResetEvidence({
+    backupId: input.backupId,
+    expectedFingerprint: input.expectedFingerprint,
+  });
+  if (committedEvidence) {
+    return {
+      result: 'completed' as const,
+      removed: committedEvidence.counts,
+      backupId: committedEvidence.backupId,
+      preserved: PLATFORM_OPERATIONAL_PRESERVED,
+    };
   }
 
   const { backup, payload } = await readPlatformOperationalBackup(input.backupId);
@@ -301,94 +414,179 @@ export async function executeVerifiedPlatformOperationalReset(input: {
       ? backupMetadata.platformSnapshotFingerprint
       : null;
   if (backupMetadata.platformSnapshotVersion !== 2 || !storedSnapshotFingerprint) {
-    throw new Error(
-      'Create a fresh verified platform recovery point before executing this reset.',
-    );
+    throw new Error('Create a fresh verified platform recovery point before executing this reset.');
   }
+
+  // Defensive archive-backed fallback for callers that race with a durable
+  // committed marker appearing after the database-first preflight read.
+  if (
+    backupMetadata.platformResetExecutionVersion === 1 &&
+    backupMetadata.platformResetExecutionState === 'committed'
+  ) {
+    const counts = countsFromExecutionMetadata(backupMetadata);
+    if (counts) {
+      return {
+        result: 'completed' as const,
+        removed: counts,
+        backupId: backup.id,
+        preserved: PLATFORM_OPERATIONAL_PRESERVED,
+      };
+    }
+  }
+
   const archiveSnapshotFingerprint = platformOperationalSnapshotFingerprint(payload.tables);
   if (archiveSnapshotFingerprint !== storedSnapshotFingerprint) {
     throw new Error('Platform recovery archive does not match its verified snapshot fingerprint');
   }
 
   const db = getDb();
-  const current = await db.transaction(async (tx) => {
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtext('govfleet-platform-operational-reset-snapshot'))`,
-    );
-    await tx.execute(
-      sql.raw(
-        'LOCK TABLE platform_backups, cms_enquiries, demo_requests, demo_sandboxes, notifications, notification_deliveries, notification_reads, notification_dismissals IN SHARE ROW EXCLUSIVE MODE',
-      ),
-    );
-
-    const [currentBackup] = await tx
-      .select({
-        status: platformBackups.status,
-        storageKey: platformBackups.storageKey,
-        checksum: platformBackups.checksum,
-        metadata: platformBackups.metadata,
-      })
-      .from(platformBackups)
-      .where(eq(platformBackups.id, input.backupId))
-      .limit(1);
-    const currentMetadata = (currentBackup?.metadata ?? {}) as Record<string, unknown>;
-    if (
-      !currentBackup ||
-      currentBackup.status !== 'ready' ||
-      !currentBackup.storageKey ||
-      currentBackup.checksum !== backupChecksum ||
-      currentMetadata.platformSnapshotVersion !== 2 ||
-      currentMetadata.platformSnapshotFingerprint !== storedSnapshotFingerprint
-    ) {
-      throw new Error('The verified platform recovery point changed before execution could start.');
-    }
-
-    const snapshot = await capturePlatformOperationalSnapshot(tx);
-    if (
-      snapshot.planFingerprint !== input.expectedFingerprint ||
-      snapshot.snapshotFingerprint !== storedSnapshotFingerprint
-    ) {
-      throw new Error(
-        'Platform operational data changed after the recovery point was created. Refresh the impact preview and create a fresh recovery point.',
+  let current:
+    | {
+        counts: PlatformResetCounts;
+        planFingerprint: string;
+        snapshotFingerprint: string;
+      }
+    | undefined;
+  try {
+    current = await db.transaction(async (tx) => {
+      await tx.execute(
+        sql`SELECT pg_advisory_xact_lock(hashtext('govfleet-platform-operational-reset-snapshot'))`,
       );
-    }
+      await tx.execute(
+        sql.raw(
+          'LOCK TABLE platform_backups, cms_enquiries, demo_requests, demo_sandboxes, notifications, notification_deliveries, notification_reads, notification_dismissals IN SHARE ROW EXCLUSIVE MODE',
+        ),
+      );
 
-    if (snapshot.ids.notificationIds.length) {
-      await tx
-        .delete(notificationDeliveries)
-        .where(inArray(notificationDeliveries.notificationId, snapshot.ids.notificationIds));
-      await tx
-        .delete(notificationReads)
-        .where(inArray(notificationReads.notificationId, snapshot.ids.notificationIds));
-      await tx
-        .delete(notificationDismissals)
-        .where(inArray(notificationDismissals.notificationId, snapshot.ids.notificationIds));
-      await tx.delete(notifications).where(inArray(notifications.id, snapshot.ids.notificationIds));
-    }
-    if (snapshot.ids.demoRequestIds.length) {
-      await tx.delete(demoRequests).where(inArray(demoRequests.id, snapshot.ids.demoRequestIds));
-    }
-    if (snapshot.ids.enquiryIds.length) {
-      await tx.delete(cmsEnquiries).where(inArray(cmsEnquiries.id, snapshot.ids.enquiryIds));
-    }
-    return snapshot;
-  });
+      const [currentBackup] = await tx
+        .select({
+          status: platformBackups.status,
+          storageKey: platformBackups.storageKey,
+          checksum: platformBackups.checksum,
+          metadata: platformBackups.metadata,
+        })
+        .from(platformBackups)
+        .where(eq(platformBackups.id, input.backupId))
+        .limit(1);
+      const currentMetadata = (currentBackup?.metadata ?? {}) as Record<string, unknown>;
+      if (
+        !currentBackup ||
+        currentBackup.status !== 'ready' ||
+        !currentBackup.storageKey ||
+        currentBackup.checksum !== backupChecksum ||
+        currentMetadata.platformSnapshotVersion !== 2 ||
+        currentMetadata.platformSnapshotFingerprint !== storedSnapshotFingerprint ||
+        currentMetadata.platformExecutionClaimId !== input.executionClaimId
+      ) {
+        throw new Error('The verified platform recovery point or execution claim changed before execution could start.');
+      }
 
-  await recordAuditEvent({
-    tenantId: input.actorTenantId,
-    actorUserId: input.actorUserId,
-    action: 'platform_operational_reset.executed',
-    entityType: 'platform_backup',
-    entityId: backup.id,
-    summary: `Platform operational reset completed; ${current.counts.total} records removed; recovery point ${backup.id} retained.`,
-    after: {
-      counts: current.counts,
-      fingerprint: current.planFingerprint,
-      snapshotFingerprint: current.snapshotFingerprint,
-      backupId: backup.id,
-      preserved: PLATFORM_OPERATIONAL_PRESERVED,
-    },
-  });
+      const snapshot = await capturePlatformOperationalSnapshot(tx);
+      if (
+        snapshot.planFingerprint !== input.expectedFingerprint ||
+        snapshot.snapshotFingerprint !== storedSnapshotFingerprint
+      ) {
+        throw new Error(
+          'Platform operational data changed after the recovery point was created. Refresh the impact preview and create a fresh recovery point.',
+        );
+      }
+
+      if (snapshot.ids.notificationIds.length) {
+        await tx
+          .delete(notificationDeliveries)
+          .where(inArray(notificationDeliveries.notificationId, snapshot.ids.notificationIds));
+        await tx
+          .delete(notificationReads)
+          .where(inArray(notificationReads.notificationId, snapshot.ids.notificationIds));
+        await tx
+          .delete(notificationDismissals)
+          .where(inArray(notificationDismissals.notificationId, snapshot.ids.notificationIds));
+        await tx.delete(notifications).where(inArray(notifications.id, snapshot.ids.notificationIds));
+      }
+      if (snapshot.ids.demoRequestIds.length) {
+        await tx.delete(demoRequests).where(inArray(demoRequests.id, snapshot.ids.demoRequestIds));
+      }
+      if (snapshot.ids.enquiryIds.length) {
+        await tx.delete(cmsEnquiries).where(inArray(cmsEnquiries.id, snapshot.ids.enquiryIds));
+      }
+
+      const committedAt = new Date();
+      const [marked] = await tx
+        .update(platformBackups)
+        .set({
+          metadata: sql`COALESCE(${platformBackups.metadata}, '{}'::jsonb) || jsonb_build_object(
+            'platformResetExecutionVersion', 1,
+            'platformResetExecutionClaimId', ${input.executionClaimId},
+            'platformResetExecutionState', 'committed',
+            'platformResetExecutionCommittedAt', ${committedAt.toISOString()},
+            'platformResetExecutionPlanFingerprint', ${snapshot.planFingerprint},
+            'platformResetExecutionSnapshotFingerprint', ${snapshot.snapshotFingerprint},
+            'platformResetExecutionCounts', jsonb_build_object(
+              'enquiries', ${snapshot.counts.enquiries},
+              'demoRequests', ${snapshot.counts.demoRequests},
+              'notifications', ${snapshot.counts.notifications},
+              'notificationDeliveries', ${snapshot.counts.notificationDeliveries},
+              'notificationReads', ${snapshot.counts.notificationReads},
+              'notificationDismissals', ${snapshot.counts.notificationDismissals},
+              'total', ${snapshot.counts.total}
+            )
+          )`,
+          updatedAt: committedAt,
+        })
+        .where(
+          and(
+            eq(platformBackups.id, input.backupId),
+            eq(platformBackups.status, 'ready'),
+            eq(platformBackups.checksum, backupChecksum),
+            sql`${platformBackups.metadata}->>'platformExecutionClaimId' = ${input.executionClaimId}`,
+          ),
+        )
+        .returning({ id: platformBackups.id });
+      if (!marked) {
+        throw new Error('Platform reset execution lost its recovery-point claim before commit evidence could be written.');
+      }
+
+      await recordAuditEvent(
+        {
+          tenantId: input.actorTenantId,
+          actorUserId: input.actorUserId,
+          action: 'platform_operational_reset.executed',
+          entityType: 'platform_backup',
+          entityId: backup.id,
+          summary: `Platform operational reset completed; ${snapshot.counts.total} records removed; recovery point ${backup.id} retained.`,
+          after: {
+            counts: snapshot.counts,
+            fingerprint: snapshot.planFingerprint,
+            snapshotFingerprint: snapshot.snapshotFingerprint,
+            backupId: backup.id,
+            executionClaimId: input.executionClaimId,
+            preserved: PLATFORM_OPERATIONAL_PRESERVED,
+          },
+        },
+        tx,
+      );
+
+      return {
+        counts: snapshot.counts,
+        planFingerprint: snapshot.planFingerprint,
+        snapshotFingerprint: snapshot.snapshotFingerprint,
+      };
+    });
+  } catch (error) {
+    const resolved = await resolveCommittedPlatformResetAfterError({
+      backupId: input.backupId,
+      executionClaimId: input.executionClaimId,
+    });
+    if (resolved.committed) {
+      current = {
+        counts: resolved.counts,
+        planFingerprint: resolved.planFingerprint,
+        snapshotFingerprint: resolved.snapshotFingerprint,
+      };
+    } else {
+      throw error;
+    }
+  }
 
   return {
     result: 'completed' as const,
