@@ -1,17 +1,18 @@
 import { pgTable, uuid, text, timestamp, boolean, jsonb, bigint } from 'drizzle-orm/pg-core';
-import { tenants } from './tenants';
 
 /**
- * Immutable audit events with hash chain
+ * Immutable audit events with hash chain.
+ *
+ * Audit rows deliberately retain the historical tenant UUID without a foreign
+ * key to tenants. Permanently deleting a tenant must not erase or null its
+ * audit trail; the UUID remains the stable grouping key for retained history.
  *
  * The application database role may INSERT but not UPDATE or DELETE audit events.
  * Platform maintenance requires a separate restricted role and documented incident procedure.
  */
 export const auditEvents = pgTable('audit_events', {
   id: uuid('id').primaryKey().defaultRandom(),
-  tenantId: uuid('tenant_id')
-    .notNull()
-    .references(() => tenants.id, { onDelete: 'cascade' }),
+  tenantId: uuid('tenant_id').notNull(),
   tenantSequence: bigint('tenant_sequence', { mode: 'number' }).notNull(),
   eventType: text('event_type').notNull(),
   actorUserId: text('actor_user_id').notNull(),
