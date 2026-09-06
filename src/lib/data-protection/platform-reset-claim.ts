@@ -5,6 +5,7 @@ import { platformBackups } from '@/db/schema';
 
 const DEFAULT_PLATFORM_RESET_CLAIM_TTL_MINUTES = 10;
 const MIN_PLATFORM_RESET_CLAIM_TTL_MINUTES = 6;
+const PLATFORM_RESET_CLAIM_LOCK = 'govfleet-platform-operational-reset-claim';
 
 function positiveNumber(value: string | undefined, fallback: number) {
   const parsed = Number(value);
@@ -59,6 +60,50 @@ export async function assertNoActivePlatformResetExecutionClaim(backupId: string
   }
 }
 
+/**
+ * Change backup protection while serializing platform unprotect with execution
+ * claim acquisition. The shared advisory lock makes "no live claim" and the
+ * protection update one atomic decision for platform recovery points.
+ */
+export async function setBackupProtectionWithPlatformResetFence(
+  backupId: string,
+  isProtected: boolean,
+) {
+  const db = getDb();
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${PLATFORM_RESET_CLAIM_LOCK}))`);
+
+    const [backup] = await tx
+      .select({
+        id: platformBackups.id,
+        scope: platformBackups.scope,
+        metadata: platformBackups.metadata,
+      })
+      .from(platformBackups)
+      .where(eq(platformBackups.id, backupId))
+      .limit(1);
+    if (!backup) throw new Error('Backup not found');
+
+    if (
+      !isProtected &&
+      backup.scope === 'platform_operational' &&
+      hasLivePlatformResetExecutionClaim(backup.metadata)
+    ) {
+      throw new Error(
+        'This platform recovery point is locked by an active operational reset and cannot be released yet.',
+      );
+    }
+
+    const [updated] = await tx
+      .update(platformBackups)
+      .set({ isProtected, updatedAt: new Date() })
+      .where(eq(platformBackups.id, backupId))
+      .returning();
+    if (!updated) throw new Error('Backup not found');
+    return updated;
+  });
+}
+
 export type PlatformResetExecutionClaimResult =
   | { ok: true; claimId: string }
   | {
@@ -79,9 +124,7 @@ export async function acquirePlatformResetExecutionClaim(input: {
 }): Promise<PlatformResetExecutionClaimResult> {
   const db = getDb();
   return db.transaction(async (tx) => {
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtext('govfleet-platform-operational-reset-claim'))`,
-    );
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${PLATFORM_RESET_CLAIM_LOCK}))`);
 
     const [target] = await tx
       .select({ id: platformBackups.id })
