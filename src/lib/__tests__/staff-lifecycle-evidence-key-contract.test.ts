@@ -32,6 +32,6 @@ describe('staff lifecycle evidence key contract', () => {
     expect(routeSource).toContain('eq(employees.tenantId, tenantId)');
     expect(routeSource).toContain('assertNoLiveDriverResponsibility');
     expect(routeSource).toContain('wouldDisableFinalTenantAdmin');
-    expect(routeSource).toContain('restoreArchivedAccountIfAllowed');
+    expect(routeSource).toContain('checkTenantUserCapacityLocked');
   });
 });
