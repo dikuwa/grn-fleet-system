@@ -16,6 +16,7 @@ import { Permissions } from '@/lib/permissions';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { wouldDisableFinalActiveTenantAdministrator } from '@/lib/tenant-admin-integrity';
 import { lockUserMembershipInvariant } from '@/lib/user-membership-integrity';
+import { isRoleAssignmentWindowConflict } from '@/lib/role-assignment-integrity';
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -298,6 +299,12 @@ export async function POST(
         { status: 409 },
       );
     }
+    if (isRoleAssignmentWindowConflict(error)) {
+      return NextResponse.json(
+        { error: 'The target user already holds this role during part or all of the requested delegation period' },
+        { status: 409 },
+      );
+    }
     console.error('[Delegation] POST failed:', error);
     return NextResponse.json({ error: 'Failed to create delegation' }, { status: 500 });
   }
@@ -361,6 +368,8 @@ export async function DELETE(request: NextRequest) {
     const wasScheduled = Boolean(startsAt && startsAt > now);
 
     const result = await db.transaction(async (tx) => {
+      await lockUserMembershipInvariant(tx, membership.userId);
+
       if (assignment.roleName === 'Tenant Administrator' && !wasScheduled) {
         const finalAdmin = await wouldDisableFinalActiveTenantAdministrator(
           tx,
@@ -370,8 +379,6 @@ export async function DELETE(request: NextRequest) {
         );
         if (finalAdmin) return 'final-admin' as const;
       }
-
-      await lockUserMembershipInvariant(tx, membership.userId);
 
       const [ended] = await tx
         .update(roleAssignments)
