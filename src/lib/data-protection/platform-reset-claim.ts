@@ -73,7 +73,6 @@ export async function acquirePlatformResetExecutionClaim(input: {
       .where(
         and(
           eq(platformBackups.scope, 'platform_operational'),
-          eq(platformBackups.status, 'ready'),
           sql`${platformBackups.metadata}->>'platformExecutionClaimId' IS NOT NULL`,
           sql`NULLIF(${platformBackups.metadata}->>'platformExecutionClaimedAt', '')::timestamptz >= ${staleBefore}`,
         ),
