@@ -10,6 +10,18 @@ const reconciliation = readFileSync(
   resolve(process.cwd(), 'src/lib/data-protection/reset-reconciliation.ts'),
   'utf8',
 );
+const cronRoute = readFileSync(
+  resolve(process.cwd(), 'src/app/api/cron/platform-backups/route.ts'),
+  'utf8',
+);
+const platformRoute = readFileSync(
+  resolve(process.cwd(), 'src/app/api/platform/reset/route.ts'),
+  'utf8',
+);
+const tenantRoute = readFileSync(
+  resolve(process.cwd(), 'src/app/api/admin/data-reset/route.ts'),
+  'utf8',
+);
 
 describe('reset execution crash evidence and reconciliation', () => {
   it('records not-started evidence before entering in_progress', () => {
@@ -48,7 +60,7 @@ describe('reset execution crash evidence and reconciliation', () => {
   });
 
   it('reconciles only stale in-progress rows and fences the exact execution start', () => {
-    const staleQuery = reconciliation.indexOf("eq(tenantResetRequests.status, 'in_progress')");
+    const staleQuery = reconciliation.indexOf("eq(tenantResetRequests.status, 'in_progress' as const)");
     const cutoff = reconciliation.indexOf('lt(tenantResetRequests.startedAt, staleBefore)', staleQuery);
     const update = reconciliation.indexOf('.update(tenantResetRequests)', cutoff);
     const statusFence = reconciliation.indexOf(
@@ -65,5 +77,25 @@ describe('reset execution crash evidence and reconciliation', () => {
     expect(update).toBeGreaterThan(cutoff);
     expect(statusFence).toBeGreaterThan(update);
     expect(startFence).toBeGreaterThan(statusFence);
+  });
+
+  it('keeps tenant-triggered reconciliation tenant-scoped while platform entry points stay global', () => {
+    expect(reconciliation).toContain('if (input.tenantId)');
+    expect(reconciliation).toContain('eq(tenantResetRequests.tenantId, input.tenantId)');
+    expect(tenantRoute).toContain(
+      'reconcileStaleInProgressResets({ tenantId: auth.session.tenantId })',
+    );
+    expect(platformRoute).toContain('await reconcileStaleInProgressResets();');
+    expect(cronRoute).toContain('const resetReconciliation = await reconcileStaleInProgressResets();');
+  });
+
+  it('runs reconciliation from cron before storage configuration can short-circuit', () => {
+    const reconcile = cronRoute.indexOf(
+      'const resetReconciliation = await reconcileStaleInProgressResets();',
+    );
+    const storageGuard = cronRoute.indexOf('if (!isStorageConfigured())', reconcile);
+
+    expect(reconcile).toBeGreaterThan(-1);
+    expect(storageGuard).toBeGreaterThan(reconcile);
   });
 });
