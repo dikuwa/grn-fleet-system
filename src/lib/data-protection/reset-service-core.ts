@@ -423,7 +423,7 @@ export async function executeApprovedTenantOperationalReset(input: {
         .limit(1);
     } catch (verificationError) {
       throw new Error(
-        `Reset atomic result could not be verified after an execution error: ${verificationError instanceof Error ? verificationError.message : String(verificationError)}`,
+        `Reset atomic result is pending reconciliation because durable evidence could not be verified after an execution error: ${verificationError instanceof Error ? verificationError.message : String(verificationError)}`,
       );
     }
 
@@ -436,21 +436,13 @@ export async function executeApprovedTenantOperationalReset(input: {
       // error, so preserve the committed outcome and continue integrity checks.
       atomicCallWarning = atomicError;
       recordCommittedOutcomes();
-    } else if (sameAttempt && evidenceRow?.status === 'in_progress' && evidenceState === 'not_started') {
-      failed = true;
-      outcomes.push({
-        table: 'reset_plan',
-        label: 'Atomic reset plan',
-        planned: freshPreview.dryRunSummary.total,
-        removed: 0,
-        error: atomicError,
-      });
     } else {
-      // The transaction result is ambiguous and the exact attempt evidence can
-      // no longer prove either rollback or commit. Leave the request in progress
-      // so the stale reconciler can classify it from durable evidence later.
+      // A failed/aborted HTTP call cannot prove rollback while the server-side
+      // transaction may still be resolving. `not_started` is therefore pending,
+      // not terminal evidence. Keep the request in progress for the stale
+      // reconciler, which later fences and classifies durable metadata state.
       throw new Error(
-        `Reset atomic result is ambiguous after execution failure. The request remains in progress for reconciliation. Original error: ${atomicError}`,
+        `Reset atomic result is pending reconciliation after execution failure. The request remains in progress until durable commit evidence settles. Original error: ${atomicError}`,
       );
     }
   }
