@@ -21,8 +21,12 @@ import { Permissions } from '@/lib/permissions';
 import { recordAuditEvent } from '@/lib/audit-event';
 import { assessTenantOperationalReadiness } from '@/lib/platform/tenant-readiness';
 
-async function getDeletionAssessment(tenantId: string) {
-  const db = getDb();
+type DeletionAssessmentDb = Pick<ReturnType<typeof getDb>, 'select'>;
+
+async function getDeletionAssessment(
+  tenantId: string,
+  db: DeletionAssessmentDb = getDb(),
+) {
   const [members, staff, fleet, requests, tripRows, programmeRows] = await Promise.all([
     db.select({ count: count() }).from(tenantMemberships).where(eq(tenantMemberships.tenantId, tenantId)),
     db.select({ count: count() }).from(employees).where(eq(employees.tenantId, tenantId)),
@@ -250,50 +254,83 @@ export async function DELETE(
     const permCheck = await requirePermission(session, Permissions.PLATFORM_ADMIN);
     if (permCheck instanceof NextResponse) return permCheck;
 
-    const db = getDb();
-    const [tenant] = await db.select().from(tenants).where(eq(tenants.id, id)).limit(1);
-    if (!tenant) return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
-
-    const deletion = await getDeletionAssessment(id);
     const force = request.nextUrl.searchParams.get('force') === 'true';
-    const expectedConfirmation = deletion.canDelete ? tenant.code : `DELETE ${tenant.code}`;
     const confirmation = request.nextUrl.searchParams.get('confirm') ?? '';
-    if (confirmation !== expectedConfirmation) {
+    const db = getDb();
+
+    const deletionResult = await db.transaction(async (tx) => {
+      const [tenant] = await tx
+        .select()
+        .from(tenants)
+        .where(eq(tenants.id, id))
+        .limit(1)
+        .for('update');
+      if (!tenant) return { kind: 'not_found' } as const;
+
+      // Lock the parent tenant row before assessing children. PostgreSQL foreign-key
+      // checks for new tenant-owned rows require a conflicting key-share lock, so
+      // concurrent inserts cannot slip in between this assessment and the delete.
+      const deletion = await getDeletionAssessment(id, tx);
+      const expectedConfirmation = deletion.canDelete ? tenant.code : `DELETE ${tenant.code}`;
+      if (confirmation !== expectedConfirmation) {
+        return { kind: 'invalid_confirmation', expectedConfirmation } as const;
+      }
+
+      const isInactive = tenant.status === 'SUSPENDED'
+        || tenant.status === 'ARCHIVED'
+        || tenant.lifecycleStatus === 'ARCHIVED';
+      if (!deletion.canDelete && (!force || !isInactive)) {
+        return { kind: 'blocked', tenant, deletion, isInactive } as const;
+      }
+
+      await recordAuditEvent({
+        tenantId: tenant.id,
+        actorUserId: session.user.id,
+        action: 'tenant.permanent_delete_requested',
+        entityType: 'tenant',
+        entityId: tenant.id,
+        summary: `Platform administrator permanently deleted ${deletion.canDelete ? 'empty' : 'populated'} tenant ${tenant.name} (${tenant.code}).`,
+        before: { name: tenant.name, code: tenant.code, slug: tenant.slug, status: tenant.status, lifecycleStatus: tenant.lifecycleStatus },
+      }, tx).catch(() => {});
+
+      await tx.delete(tenants).where(eq(tenants.id, id));
+
+      return { kind: 'deleted', tenant, deletion } as const;
+    });
+
+    if (deletionResult.kind === 'not_found') {
+      return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
+    }
+
+    if (deletionResult.kind === 'invalid_confirmation') {
       return NextResponse.json(
-        { error: `Type ${expectedConfirmation} to confirm permanent deletion.` },
+        { error: `Type ${deletionResult.expectedConfirmation} to confirm permanent deletion.` },
         { status: 400 },
       );
     }
 
-    const isInactive = tenant.status === 'SUSPENDED' || tenant.status === 'ARCHIVED' || tenant.lifecycleStatus === 'ARCHIVED';
-    if (!deletion.canDelete && (!force || !isInactive)) {
+    if (deletionResult.kind === 'blocked') {
       return NextResponse.json(
         {
-          error: isInactive
+          error: deletionResult.isInactive
             ? 'This tenant contains records. Use the populated-tenant confirmation to delete it and its tenant-owned data.'
             : 'Suspend or archive this tenant before deleting it with records.',
-          deletion,
+          deletion: deletionResult.deletion,
           alternatives: ['SUSPENDED', 'ARCHIVED'],
         },
         { status: 409 },
       );
     }
 
-    await recordAuditEvent({
-      tenantId: tenant.id,
-      actorUserId: session.user.id,
-      action: 'tenant.permanent_delete_requested',
-      entityType: 'tenant',
-      entityId: tenant.id,
-      summary: `Platform administrator permanently deleted ${deletion.canDelete ? 'empty' : 'populated'} tenant ${tenant.name} (${tenant.code}).`,
-      before: { name: tenant.name, code: tenant.code, slug: tenant.slug, status: tenant.status, lifecycleStatus: tenant.lifecycleStatus },
-    }).catch(() => {});
-
-    await db.delete(tenants).where(eq(tenants.id, id));
-
     return NextResponse.json({
       success: true,
-      data: { id: tenant.id, name: tenant.name, code: tenant.code, deleted: true, removedRecordAssessment: deletion },
+      data: {
+        id: deletionResult.tenant.id,
+        name: deletionResult.tenant.name,
+        code: deletionResult.tenant.code,
+        deleted: true,
+        removedRecordAssessment: deletionResult.deletion,
+      },
     });
   } catch (error) {
     console.error('[Platform Tenant Detail] DELETE failed:', error);
