@@ -31,10 +31,10 @@ describe('admin delegation integrity contract', () => {
 
   it('claims the reviewed assignment end-date revision before audit success', () => {
     const deleteHandler = source.indexOf('export async function DELETE');
-    const transaction = source.indexOf('const committed = await db.transaction', deleteHandler);
+    const transaction = source.indexOf('const result = await db.transaction', deleteHandler);
     const revision = source.indexOf('assignmentEndRevisionMatches(assignment.endDate)', transaction);
     const returning = source.indexOf('.returning({ id: roleAssignments.id })', revision);
-    const noWin = source.indexOf('if (!ended) return false', returning);
+    const noWin = source.indexOf("if (!ended) return 'conflict' as const", returning);
     const audit = source.indexOf('await recordAuditEvent({', noWin);
 
     expect(transaction).toBeGreaterThan(deleteHandler);
@@ -45,11 +45,13 @@ describe('admin delegation integrity contract', () => {
   });
 
   it('maps a lost end-date claim to controlled 409 after the transaction', () => {
-    const committed = source.indexOf('if (!committed)');
+    const transaction = source.indexOf('const result = await db.transaction');
+    const committed = source.indexOf("if (result === 'conflict')", transaction);
     const conflict = source.indexOf('This acting assignment changed while the end action was being prepared', committed);
     const status = source.indexOf('{ status: 409 }', conflict);
 
-    expect(committed).toBeGreaterThan(-1);
+    expect(transaction).toBeGreaterThan(-1);
+    expect(committed).toBeGreaterThan(transaction);
     expect(conflict).toBeGreaterThan(committed);
     expect(status).toBeGreaterThan(conflict);
   });

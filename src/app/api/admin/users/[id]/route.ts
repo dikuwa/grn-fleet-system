@@ -14,10 +14,12 @@ import { employees, driverProfiles, driverLicences, departments, offices } from 
 import { userProfiles } from '@/db/schema/auth';
 import { trips, vehicleAllocations } from '@/db/schema/trips';
 import { transportRequests } from '@/db/schema/requests';
-import { eq, and, or, ne, inArray } from 'drizzle-orm';
+import { eq, and, or, ne, inArray, isNull, sql } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { recordAuditEvent } from '@/lib/audit-event';
+import { wouldDisableFinalActiveTenantAdministrator } from '@/lib/tenant-admin-integrity';
+import { lockUserMembershipInvariant } from '@/lib/user-membership-integrity';
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -47,34 +49,19 @@ function assignmentOverlapsWindow(
   return existingStartsBeforeNewEnds && newStartsBeforeExistingEnds;
 }
 
+function assignmentEndRevisionMatches(endDate: Date | string | null | undefined) {
+  const reviewedEnd = asDate(endDate);
+  return reviewedEnd
+    ? sql`date_trunc('milliseconds', ${roleAssignments.endDate}) = ${reviewedEnd.toISOString()}::timestamptz`
+    : isNull(roleAssignments.endDate);
+}
+
 async function requireTenantUserAdmin(request: NextRequest) {
   const auth = await requireRequestAuth(request);
   if (!auth.ok) return auth;
   const permission = await requirePermission(auth.session, Permissions.TENANT_MANAGE);
   if (permission instanceof NextResponse) return { ok: false as const, error: permission };
   return auth;
-}
-
-async function activeTenantAdministrators(tenantId: string) {
-  const db = getDb();
-  const rows = await db
-    .select({
-      userId: tenantMemberships.userId,
-      membershipStatus: tenantMemberships.status,
-      startDate: roleAssignments.startDate,
-      endDate: roleAssignments.endDate,
-    })
-    .from(roleAssignments)
-    .innerJoin(roles, eq(roleAssignments.roleId, roles.id))
-    .innerJoin(tenantMemberships, eq(roleAssignments.tenantMembershipId, tenantMemberships.id))
-    .where(and(eq(tenantMemberships.tenantId, tenantId), eq(roles.name, 'Tenant Administrator')));
-
-  const now = new Date();
-  return Array.from(new Set(
-    rows
-      .filter((row) => row.membershipStatus === 'active' && assignmentIsActive(row, now))
-      .map((row) => row.userId),
-  ));
 }
 
 export async function GET(
@@ -204,22 +191,36 @@ export async function PATCH(
       if (tenantStatus !== 'active' && id === session.user.id) {
         return NextResponse.json({ error: 'You cannot suspend or deactivate your own active membership.' }, { status: 409 });
       }
-      if (tenantStatus !== 'active') {
-        const admins = await activeTenantAdministrators(session.tenantId);
-        if (admins.length === 1 && admins[0] === id) {
-          return NextResponse.json({ error: 'The final active Tenant Administrator cannot be suspended or moved to pending activation.' }, { status: 409 });
-        }
-      }
     }
 
     if (trimmedName !== undefined || tenantStatus !== undefined) {
-      await db.transaction(async (tx) => {
+      const updateResult = await db.transaction(async (tx) => {
+        if (tenantStatus !== undefined && tenantStatus !== 'active') {
+          const finalAdmin = await wouldDisableFinalActiveTenantAdministrator(
+            tx,
+            session.tenantId,
+            id,
+          );
+          if (finalAdmin) return 'final-admin' as const;
+        }
+
+        if (tenantStatus !== undefined) {
+          const [updatedMembership] = await tx
+            .update(tenantMemberships)
+            .set({ status: tenantStatus })
+            .where(and(
+              eq(tenantMemberships.id, membership.id),
+              eq(tenantMemberships.tenantId, session.tenantId),
+              eq(tenantMemberships.status, membership.status),
+            ))
+            .returning({ id: tenantMemberships.id });
+          if (!updatedMembership) return 'conflict' as const;
+        }
+
         if (trimmedName !== undefined) {
           await tx.update(user).set({ name: trimmedName, updatedAt: new Date() }).where(eq(user.id, id));
         }
-        if (tenantStatus !== undefined) {
-          await tx.update(tenantMemberships).set({ status: tenantStatus }).where(eq(tenantMemberships.id, membership.id));
-        }
+
         await recordAuditEvent({
           tenantId: session.tenantId,
           actorUserId: session.user.id,
@@ -235,7 +236,21 @@ export async function PATCH(
           },
           summary: 'Tenant user account details updated',
         }, tx);
+        return 'success' as const;
       });
+
+      if (updateResult === 'final-admin') {
+        return NextResponse.json(
+          { error: 'The final active Tenant Administrator cannot be suspended or moved to pending activation.' },
+          { status: 409 },
+        );
+      }
+      if (updateResult === 'conflict') {
+        return NextResponse.json(
+          { error: 'This tenant membership changed while the update was being prepared. Refresh User Management and review the current status before trying again.' },
+          { status: 409 },
+        );
+      }
     }
 
     if (addRoleId) {
@@ -416,22 +431,32 @@ export async function PATCH(
       if (!assignment) return NextResponse.json({ error: 'Role assignment not found' }, { status: 404 });
 
       const now = new Date();
-      if (assignmentIsActive(assignment, now) && assignment.roleName === 'Tenant Administrator') {
-        const admins = await activeTenantAdministrators(session.tenantId);
-        if (admins.length <= 1 && admins.includes(id)) {
-          return NextResponse.json(
-            { error: 'This is the final active Tenant Administrator and the role cannot be removed.' },
-            { status: 409 },
-          );
-        }
-      }
-
       const assignmentStart = asDate(assignment.startDate);
       const existingEnd = asDate(assignment.endDate);
       if (!existingEnd || existingEnd > now) {
         const endedAt = assignmentStart && assignmentStart > now ? assignmentStart : now;
-        await db.transaction(async (tx) => {
-          await tx.update(roleAssignments).set({ endDate: endedAt }).where(eq(roleAssignments.id, assignment.id));
+        const removalResult = await db.transaction(async (tx) => {
+          if (assignmentIsActive(assignment, now) && assignment.roleName === 'Tenant Administrator') {
+            const finalAdmin = await wouldDisableFinalActiveTenantAdministrator(
+              tx,
+              session.tenantId,
+              id,
+              now,
+            );
+            if (finalAdmin) return 'final-admin' as const;
+          }
+
+          const [endedAssignment] = await tx
+            .update(roleAssignments)
+            .set({ endDate: endedAt })
+            .where(and(
+              eq(roleAssignments.id, assignment.id),
+              eq(roleAssignments.tenantMembershipId, membership.id),
+              assignmentEndRevisionMatches(assignment.endDate),
+            ))
+            .returning({ id: roleAssignments.id });
+          if (!endedAssignment) return 'conflict' as const;
+
           await recordAuditEvent({
             tenantId: session.tenantId,
             actorUserId: session.user.id,
@@ -445,7 +470,21 @@ export async function PATCH(
             before: { startDate: assignment.startDate, endDate: assignment.endDate },
             after: { roleName: assignment.roleName, endedAt: endedAt.toISOString(), historyPreserved: true },
           }, tx);
+          return 'success' as const;
         });
+
+        if (removalResult === 'final-admin') {
+          return NextResponse.json(
+            { error: 'This is the final active Tenant Administrator and the role cannot be removed.' },
+            { status: 409 },
+          );
+        }
+        if (removalResult === 'conflict') {
+          return NextResponse.json(
+            { error: 'This role assignment changed while the removal was being prepared. Refresh User Management and review the current role state before trying again.' },
+            { status: 409 },
+          );
+        }
       }
     }
 
@@ -504,11 +543,6 @@ export async function DELETE(
       );
     }
 
-    const admins = await activeTenantAdministrators(session.tenantId);
-    if (admins.length === 1 && admins[0] === id) {
-      return NextResponse.json({ error: 'The final active Tenant Administrator cannot be removed.' }, { status: 409 });
-    }
-
     const [employee] = await db
       .select({ id: employees.id })
       .from(employees)
@@ -551,20 +585,35 @@ export async function DELETE(
       }
     }
 
-    const otherMemberships = await db
-      .select({ id: tenantMemberships.id, status: tenantMemberships.status })
-      .from(tenantMemberships)
-      .where(and(eq(tenantMemberships.userId, id), ne(tenantMemberships.id, membership.id)));
-    const hasRemainingMembership = otherMemberships.some(
-      (otherMembership) => otherMembership.status !== 'access_removed',
-    );
-    const revokeGlobalAccount = !hasRemainingMembership;
+    const removalResult = await db.transaction(async (tx) => {
+      const finalAdmin = await wouldDisableFinalActiveTenantAdministrator(
+        tx,
+        session.tenantId,
+        id,
+        now,
+      );
+      if (finalAdmin) return { state: 'final-admin' as const };
 
-    await db.transaction(async (tx) => {
-      await tx
+      await lockUserMembershipInvariant(tx, id);
+      const otherMemberships = await tx
+        .select({ id: tenantMemberships.id, status: tenantMemberships.status })
+        .from(tenantMemberships)
+        .where(and(eq(tenantMemberships.userId, id), ne(tenantMemberships.id, membership.id)));
+      const hasRemainingMembership = otherMemberships.some(
+        (otherMembership) => otherMembership.status !== 'access_removed',
+      );
+      const revokeGlobalAccount = !hasRemainingMembership;
+
+      const [removedMembership] = await tx
         .update(tenantMemberships)
         .set({ status: 'access_removed' })
-        .where(and(eq(tenantMemberships.id, membership.id), eq(tenantMemberships.tenantId, session.tenantId)));
+        .where(and(
+          eq(tenantMemberships.id, membership.id),
+          eq(tenantMemberships.tenantId, session.tenantId),
+          eq(tenantMemberships.status, membership.status),
+        ))
+        .returning({ id: tenantMemberships.id });
+      if (!removedMembership) return { state: 'conflict' as const };
 
       if (revokeGlobalAccount) {
         await tx.delete(sessionTable).where(eq(sessionTable.userId, id));
@@ -602,7 +651,19 @@ export async function DELETE(
           accountStatus: 'access_removed',
         },
       }, tx);
+
+      return { state: 'success' as const };
     });
+
+    if (removalResult.state === 'final-admin') {
+      return NextResponse.json({ error: 'The final active Tenant Administrator cannot be removed.' }, { status: 409 });
+    }
+    if (removalResult.state === 'conflict') {
+      return NextResponse.json(
+        { error: 'This tenant membership changed while account removal was being prepared. Refresh User Management and review the current state before trying again.' },
+        { status: 409 },
+      );
+    }
 
     return NextResponse.json({ success: true });
   } catch (error) {

@@ -14,6 +14,7 @@ import { eq, and, isNull, sql } from 'drizzle-orm';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { recordAuditEvent } from '@/lib/audit-event';
+import { wouldDisableFinalActiveTenantAdministrator } from '@/lib/tenant-admin-integrity';
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -243,11 +244,13 @@ export async function DELETE(request: NextRequest) {
       .select({
         id: roleAssignments.id,
         roleId: roleAssignments.roleId,
+        roleName: roles.name,
         tenantMembershipId: roleAssignments.tenantMembershipId,
         startDate: roleAssignments.startDate,
         endDate: roleAssignments.endDate,
       })
       .from(roleAssignments)
+      .innerJoin(roles, eq(roleAssignments.roleId, roles.id))
       .where(and(eq(roleAssignments.id, assignmentId), eq(roleAssignments.isActing, true)))
       .limit(1);
     if (!assignment) {
@@ -255,7 +258,7 @@ export async function DELETE(request: NextRequest) {
     }
 
     const [membership] = await db
-      .select({ id: tenantMemberships.id })
+      .select({ id: tenantMemberships.id, userId: tenantMemberships.userId })
       .from(tenantMemberships)
       .where(and(
         eq(tenantMemberships.id, assignment.tenantMembershipId),
@@ -276,7 +279,17 @@ export async function DELETE(request: NextRequest) {
     const endedAt = startsAt && startsAt > now ? startsAt : now;
     const wasScheduled = Boolean(startsAt && startsAt > now);
 
-    const committed = await db.transaction(async (tx) => {
+    const result = await db.transaction(async (tx) => {
+      if (assignment.roleName === 'Tenant Administrator' && !wasScheduled) {
+        const finalAdmin = await wouldDisableFinalActiveTenantAdministrator(
+          tx,
+          session.tenantId,
+          membership.userId,
+          now,
+        );
+        if (finalAdmin) return 'final-admin' as const;
+      }
+
       const [ended] = await tx
         .update(roleAssignments)
         .set({ endDate: endedAt })
@@ -287,7 +300,7 @@ export async function DELETE(request: NextRequest) {
           assignmentEndRevisionMatches(assignment.endDate),
         ))
         .returning({ id: roleAssignments.id });
-      if (!ended) return false;
+      if (!ended) return 'conflict' as const;
 
       await recordAuditEvent({
         tenantId: session.tenantId,
@@ -306,10 +319,16 @@ export async function DELETE(request: NextRequest) {
           : 'Acting role assignment ended by administrator; history preserved',
         isActing: true,
       }, tx);
-      return true;
+      return 'success' as const;
     });
 
-    if (!committed) {
+    if (result === 'final-admin') {
+      return NextResponse.json(
+        { error: 'This acting assignment currently provides the final active Tenant Administrator. Assign another active Tenant Administrator before ending it.' },
+        { status: 409 },
+      );
+    }
+    if (result === 'conflict') {
       return NextResponse.json(
         { error: 'This acting assignment changed while the end action was being prepared. Refresh User Management and review the current delegation state.' },
         { status: 409 },
