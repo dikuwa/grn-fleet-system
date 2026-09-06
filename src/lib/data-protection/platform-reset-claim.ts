@@ -8,6 +8,8 @@ import { recoveryPointReleaseBlockReason } from './backup-policy';
 
 const DEFAULT_PLATFORM_RESET_CLAIM_TTL_MINUTES = 10;
 const MIN_PLATFORM_RESET_CLAIM_TTL_MINUTES = 6;
+const DEFAULT_BACKUP_DELETION_CLAIM_TTL_MINUTES = 15;
+const MIN_BACKUP_DELETION_CLAIM_TTL_MINUTES = 6;
 const PLATFORM_RESET_CLAIM_LOCK = 'govfleet-platform-operational-reset-claim';
 
 function positiveNumber(value: string | undefined, fallback: number) {
@@ -20,6 +22,14 @@ export const PLATFORM_RESET_EXECUTION_CLAIM_TTL_MINUTES = Math.max(
   positiveNumber(
     process.env.PLATFORM_RESET_EXECUTION_CLAIM_TTL_MINUTES,
     DEFAULT_PLATFORM_RESET_CLAIM_TTL_MINUTES,
+  ),
+);
+
+export const BACKUP_DELETION_CLAIM_TTL_MINUTES = Math.max(
+  MIN_BACKUP_DELETION_CLAIM_TTL_MINUTES,
+  positiveNumber(
+    process.env.BACKUP_DELETION_CLAIM_TTL_MINUTES,
+    DEFAULT_BACKUP_DELETION_CLAIM_TTL_MINUTES,
   ),
 );
 
@@ -40,6 +50,21 @@ export function hasLivePlatformResetExecutionClaim(
   return (
     claimedAt.getTime() >=
     now.getTime() - PLATFORM_RESET_EXECUTION_CLAIM_TTL_MINUTES * 60 * 1000
+  );
+}
+
+export function hasLiveBackupDeletionClaim(metadata: unknown, now = new Date()) {
+  const record = (metadata ?? {}) as Record<string, unknown>;
+  const claimId =
+    typeof record.backupDeletionClaimId === 'string' ? record.backupDeletionClaimId.trim() : '';
+  const claimedAt =
+    typeof record.backupDeletionClaimedAt === 'string'
+      ? new Date(record.backupDeletionClaimedAt)
+      : null;
+  if (!claimId || !claimedAt || Number.isNaN(claimedAt.getTime())) return false;
+  return (
+    claimedAt.getTime() >=
+    now.getTime() - BACKUP_DELETION_CLAIM_TTL_MINUTES * 60 * 1000
   );
 }
 
@@ -135,13 +160,15 @@ export async function setBackupProtectionWithPlatformResetFence(
 
 /**
  * Reserve a backup for deletion under the same advisory lock used by platform
- * reset execution claims. Once the transaction commits the backup is no longer
- * `ready`, so a later execution claim cannot select it while durable storage is
- * being removed. If storage deletion fails, fail closed rather than returning
- * the backup to an executable state whose archive presence may be uncertain.
+ * reset execution claims. A durable lease in metadata makes the external
+ * storage phase recoverable: a later DELETE can reclaim a stale `deleting`
+ * reservation and repeat the idempotent S3/R2 DeleteObject call. Completion
+ * and failure updates are fenced to the current lease so an older worker cannot
+ * overwrite a newer recovery attempt.
  */
 export async function deleteBackupWithPlatformResetFence(backupId: string) {
   const db = getDb();
+  const deletionClaimId = randomUUID();
   const backup = await db.transaction(async (tx) => {
     await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${PLATFORM_RESET_CLAIM_LOCK}))`);
 
@@ -151,44 +178,72 @@ export async function deleteBackupWithPlatformResetFence(backupId: string) {
       .where(eq(platformBackups.id, backupId))
       .limit(1);
     if (!current) throw new Error('Backup not found');
-    if (current.status === 'deleting') throw new Error('Backup deletion is already in progress');
 
-    const [resetRequest] = current.resetRequestId
-      ? await tx
-          .select({ status: tenantResetRequests.status })
-          .from(tenantResetRequests)
-          .where(eq(tenantResetRequests.id, current.resetRequestId))
-          .limit(1)
-      : [];
-    const policyBlockReason = recoveryPointReleaseBlockReason({
-      action: 'delete',
-      isProtected: current.isProtected,
-      backupStatus: current.status,
-      source: current.source,
-      expiresAt: current.expiresAt,
-      resetStatus: resetRequest?.status ?? null,
-    });
-    if (policyBlockReason) throw new Error(policyBlockReason);
-
-    if (
-      current.scope === 'platform_operational' &&
-      hasLivePlatformResetExecutionClaim(current.metadata)
-    ) {
-      throw new Error(
-        'This platform recovery point is locked by an active operational reset and cannot be released yet.',
-      );
+    const now = new Date();
+    const reclaimingStaleDeletion = current.status === 'deleting';
+    if (reclaimingStaleDeletion && hasLiveBackupDeletionClaim(current.metadata, now)) {
+      throw new Error('Backup deletion is already in progress');
     }
 
-    const [reserved] = await tx
-      .update(platformBackups)
-      .set({ status: 'deleting', failureReason: null, updatedAt: new Date() })
-      .where(
-        and(
+    if (!reclaimingStaleDeletion) {
+      const [resetRequest] = current.resetRequestId
+        ? await tx
+            .select({ status: tenantResetRequests.status })
+            .from(tenantResetRequests)
+            .where(eq(tenantResetRequests.id, current.resetRequestId))
+            .limit(1)
+        : [];
+      const policyBlockReason = recoveryPointReleaseBlockReason({
+        action: 'delete',
+        isProtected: current.isProtected,
+        backupStatus: current.status,
+        source: current.source,
+        expiresAt: current.expiresAt,
+        resetStatus: resetRequest?.status ?? null,
+      });
+      if (policyBlockReason) throw new Error(policyBlockReason);
+
+      if (
+        current.scope === 'platform_operational' &&
+        hasLivePlatformResetExecutionClaim(current.metadata)
+      ) {
+        throw new Error(
+          'This platform recovery point is locked by an active operational reset and cannot be released yet.',
+        );
+      }
+    }
+
+    const staleDeletionBefore = new Date(
+      now.getTime() - BACKUP_DELETION_CLAIM_TTL_MINUTES * 60 * 1000,
+    );
+    const reservationConditions = reclaimingStaleDeletion
+      ? [
+          eq(platformBackups.id, backupId),
+          eq(platformBackups.status, 'deleting'),
+          or(
+            sql`${platformBackups.metadata}->>'backupDeletionClaimId' IS NULL`,
+            sql`${platformBackups.metadata}->>'backupDeletionClaimId' = ''`,
+            sql`NULLIF(${platformBackups.metadata}->>'backupDeletionClaimedAt', '')::timestamptz < ${staleDeletionBefore}`,
+          )!,
+        ]
+      : [
           eq(platformBackups.id, backupId),
           eq(platformBackups.status, current.status),
           eq(platformBackups.isProtected, current.isProtected),
-        ),
-      )
+        ];
+
+    const [reserved] = await tx
+      .update(platformBackups)
+      .set({
+        status: 'deleting',
+        failureReason: null,
+        metadata: sql`COALESCE(${platformBackups.metadata}, '{}'::jsonb) || jsonb_build_object(
+          'backupDeletionClaimId', ${deletionClaimId},
+          'backupDeletionClaimedAt', ${now.toISOString()}
+        )`,
+        updatedAt: now,
+      })
+      .where(and(...reservationConditions))
       .returning();
     if (!reserved) {
       throw new Error('Backup changed while deletion was being reserved. Refresh and try again.');
@@ -205,9 +260,18 @@ export async function deleteBackupWithPlatformResetFence(backupId: string) {
       .set({
         status: 'failed',
         failureReason: `Backup deletion failed: ${message}`,
+        metadata: sql`COALESCE(${platformBackups.metadata}, '{}'::jsonb)
+          - 'backupDeletionClaimId'
+          - 'backupDeletionClaimedAt'`,
         updatedAt: new Date(),
       })
-      .where(and(eq(platformBackups.id, backupId), eq(platformBackups.status, 'deleting')));
+      .where(
+        and(
+          eq(platformBackups.id, backupId),
+          eq(platformBackups.status, 'deleting'),
+          sql`${platformBackups.metadata}->>'backupDeletionClaimId' = ${deletionClaimId}`,
+        ),
+      );
     throw error;
   }
 
@@ -217,9 +281,18 @@ export async function deleteBackupWithPlatformResetFence(backupId: string) {
       status: 'deleted',
       storageKey: null,
       failureReason: null,
+      metadata: sql`COALESCE(${platformBackups.metadata}, '{}'::jsonb)
+        - 'backupDeletionClaimId'
+        - 'backupDeletionClaimedAt'`,
       updatedAt: new Date(),
     })
-    .where(and(eq(platformBackups.id, backupId), eq(platformBackups.status, 'deleting')))
+    .where(
+      and(
+        eq(platformBackups.id, backupId),
+        eq(platformBackups.status, 'deleting'),
+        sql`${platformBackups.metadata}->>'backupDeletionClaimId' = ${deletionClaimId}`,
+      ),
+    )
     .returning();
   if (!deleted) {
     throw new Error(
