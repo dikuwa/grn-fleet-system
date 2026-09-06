@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { tenants } from '@/db/schema/tenants';
 import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
@@ -58,8 +58,8 @@ export async function POST(
     }
 
     const now = new Date();
-    await db.transaction(async (tx) => {
-      await tx
+    const transitionClaimed = await db.transaction(async (tx) => {
+      const [returnedTenant] = await tx
         .update(tenants)
         .set({
           lifecycleStatus: 'SETUP_IN_PROGRESS',
@@ -67,7 +67,13 @@ export async function POST(
           lifecycleChangedAt: now,
           updatedAt: now,
         })
-        .where(eq(tenants.id, id));
+        .where(and(
+          eq(tenants.id, id),
+          eq(tenants.lifecycleStatus, tenant.lifecycleStatus),
+        ))
+        .returning({ id: tenants.id });
+
+      if (!returnedTenant) return false;
 
       await recordAuditEvent({
         tenantId: tenant.id,
@@ -80,7 +86,18 @@ export async function POST(
         after: { lifecycleStatus: 'SETUP_IN_PROGRESS', reason },
         summary: `Platform review returned ${tenant.name} to setup for changes`,
       }, tx);
+
+      return true;
     });
+
+    if (!transitionClaimed) {
+      return NextResponse.json(
+        {
+          error: 'This tenant lifecycle changed while the return-for-changes action was being prepared. Refresh the tenant and review its current state before retrying.',
+        },
+        { status: 409 },
+      );
+    }
 
     return NextResponse.json({
       success: true,
