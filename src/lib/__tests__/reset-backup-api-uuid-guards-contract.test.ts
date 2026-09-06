@@ -41,6 +41,25 @@ describe('reset and backup API UUID guards', () => {
     expect(db).toBeGreaterThan(scopeGuard);
   });
 
+  it('normalizes and caps root reset pagination before SQL offsets', () => {
+    const source = read('src/app/api/platform/reset/route.ts');
+    const maxPage = source.indexOf('const MAX_RESET_LIST_PAGE = 100_000');
+    const parser = source.indexOf('function positiveIntegerParam(value: string | null, fallback: number, maximum: number)');
+    const safeInteger = source.indexOf('if (!Number.isSafeInteger(parsed) || parsed < 1) return fallback', parser);
+    const page = source.indexOf("const page = positiveIntegerParam(searchParams.get('page'), 1, MAX_RESET_LIST_PAGE)", safeInteger);
+    const limit = source.indexOf("const limit = positiveIntegerParam(searchParams.get('limit'), 25, 100)", page);
+    const offset = source.indexOf('const offset = (page - 1) * limit', limit);
+    const db = source.indexOf('const db = getDb()', offset);
+
+    expect(maxPage).toBeGreaterThan(-1);
+    expect(parser).toBeGreaterThan(maxPage);
+    expect(safeInteger).toBeGreaterThan(parser);
+    expect(page).toBeGreaterThan(safeInteger);
+    expect(limit).toBeGreaterThan(page);
+    expect(offset).toBeGreaterThan(limit);
+    expect(db).toBeGreaterThan(offset);
+  });
+
   it('validates root reset target and tenant UUID before tenant lookup', () => {
     const source = read('src/app/api/platform/reset/route.ts');
     const targetGuard = source.indexOf("if (target !== 'tenant' && target !== 'platform')");
@@ -51,6 +70,20 @@ describe('reset and backup API UUID guards', () => {
     expect(targetGuard).toBeGreaterThan(-1);
     expect(tenantGuard).toBeGreaterThan(targetGuard);
     expect(tenantLookup).toBeGreaterThan(tenantGuard);
+  });
+
+  it('validates platform reset recovery-point UUID before claim acquisition', () => {
+    const source = read('src/app/api/platform/reset/platform/route.ts');
+    const backupId = source.indexOf("const backupId = typeof body.backupId === 'string' ? body.backupId : ''");
+    const missingGuard = source.indexOf('if (!backupId)', backupId);
+    const uuidGuard = source.indexOf('if (!isUuid(backupId))', missingGuard);
+    const claim = source.indexOf('await acquirePlatformResetExecutionClaim({', uuidGuard);
+
+    expect(source).toContain("import { isUuid } from '@/lib/uuid';");
+    expect(backupId).toBeGreaterThan(-1);
+    expect(missingGuard).toBeGreaterThan(backupId);
+    expect(uuidGuard).toBeGreaterThan(missingGuard);
+    expect(claim).toBeGreaterThan(uuidGuard);
   });
 
   it('validates tenant-admin cancellation ids before reset-request predicates', () => {
