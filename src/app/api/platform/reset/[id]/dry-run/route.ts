@@ -51,6 +51,12 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       resetRequest.metadata == null
         ? isNull(tenantResetRequests.metadata)
         : eq(tenantResetRequests.metadata, resetRequest.metadata);
+    // `reviewedAt` is written by the application during approval/renewal, so it
+    // is already millisecond precision and can safely fence a concurrent renewal.
+    const reviewedAtState =
+      resetRequest.reviewedAt == null
+        ? isNull(tenantResetRequests.reviewedAt)
+        : eq(tenantResetRequests.reviewedAt, resetRequest.reviewedAt);
 
     // A fresh plan invalidates an earlier recovery point for this request. The
     // old snapshot remains safely retained in Backup & Restore, but execution
@@ -95,6 +101,7 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
           eq(tenantResetRequests.status, resetRequest.status),
           validationState,
           metadataState,
+          reviewedAtState,
         ),
       )
       .returning({ id: tenantResetRequests.id });
