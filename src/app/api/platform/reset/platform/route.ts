@@ -7,6 +7,10 @@ import {
   executePlatformOperationalReset,
   previewPlatformOperationalReset,
 } from '@/lib/data-protection/platform-reset-service';
+import {
+  acquirePlatformResetExecutionClaim,
+  releasePlatformResetExecutionClaim,
+} from '@/lib/data-protection/platform-reset-claim';
 
 export const maxDuration = 300;
 
@@ -32,6 +36,8 @@ export async function GET(request: NextRequest) {
 }
 
 export async function POST(request: NextRequest) {
+  let executionClaimId: string | null = null;
+  let executionBackupId = '';
   try {
     const auth = await authorize(request);
     if (!auth.ok) return auth.error;
@@ -60,6 +66,20 @@ export async function POST(request: NextRequest) {
           { error: 'Create a verified platform recovery point first' },
           { status: 409 },
         );
+
+      const claim = await acquirePlatformResetExecutionClaim({
+        backupId,
+        actorUserId: auth.session.user.id,
+      });
+      if (!claim.ok) {
+        return NextResponse.json(
+          { error: claim.message, code: claim.code },
+          { status: claim.status },
+        );
+      }
+      executionClaimId = claim.claimId;
+      executionBackupId = backupId;
+
       const result = await executePlatformOperationalReset({
         actorUserId: auth.session.user.id,
         actorTenantId: auth.session.tenantId,
@@ -67,11 +87,26 @@ export async function POST(request: NextRequest) {
         backupId,
         confirmationPhrase,
       });
+      await releasePlatformResetExecutionClaim({
+        backupId,
+        claimId: executionClaimId,
+      }).catch((releaseError) => {
+        console.error('[Platform Operational Reset] Could not release execution claim:', releaseError);
+      });
+      executionClaimId = null;
       revalidatePath('/dashboard', 'layout');
       return NextResponse.json({ success: true, data: result });
     }
     return NextResponse.json({ error: 'Action must be backup or execute' }, { status: 400 });
   } catch (error) {
+    if (executionClaimId && executionBackupId) {
+      await releasePlatformResetExecutionClaim({
+        backupId: executionBackupId,
+        claimId: executionClaimId,
+      }).catch((releaseError) => {
+        console.error('[Platform Operational Reset] Could not release execution claim:', releaseError);
+      });
+    }
     const message = error instanceof Error ? error.message : String(error);
     const conflict = /changed|recovery|checksum|type exactly|archive/i.test(message);
     return NextResponse.json({ error: message }, { status: conflict ? 409 : 500 });
