@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { eq, getTableName, sql } from 'drizzle-orm';
+import { and, eq, getTableName, sql } from 'drizzle-orm';
 import { getDb, schema } from '@/db';
 import { platformBackups } from '@/db/schema/data-protection';
 import { tenantResetRequests, resetRequestSteps } from '@/db/schema/reset-requests';
@@ -285,16 +285,36 @@ export async function executeApprovedTenantOperationalReset(input: {
     );
   }
 
-  await db.delete(resetRequestSteps).where(eq(resetRequestSteps.resetRequestId, resetRequest.id));
-  await db
-    .update(tenantResetRequests)
-    .set({
-      status: 'in_progress',
-      startedAt: new Date(),
-      failureReason: null,
-      updatedAt: new Date(),
-    })
-    .where(eq(tenantResetRequests.id, resetRequest.id));
+  const executionStartedAt = new Date();
+  const executionClaimed = await db.transaction(async (tx) => {
+    const [claimed] = await tx
+      .update(tenantResetRequests)
+      .set({
+        status: 'in_progress',
+        startedAt: executionStartedAt,
+        failureReason: null,
+        updatedAt: executionStartedAt,
+      })
+      .where(
+        and(
+          eq(tenantResetRequests.id, resetRequest.id),
+          eq(tenantResetRequests.status, 'approved'),
+          eq(tenantResetRequests.updatedAt, resetRequest.updatedAt),
+        ),
+      )
+      .returning({ id: tenantResetRequests.id });
+
+    if (!claimed) return false;
+
+    await tx.delete(resetRequestSteps).where(eq(resetRequestSteps.resetRequestId, resetRequest.id));
+    return true;
+  });
+
+  if (!executionClaimed) {
+    throw new Error(
+      'This reset request changed after execution validation. Refresh the request and review its current state before retrying.',
+    );
+  }
 
   await input
     .onStarted?.({
