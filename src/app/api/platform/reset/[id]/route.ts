@@ -287,10 +287,26 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     const [updated] = await db
       .update(tenantResetRequests)
       .set(updates)
-      .where(eq(tenantResetRequests.id, id))
+      .where(
+        and(
+          eq(tenantResetRequests.id, id),
+          eq(tenantResetRequests.status, current.status),
+          eq(tenantResetRequests.updatedAt, current.updatedAt),
+        ),
+      )
       .returning();
 
-    // Record audit event
+    if (!updated) {
+      return NextResponse.json(
+        {
+          error:
+            'This reset request changed while the action was being prepared. Refresh the request and review its current state before retrying.',
+        },
+        { status: 409 },
+      );
+    }
+
+    // Record audit event only after the exact reviewed revision was claimed.
     const auditActionLabel =
       action === 'submit'
         ? 'submitted'
