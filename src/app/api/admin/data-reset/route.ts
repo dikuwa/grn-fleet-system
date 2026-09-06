@@ -18,6 +18,7 @@ import {
   isResetRequestBlocking,
   resetApprovalExpiresAt,
 } from '@/lib/reset-execution-guard';
+import { reconcileStaleInProgressResets } from '@/lib/data-protection/reset-reconciliation';
 import { resetExecutionOwner } from '@/lib/reset-workflow';
 import { isUuid } from '@/lib/uuid';
 
@@ -35,6 +36,9 @@ export async function GET(request: NextRequest) {
   try {
     const auth = await requireTenantAdmin(request);
     if (!auth.ok) return auth.error;
+
+    await reconcileStaleInProgressResets({ tenantId: auth.session.tenantId });
+
     const db = getDb();
     const requests = await db
       .select({

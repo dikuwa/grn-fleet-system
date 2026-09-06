@@ -24,6 +24,7 @@ import {
   RESET_APPROVAL_TTL_HOURS,
   resetApprovalExpiresAt,
 } from '@/lib/reset-execution-guard';
+import { reconcileStaleInProgressResets } from '@/lib/data-protection/reset-reconciliation';
 import { isUuid } from '@/lib/uuid';
 
 const RESET_OPEN_STATUSES = ['draft', 'pending_review', 'approved', 'in_progress'] as const;
@@ -45,6 +46,8 @@ export async function GET(request: NextRequest) {
     const { session } = auth;
     const permCheck = await requirePermission(session, Permissions.RESET_MANAGE);
     if (permCheck instanceof NextResponse) return permCheck;
+
+    await reconcileStaleInProgressResets();
 
     const { searchParams } = new URL(request.url);
     const status = searchParams.get('status') || '';
