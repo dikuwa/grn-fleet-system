@@ -1,9 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { deleteBackup } from '@/lib/data-protection/backup-service';
 import {
-  assertNoActivePlatformResetExecutionClaim,
+  deleteBackupWithPlatformResetFence,
   setBackupProtectionWithPlatformResetFence,
 } from '@/lib/data-protection/platform-reset-claim';
 import { recordAuditEvent } from '@/lib/audit-event';
@@ -26,7 +25,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     const message = error instanceof Error ? error.message : String(error);
     const status = /not found/i.test(message)
       ? 404
-      : /protected|required|cannot be released|active operational reset|locked/i.test(message)
+      : /protected|required|cannot be released|active operational reset|locked|deletion is already in progress|changed while deletion/i.test(message)
         ? 409
         : 500;
     return NextResponse.json({ error: message }, { status });
@@ -44,8 +43,7 @@ export async function DELETE(
     if (permCheck instanceof NextResponse) return permCheck;
     const { id } = await params;
     if (!isUuid(id)) return NextResponse.json({ error: 'Backup not found' }, { status: 404 });
-    await assertNoActivePlatformResetExecutionClaim(id);
-    const backup = await deleteBackup(id);
+    const backup = await deleteBackupWithPlatformResetFence(id);
     await recordAuditEvent({
       tenantId: backup.tenantId ?? auth.session.tenantId,
       actorUserId: auth.session.user.id,
@@ -66,7 +64,7 @@ export async function DELETE(
     const message = error instanceof Error ? error.message : String(error);
     const status = /not found/i.test(message)
       ? 404
-      : /protected|required|cannot be released|active operational reset|locked/i.test(message)
+      : /protected|required|cannot be released|active operational reset|locked|deletion is already in progress|changed while deletion/i.test(message)
         ? 409
         : 500;
     return NextResponse.json({ error: message }, { status });
