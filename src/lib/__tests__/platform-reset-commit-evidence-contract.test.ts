@@ -121,26 +121,34 @@ describe('platform operational reset commit evidence', () => {
     expect(pendingCode).toBeGreaterThan(releaseGuard);
   });
 
-  it('reconciles every stale claim under advisory and row locks before reuse', () => {
+  it('reconciles every existing claim under advisory and row locks before reuse', () => {
     const acquire = claim.indexOf('export async function acquirePlatformResetExecutionClaim');
     const advisory = claim.indexOf('pg_advisory_xact_lock', acquire);
-    const existing = claim.indexOf("platformExecutionClaimId' IS NOT NULL", advisory);
-    const reconcile = claim.indexOf('reconcilePlatformResetExecutionClaim(', existing);
+    const existingClaims = claim.indexOf('const existingClaims = await tx', advisory);
+    const existingPredicate = claim.indexOf("platformExecutionClaimId' IS NOT NULL", existingClaims);
+    const loop = claim.indexOf('for (const existing of existingClaims)', existingPredicate);
+    const reconcile = claim.indexOf('reconcilePlatformResetExecutionClaim(', loop);
+    const blocked = claim.indexOf('if (reconciliation.blocked)', reconcile);
+    const newClaim = claim.indexOf('const claimId = randomUUID()', blocked);
+    const queriedClaims = claim.slice(existingClaims, loop);
     const helper = claim.indexOf('async function reconcilePlatformResetExecutionClaim');
     const rowLock = claim.indexOf('FOR UPDATE', helper);
     const committed = claim.indexOf('committedEvidenceForClaim(', rowLock);
     const clear = claim.indexOf("- 'platformExecutionClaimId'", committed);
-    const newClaim = claim.indexOf('const claimId = randomUUID()', reconcile);
 
     expect(acquire).toBeGreaterThan(-1);
     expect(advisory).toBeGreaterThan(acquire);
-    expect(existing).toBeGreaterThan(advisory);
-    expect(reconcile).toBeGreaterThan(existing);
+    expect(existingClaims).toBeGreaterThan(advisory);
+    expect(existingPredicate).toBeGreaterThan(existingClaims);
+    expect(loop).toBeGreaterThan(existingPredicate);
+    expect(queriedClaims).not.toContain('.limit(1)');
+    expect(reconcile).toBeGreaterThan(loop);
+    expect(blocked).toBeGreaterThan(reconcile);
+    expect(newClaim).toBeGreaterThan(blocked);
     expect(helper).toBeGreaterThan(-1);
     expect(rowLock).toBeGreaterThan(helper);
     expect(committed).toBeGreaterThan(rowLock);
     expect(clear).toBeGreaterThan(committed);
-    expect(newClaim).toBeGreaterThan(reconcile);
   });
 
   it('treats reconciliation-pending claim state as live regardless of TTL', () => {
