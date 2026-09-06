@@ -467,6 +467,7 @@ export async function executeApprovedTenantOperationalReset(input: {
       .returning({ id: tenantResetRequests.id });
 
     if (!markedFailed) throw error;
+    throw new Error(`Reset finalization failed after execution: ${finalizationError}`);
   }
 
   await recordAuditEvent({
