@@ -10,6 +10,13 @@ import { isUuid } from '@/lib/uuid';
 
 const FREQUENCIES = ['daily', 'weekly', 'monthly'] as const;
 
+function parseRetentionDays(value: unknown, fallback: number) {
+  if (value == null || value === '') return fallback;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 3650) return null;
+  return parsed;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const auth = await requireRequestAuth(request);
@@ -24,10 +31,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'tenantId must be a valid UUID' }, { status: 400 });
     }
     const frequency = typeof body.frequency === 'string' ? body.frequency : 'monthly';
-    const retentionDays = Math.min(3650, Math.max(1, Number(body.retentionDays || 90)));
+    const retentionDays = parseRetentionDays(body.retentionDays, 90);
     if (!FREQUENCIES.includes(frequency as (typeof FREQUENCIES)[number])) {
       return NextResponse.json(
         { error: 'frequency must be daily, weekly, or monthly' },
+        { status: 400 },
+      );
+    }
+    if (retentionDays == null) {
+      return NextResponse.json(
+        { error: 'retentionDays must be an integer between 1 and 3650' },
         { status: 400 },
       );
     }
@@ -86,10 +99,13 @@ export async function PATCH(request: NextRequest) {
     const frequency = typeof body.frequency === 'string' ? body.frequency : current.frequency;
     if (!FREQUENCIES.includes(frequency as (typeof FREQUENCIES)[number]))
       return NextResponse.json({ error: 'Invalid frequency' }, { status: 400 });
-    const retentionDays =
-      body.retentionDays == null
-        ? current.retentionDays
-        : Math.min(3650, Math.max(1, Number(body.retentionDays)));
+    const retentionDays = parseRetentionDays(body.retentionDays, current.retentionDays);
+    if (retentionDays == null) {
+      return NextResponse.json(
+        { error: 'retentionDays must be an integer between 1 and 3650' },
+        { status: 400 },
+      );
+    }
     const enabled = typeof body.enabled === 'boolean' ? body.enabled : current.enabled;
 
     const [updated] = await db
