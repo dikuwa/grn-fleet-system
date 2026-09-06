@@ -10,15 +10,19 @@ const route = readFileSync(
   resolve(process.cwd(), 'src/app/api/platform/reset/platform/route.ts'),
   'utf8',
 );
+const claim = readFileSync(
+  resolve(process.cwd(), 'src/lib/data-protection/platform-reset-claim.ts'),
+  'utf8',
+);
 
 describe('platform operational reset commit evidence', () => {
   it('passes the exact execution claim into the destructive reset service', () => {
-    const claim = route.indexOf('executionClaimId = claim.claimId');
-    const execute = route.indexOf('executeVerifiedPlatformOperationalReset({', claim);
+    const claimAssignment = route.indexOf('executionClaimId = claim.claimId');
+    const execute = route.indexOf('executeVerifiedPlatformOperationalReset({', claimAssignment);
     const passClaim = route.indexOf('executionClaimId,', execute);
 
-    expect(claim).toBeGreaterThan(-1);
-    expect(execute).toBeGreaterThan(claim);
+    expect(claimAssignment).toBeGreaterThan(-1);
+    expect(execute).toBeGreaterThan(claimAssignment);
     expect(passClaim).toBeGreaterThan(execute);
   });
 
@@ -97,29 +101,95 @@ describe('platform operational reset commit evidence', () => {
     expect(restoreResult).toBeGreaterThan(committed);
   });
 
-  it('keeps the global execution claim while commit reconciliation is pending', () => {
+  it('persists a non-expiring reconciliation marker and does not release that claim', () => {
     const catchBlock = route.indexOf('} catch (error) {');
     const pending = route.indexOf('const reconciliationPending =', catchBlock);
+    const mark = route.indexOf(
+      'markPlatformResetExecutionClaimPendingReconciliation({',
+      pending,
+    );
     const releaseGuard = route.indexOf(
       'if (!reconciliationPending && executionClaimId && executionBackupId)',
-      pending,
+      mark,
     );
     const pendingCode = route.indexOf("code: 'PLATFORM_RESET_RECONCILIATION_PENDING'", releaseGuard);
 
     expect(catchBlock).toBeGreaterThan(-1);
     expect(pending).toBeGreaterThan(catchBlock);
-    expect(releaseGuard).toBeGreaterThan(pending);
+    expect(mark).toBeGreaterThan(pending);
+    expect(releaseGuard).toBeGreaterThan(mark);
     expect(pendingCode).toBeGreaterThan(releaseGuard);
   });
 
-  it('supports idempotent retries after a durable committed marker', () => {
+  it('reconciles every stale claim under advisory and row locks before reuse', () => {
+    const acquire = claim.indexOf('export async function acquirePlatformResetExecutionClaim');
+    const advisory = claim.indexOf('pg_advisory_xact_lock', acquire);
+    const existing = claim.indexOf("platformExecutionClaimId' IS NOT NULL", advisory);
+    const reconcile = claim.indexOf('reconcilePlatformResetExecutionClaim(', existing);
+    const helper = claim.indexOf('async function reconcilePlatformResetExecutionClaim');
+    const rowLock = claim.indexOf('FOR UPDATE', helper);
+    const committed = claim.indexOf('committedEvidenceForClaim(', rowLock);
+    const clear = claim.indexOf("- 'platformExecutionClaimId'", committed);
+    const newClaim = claim.indexOf('const claimId = randomUUID()', reconcile);
+
+    expect(acquire).toBeGreaterThan(-1);
+    expect(advisory).toBeGreaterThan(acquire);
+    expect(existing).toBeGreaterThan(advisory);
+    expect(reconcile).toBeGreaterThan(existing);
+    expect(helper).toBeGreaterThan(-1);
+    expect(rowLock).toBeGreaterThan(helper);
+    expect(committed).toBeGreaterThan(rowLock);
+    expect(clear).toBeGreaterThan(committed);
+    expect(newClaim).toBeGreaterThan(reconcile);
+  });
+
+  it('treats reconciliation-pending claim state as live regardless of TTL', () => {
+    const live = claim.indexOf('export function hasLivePlatformResetExecutionClaim');
+    const pending = claim.indexOf('if (pendingReconciliation) return true;', live);
+    const ttl = claim.indexOf('PLATFORM_RESET_EXECUTION_CLAIM_TTL_MINUTES', pending);
+
+    expect(live).toBeGreaterThan(-1);
+    expect(pending).toBeGreaterThan(live);
+    expect(ttl).toBeGreaterThan(pending);
+  });
+
+  it('resolves durable committed retries before archive or object-storage I/O', () => {
+    const execute = snapshot.indexOf('export async function executeVerifiedPlatformOperationalReset');
+    const dbFirst = snapshot.indexOf('readCommittedPlatformResetEvidence({', execute);
+    const completed = snapshot.indexOf('if (committedEvidence)', dbFirst);
+    const archiveRead = snapshot.indexOf('readPlatformOperationalBackup(input.backupId)', completed);
+    const helper = snapshot.indexOf('async function readCommittedPlatformResetEvidence');
+    const planMatch = snapshot.indexOf('planFingerprint === input.expectedFingerprint', helper);
+    const snapshotMatch = snapshot.indexOf(
+      'executionSnapshotFingerprint === verifiedSnapshotFingerprint',
+      planMatch,
+    );
+    const failClosed = snapshot.indexOf('Manual reconciliation is required before retrying.', snapshotMatch);
+
+    expect(execute).toBeGreaterThan(-1);
+    expect(dbFirst).toBeGreaterThan(execute);
+    expect(completed).toBeGreaterThan(dbFirst);
+    expect(archiveRead).toBeGreaterThan(completed);
+    expect(helper).toBeGreaterThan(-1);
+    expect(planMatch).toBeGreaterThan(helper);
+    expect(snapshotMatch).toBeGreaterThan(planMatch);
+    expect(failClosed).toBeGreaterThan(snapshotMatch);
+  });
+
+  it('keeps an archive-backed idempotency fallback behind the database-first path', () => {
+    const execute = snapshot.indexOf('export async function executeVerifiedPlatformOperationalReset');
+    const dbFirst = snapshot.indexOf('readCommittedPlatformResetEvidence({', execute);
+    const archiveRead = snapshot.indexOf('readPlatformOperationalBackup(input.backupId)', dbFirst);
     const committed = snapshot.indexOf(
       "backupMetadata.platformResetExecutionState === 'committed'",
+      archiveRead,
     );
     const counts = snapshot.indexOf('countsFromExecutionMetadata(backupMetadata)', committed);
     const transaction = snapshot.indexOf('current = await db.transaction', counts);
 
-    expect(committed).toBeGreaterThan(-1);
+    expect(dbFirst).toBeGreaterThan(-1);
+    expect(archiveRead).toBeGreaterThan(dbFirst);
+    expect(committed).toBeGreaterThan(archiveRead);
     expect(counts).toBeGreaterThan(committed);
     expect(transaction).toBeGreaterThan(counts);
   });
