@@ -50,6 +50,35 @@ describe('reset execution crash evidence and reconciliation', () => {
     expect(returnMutations).toBeGreaterThan(rollbackFence);
   });
 
+  it('re-reads exact attempt evidence after an ambiguous atomic-call error', () => {
+    const atomicCall = service.indexOf('await executeResetPlanAtomically');
+    const atomicCatch = service.indexOf('} catch (error) {', atomicCall);
+    const evidenceRead = service.indexOf(
+      '.select({ status: tenantResetRequests.status, metadata: tenantResetRequests.metadata })',
+      atomicCatch,
+    );
+    const sameAttempt = service.indexOf(
+      'const sameAttempt = evidenceMetadata.executionAttemptId === executionAttemptId',
+      evidenceRead,
+    );
+    const committed = service.indexOf("evidenceState === 'committed'", sameAttempt);
+    const warning = service.indexOf('atomicCallWarning = atomicError', committed);
+    const committedOutcomes = service.indexOf('recordCommittedOutcomes();', warning);
+    const unresolved = service.indexOf(
+      'The request remains in progress for reconciliation',
+      committedOutcomes,
+    );
+
+    expect(atomicCall).toBeGreaterThan(-1);
+    expect(atomicCatch).toBeGreaterThan(atomicCall);
+    expect(evidenceRead).toBeGreaterThan(atomicCatch);
+    expect(sameAttempt).toBeGreaterThan(evidenceRead);
+    expect(committed).toBeGreaterThan(sameAttempt);
+    expect(warning).toBeGreaterThan(committed);
+    expect(committedOutcomes).toBeGreaterThan(warning);
+    expect(unresolved).toBeGreaterThan(committedOutcomes);
+  });
+
   it('classifies stale executions without guessing legacy commit state', () => {
     expect(reconciliation).toContain("metadata.executionTransactionState === 'not_started'");
     expect(reconciliation).toContain("metadata.executionTransactionState === 'committed'");
