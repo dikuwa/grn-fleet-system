@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { getDb } from '@/db';
@@ -43,6 +43,14 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     const previousMetadata = (resetRequest.metadata ?? {}) as Record<string, unknown>;
     const resetSpec = normalizeResetSpec(previousMetadata.resetSpec, { target: 'tenant' });
     const { preview } = await previewTenantOperationalReset(resetRequest.tenantId, resetSpec);
+    const validationState =
+      resetRequest.validationResults == null
+        ? isNull(tenantResetRequests.validationResults)
+        : eq(tenantResetRequests.validationResults, resetRequest.validationResults);
+    const metadataState =
+      resetRequest.metadata == null
+        ? isNull(tenantResetRequests.metadata)
+        : eq(tenantResetRequests.metadata, resetRequest.metadata);
 
     // A fresh plan invalidates an earlier recovery point for this request. The
     // old snapshot remains safely retained in Backup & Restore, but execution
@@ -85,8 +93,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         and(
           eq(tenantResetRequests.id, id),
           eq(tenantResetRequests.status, resetRequest.status),
-          eq(tenantResetRequests.validationResults, resetRequest.validationResults),
-          eq(tenantResetRequests.metadata, resetRequest.metadata),
+          validationState,
+          metadataState,
         ),
       )
       .returning({ id: tenantResetRequests.id });
