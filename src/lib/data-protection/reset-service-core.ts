@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { and, eq, getTableName, sql } from 'drizzle-orm';
 import { getDb, schema } from '@/db';
 import { platformBackups } from '@/db/schema/data-protection';
@@ -154,6 +154,11 @@ async function executeResetPlanAtomically(
   plan: ResetPlan,
   advancedPlan: AdvancedResetPlan,
   resetSpec: ResetSpec,
+  evidence: {
+    resetRequestId: string;
+    executionAttemptId: string;
+    committedAt: Date;
+  },
 ) {
   await runAtomicMutations((executor) => {
     const mutations: unknown[] = [];
@@ -176,6 +181,29 @@ async function executeResetPlanAtomically(
       if (step.before)
         mutations.push(executor.delete(resetTable(step.table)).where(step.condition));
     }
+
+    // Persist the destructive-commit evidence in the same transaction/batch as
+    // the deletes. The final SELECT raises at execution time when the evidence
+    // update matched zero rows, rolling back the whole mutation group.
+    mutations.push(
+      executor.execute(sql`
+        WITH evidence AS (
+          UPDATE ${tenantResetRequests}
+          SET metadata = COALESCE(${tenantResetRequests.metadata}, '{}'::jsonb) || jsonb_build_object(
+            'executionEvidenceVersion', 1,
+            'executionAttemptId', ${evidence.executionAttemptId},
+            'executionTransactionState', 'committed',
+            'executionTransactionCommittedAt', ${evidence.committedAt.toISOString()}
+          )
+          WHERE ${tenantResetRequests.id} = ${evidence.resetRequestId}
+            AND ${tenantResetRequests.status} = 'in_progress'
+            AND ${tenantResetRequests.metadata}->>'executionAttemptId' = ${evidence.executionAttemptId}
+            AND ${tenantResetRequests.metadata}->>'executionTransactionState' = 'not_started'
+          RETURNING 1
+        )
+        SELECT 1 / COUNT(*)::int FROM evidence
+      `),
+    );
     return mutations;
   });
 }
@@ -300,6 +328,15 @@ export async function executeApprovedTenantOperationalReset(input: {
   }
 
   const executionStartedAt = new Date();
+  const executionAttemptId = randomUUID();
+  const executionMetadata = {
+    ...metadata,
+    executionEvidenceVersion: 1,
+    executionAttemptId,
+    executionAttemptStartedAt: executionStartedAt.toISOString(),
+    executionTransactionState: 'not_started',
+    executionTransactionCommittedAt: null,
+  };
   const executionClaimed = await db.transaction(async (tx) => {
     const [claimed] = await tx
       .update(tenantResetRequests)
@@ -307,6 +344,7 @@ export async function executeApprovedTenantOperationalReset(input: {
         status: 'in_progress',
         startedAt: executionStartedAt,
         failureReason: null,
+        metadata: executionMetadata,
         updatedAt: executionStartedAt,
       })
       .where(
@@ -342,6 +380,10 @@ export async function executeApprovedTenantOperationalReset(input: {
     });
 
   const startedAt = Date.now();
+  const completedSteps = [
+    ...(resetSpec.categories.includes('operations') ? plan.steps : []),
+    ...advancedPlan.steps,
+  ];
   const outcomes: Array<{
     table: string;
     label: string;
@@ -349,13 +391,7 @@ export async function executeApprovedTenantOperationalReset(input: {
     removed: number;
     error?: string;
   }> = [];
-  let failed = false;
-  try {
-    await executeResetPlanAtomically(plan, advancedPlan, resetSpec);
-    const completedSteps = [
-      ...(resetSpec.categories.includes('operations') ? plan.steps : []),
-      ...advancedPlan.steps,
-    ];
+  const recordCommittedOutcomes = () => {
     completedSteps.forEach((step) =>
       outcomes.push({
         table: step.table,
@@ -364,15 +400,51 @@ export async function executeApprovedTenantOperationalReset(input: {
         removed: step.before,
       }),
     );
-  } catch (error) {
-    failed = true;
-    outcomes.push({
-      table: 'reset_plan',
-      label: 'Atomic reset plan',
-      planned: freshPreview.dryRunSummary.total,
-      removed: 0,
-      error: error instanceof Error ? error.message : String(error),
+  };
+  let failed = false;
+  let atomicCallWarning: string | null = null;
+  try {
+    await executeResetPlanAtomically(plan, advancedPlan, resetSpec, {
+      resetRequestId: resetRequest.id,
+      executionAttemptId,
+      committedAt: new Date(),
     });
+    recordCommittedOutcomes();
+  } catch (error) {
+    const atomicError = error instanceof Error ? error.message : String(error);
+    let evidenceRow:
+      | { status: string; metadata: Record<string, unknown> | null }
+      | undefined;
+    try {
+      [evidenceRow] = await db
+        .select({ status: tenantResetRequests.status, metadata: tenantResetRequests.metadata })
+        .from(tenantResetRequests)
+        .where(eq(tenantResetRequests.id, resetRequest.id))
+        .limit(1);
+    } catch (verificationError) {
+      throw new Error(
+        `Reset atomic result is pending reconciliation because durable evidence could not be verified after an execution error: ${verificationError instanceof Error ? verificationError.message : String(verificationError)}`,
+      );
+    }
+
+    const evidenceMetadata = (evidenceRow?.metadata ?? {}) as Record<string, unknown>;
+    const sameAttempt = evidenceMetadata.executionAttemptId === executionAttemptId;
+    const evidenceState = evidenceMetadata.executionTransactionState;
+    if (sameAttempt && evidenceState === 'committed') {
+      // Neon HTTP can commit the server-side transaction and still lose the
+      // response. Durable commit evidence wins over the ambiguous transport
+      // error, so preserve the committed outcome and continue integrity checks.
+      atomicCallWarning = atomicError;
+      recordCommittedOutcomes();
+    } else {
+      // A failed/aborted HTTP call cannot prove rollback while the server-side
+      // transaction may still be resolving. `not_started` is therefore pending,
+      // not terminal evidence. Keep the request in progress for the stale
+      // reconciler, which later fences and classifies durable metadata state.
+      throw new Error(
+        `Reset atomic result is pending reconciliation after execution failure. The request remains in progress until durable commit evidence settles. Original error: ${atomicError}`,
+      );
+    }
   }
 
   const integrity = await runIntegrityChecks(db as unknown as ResetDb, resetRequest.tenantId);
@@ -394,6 +466,9 @@ export async function executeApprovedTenantOperationalReset(input: {
     preserved: freshPreview.preserved,
     review: freshPreview.review,
     integrity,
+    executionAttemptId,
+    destructivePlanCommitted: !failed,
+    atomicCallWarning,
     storageFilesRemoved: [] as string[],
     storageFilesPreserved: plan.fileKeys.length,
   };
@@ -431,6 +506,7 @@ export async function executeApprovedTenantOperationalReset(input: {
           and(
             eq(tenantResetRequests.id, resetRequest.id),
             eq(tenantResetRequests.status, 'in_progress'),
+            sql`${tenantResetRequests.metadata}->>'executionAttemptId' = ${executionAttemptId}`,
           ),
         )
         .returning({ id: tenantResetRequests.id });
@@ -462,6 +538,7 @@ export async function executeApprovedTenantOperationalReset(input: {
         and(
           eq(tenantResetRequests.id, resetRequest.id),
           eq(tenantResetRequests.status, 'in_progress'),
+          sql`${tenantResetRequests.metadata}->>'executionAttemptId' = ${executionAttemptId}`,
         ),
       )
       .returning({ id: tenantResetRequests.id });
@@ -485,6 +562,8 @@ export async function executeApprovedTenantOperationalReset(input: {
       backupSnapshotId: backup.id,
       backupStorageKey: backup.storageKey,
       integrityPassed,
+      executionAttemptId,
+      atomicCallWarning,
     },
   });
 

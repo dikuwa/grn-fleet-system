@@ -1,5 +1,10 @@
 export type ResetExecutionHttpStatus = 403 | 404 | 409 | 500;
 
+export function isResetExecutionReconciliationPending(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /pending reconciliation/i.test(message);
+}
+
 /**
  * Map governed-reset business/precondition failures to controlled HTTP statuses.
  * Unexpected infrastructure or programming failures intentionally remain 500s.
@@ -18,6 +23,7 @@ export function resetExecutionHttpStatus(error: unknown): ResetExecutionHttpStat
   }
 
   if (
+    isResetExecutionReconciliationPending(error) ||
     /approve|expired|dry run|recovery point|confirmation|changed after execution validation|changed after the dry run|operational reset|not ready to execute|execution claim|backup is not ready|backup archive|backup tenant|backup integrity check|unsupported backup format|tenant identity/i.test(
       message,
     )
