@@ -14,6 +14,9 @@ import { userProfiles } from '@/db/schema/auth';
 import { eq, and, or, lt, gte, desc } from 'drizzle-orm';
 import { createHash, randomBytes, randomUUID } from 'crypto';
 import bcrypt from 'bcryptjs';
+import { getTenantEntitlements } from '@/lib/entitlements';
+import { checkTenantUserCapacityLocked, lockTenantUserCapacity } from '@/lib/tenant-user-capacity';
+import { lockUserMembershipInvariant } from '@/lib/user-membership-integrity';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -28,6 +31,20 @@ const ONBOARDING_INVITATION_LIFECYCLES = new Set([
   'INVITATION_SENT',
   'INVITATION_EXPIRED',
 ]);
+
+const CAPACITY_COUNTED_MEMBERSHIP_STATUSES = new Set([
+  'active',
+  'pending',
+  'pending_activation',
+  'suspended',
+]);
+
+export class InvitationCapacityError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = 'InvitationCapacityError';
+  }
+}
 
 // ---------------------------------------------------------------------------
 // Token helpers
@@ -289,6 +306,8 @@ export function isActiveInvitationIdentityProfile(profile: {
  *  - Ensures every accepted identity has a user_profiles security/lifecycle row
  *  - Creates a local password credential only when one is actually needed
  *  - Reuses an existing tenant membership and role assignments when present
+ *  - Enforces tenant user capacity at the membership activation boundary
+ *  - Serializes existing identity state with User Management and staff lifecycle
  *  - Advances lifecycle only for the first Tenant Administrator onboarding invite
  */
 export async function acceptInvitation(input: AcceptInvitationInput): Promise<{
@@ -304,6 +323,11 @@ export async function acceptInvitation(input: AcceptInvitationInput): Promise<{
   }
   if (invitation.email.toLowerCase() !== input.email.trim().toLowerCase()) {
     throw new Error('This invitation was issued to a different email address.');
+  }
+
+  const entitlements = await getTenantEntitlements(invitation.tenantId);
+  if (!entitlements) {
+    throw new Error('Tenant not found.');
   }
 
   const email = input.email.trim().toLowerCase();
@@ -329,6 +353,10 @@ export async function acceptInvitation(input: AcceptInvitationInput): Promise<{
       throw new Error('This invitation has already been used or has expired.');
     }
 
+    // Capacity is tenant-scoped and account/profile state is user-scoped. Keep
+    // the same lock order used by staff restore: tenant capacity, then identity.
+    await lockTenantUserCapacity(tx, invitation.tenantId);
+
     const [existingUser] = await tx
       .select()
       .from(user)
@@ -338,6 +366,8 @@ export async function acceptInvitation(input: AcceptInvitationInput): Promise<{
     let userId: string;
     if (existingUser) {
       userId = existingUser.id;
+      await lockUserMembershipInvariant(tx, userId);
+
       const [existingProfile] = await tx
         .select({
           status: userProfiles.status,
@@ -360,6 +390,7 @@ export async function acceptInvitation(input: AcceptInvitationInput): Promise<{
         throw new Error('Create a password to finish setting up this new account.');
       }
       userId = `user-invite-${randomUUID().slice(0, 8)}`;
+      await lockUserMembershipInvariant(tx, userId);
       await tx.insert(user).values({
         id: userId,
         email,
@@ -414,8 +445,8 @@ export async function acceptInvitation(input: AcceptInvitationInput): Promise<{
       })
       .onConflictDoNothing({ target: userProfiles.userId });
 
-    // Re-read after the conflict-safe insert so concurrent invitations cannot
-    // make a disabled identity active through membership creation.
+    // Re-read after the conflict-safe insert while holding the identity lock so
+    // User Management cannot disable the profile between validation and access.
     const [acceptedProfile] = await tx
       .select({
         status: userProfiles.status,
@@ -431,7 +462,7 @@ export async function acceptInvitation(input: AcceptInvitationInput): Promise<{
     }
 
     const [existingMembership] = await tx
-      .select({ id: tenantMemberships.id })
+      .select({ id: tenantMemberships.id, status: tenantMemberships.status })
       .from(tenantMemberships)
       .where(
         and(
@@ -440,6 +471,22 @@ export async function acceptInvitation(input: AcceptInvitationInput): Promise<{
         ),
       )
       .limit(1);
+
+    const consumesCapacity =
+      !existingMembership || !CAPACITY_COUNTED_MEMBERSHIP_STATUSES.has(existingMembership.status);
+    if (consumesCapacity) {
+      const capacityCheck = await checkTenantUserCapacityLocked(
+        tx,
+        invitation.tenantId,
+        entitlements,
+        1,
+      );
+      if (!capacityCheck.ok) {
+        throw new InvitationCapacityError(
+          capacityCheck.message || 'User limit reached. Increase the tenant user allowance before accepting this invitation.',
+        );
+      }
+    }
 
     let membershipId = existingMembership?.id;
     if (!membershipId) {
@@ -452,11 +499,20 @@ export async function acceptInvitation(input: AcceptInvitationInput): Promise<{
         })
         .returning({ id: tenantMemberships.id });
       membershipId = membership?.id;
-    } else {
-      await tx
+    } else if (existingMembership.status !== 'active') {
+      const [activatedMembership] = await tx
         .update(tenantMemberships)
         .set({ status: 'active' })
-        .where(eq(tenantMemberships.id, membershipId));
+        .where(
+          and(
+            eq(tenantMemberships.id, membershipId),
+            eq(tenantMemberships.status, existingMembership.status),
+          ),
+        )
+        .returning({ id: tenantMemberships.id });
+      if (!activatedMembership) {
+        throw new Error('This organisation membership changed while the invitation was being accepted. Please retry.');
+      }
     }
 
     if (!membershipId) throw new Error('Could not establish tenant membership.');
