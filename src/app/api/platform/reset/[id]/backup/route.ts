@@ -113,7 +113,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         status: tenantResetRequests.status,
         reviewedAt: tenantResetRequests.reviewedAt,
         validationResults: tenantResetRequests.validationResults,
-        metadata: tenantResetRequests.metadata,
       })
       .from(tenantResetRequests)
       .where(
@@ -164,6 +163,11 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
             sql`${tenantResetRequests.metadata}->>'recoveryPointClaimId' = ${recoveryClaimId}`,
           ),
         );
+      await releaseResetRecoveryPointClaim({
+        resetRequestId: resetRequest.id,
+        claimId: recoveryClaimId,
+      });
+      recoveryClaimId = null;
       return NextResponse.json(
         {
           error:
