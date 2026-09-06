@@ -15,6 +15,12 @@ import { isUuid } from '@/lib/uuid';
 
 export const maxDuration = 300;
 
+function positiveIntegerParam(value: string | null, fallback: number) {
+  if (!value) return fallback;
+  const parsed = Number(value);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 export async function GET(request: NextRequest) {
   try {
     const auth = await requireRequestAuth(request);
@@ -24,8 +30,8 @@ export async function GET(request: NextRequest) {
 
     const searchParams = request.nextUrl.searchParams;
     const view = searchParams.get('view') === 'history' ? 'history' : 'current';
-    const page = Number(searchParams.get('page') || 1);
-    const limit = Number(searchParams.get('limit') || 20);
+    const page = positiveIntegerParam(searchParams.get('page'), 1);
+    const limit = positiveIntegerParam(searchParams.get('limit'), 20);
     const [backupPage, schedules] = await Promise.all([
       listBackups({ view, page, limit }),
       activeBackupSchedules(),
