@@ -23,7 +23,11 @@ describe('resetExecutionHttpStatus', () => {
     'Create a durable recovery point before executing this reset',
     'This reset request changed after execution validation. Refresh the request and review its current state before retrying.',
     'Selected data changed after the dry run. Run the dry run again and create a new recovery point before executing.',
-    'Backup checksum does not match the stored recovery point.',
+    'Backup is not ready',
+    'Backup archive could not be found in durable storage',
+    'Backup integrity check failed: checksum mismatch',
+    'Unsupported backup format',
+    'Backup tenant identity mismatch',
   ])('maps governed execution preconditions to 409: %s', (message) => {
     expect(resetExecutionHttpStatus(new Error(message))).toBe(409);
   });
