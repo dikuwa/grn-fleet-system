@@ -8,6 +8,7 @@ import {
 } from '@/lib/data-protection/backup-service';
 import { isStorageConfigured } from '@/lib/storage';
 import { recordAuditEvent } from '@/lib/audit-event';
+import { isUuid } from '@/lib/uuid';
 
 export const maxDuration = 300;
 
@@ -63,6 +64,9 @@ export async function POST(request: NextRequest) {
     const reason = typeof body.reason === 'string' ? body.reason.trim() : '';
     const retentionDays = Number(body.retentionDays || 30);
     if (!tenantId) return NextResponse.json({ error: 'tenantId is required' }, { status: 400 });
+    if (!isUuid(tenantId)) {
+      return NextResponse.json({ error: 'tenantId must be a valid UUID' }, { status: 400 });
+    }
 
     const backup = await createTenantOperationalBackup({
       tenantId,
@@ -89,9 +93,10 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ success: true, data: backup }, { status: 201 });
   } catch (error) {
     console.error('[Platform Backups] POST failed:', error);
+    const message = error instanceof Error ? error.message : String(error);
     return NextResponse.json(
-      { error: error instanceof Error ? error.message : String(error) },
-      { status: 500 },
+      { error: message },
+      { status: /^Tenant not found\.?$/i.test(message) ? 404 : 500 },
     );
   }
 }
