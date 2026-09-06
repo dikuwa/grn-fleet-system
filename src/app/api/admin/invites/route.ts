@@ -8,7 +8,6 @@ import { Permissions } from '@/lib/permissions';
 import { sendReactEmail } from '@/lib/email';
 import { UserInviteEmail } from '@/emails/user-invite';
 import { recordAuditEvent } from '@/lib/audit-event';
-import { lockUserMembershipInvariant } from '@/lib/user-membership-integrity';
 import { createElement } from 'react';
 import bcrypt from 'bcryptjs';
 
@@ -170,11 +169,6 @@ export async function POST(req: NextRequest) {
       }
 
       await db.transaction(async (tx) => {
-        // User Management, staff lifecycle, delegation and invitation actions all
-        // mutate tenant membership/account state for this identity. Use the same
-        // advisory lock before taking row locks so those surfaces cannot race.
-        await lockUserMembershipInvariant(tx, userId);
-
         const [lockedUser] = await tx
           .select({ emailVerified: user.emailVerified })
           .from(user)
@@ -240,8 +234,6 @@ export async function POST(req: NextRequest) {
     const passwordHash = await bcrypt.hash(tempPassword, 10);
 
     await db.transaction(async (tx) => {
-      await lockUserMembershipInvariant(tx, userId);
-
       const [lockedUser] = await tx
         .select({ emailVerified: user.emailVerified })
         .from(user)
