@@ -27,7 +27,7 @@ describe('reset execution crash evidence and reconciliation', () => {
     const deletes = service.indexOf('executor.delete(resetTable', atomic);
     const committed = service.indexOf("'executionTransactionState', 'committed'", deletes);
     const guard = service.indexOf("metadata}->>'executionTransactionState' = 'not_started'", committed);
-    const rollbackFence = service.indexOf('1 / 0', guard);
+    const rollbackFence = service.indexOf('SELECT 1 / COUNT(*)::int FROM evidence', guard);
     const returnMutations = service.indexOf('return mutations;', rollbackFence);
 
     expect(atomic).toBeGreaterThan(-1);
@@ -51,7 +51,10 @@ describe('reset execution crash evidence and reconciliation', () => {
     const staleQuery = reconciliation.indexOf("eq(tenantResetRequests.status, 'in_progress')");
     const cutoff = reconciliation.indexOf('lt(tenantResetRequests.startedAt, staleBefore)', staleQuery);
     const update = reconciliation.indexOf('.update(tenantResetRequests)', cutoff);
-    const statusFence = reconciliation.indexOf("eq(tenantResetRequests.status, 'in_progress')", update);
+    const statusFence = reconciliation.indexOf(
+      "eq(tenantResetRequests.status, 'in_progress')",
+      update,
+    );
     const startFence = reconciliation.indexOf(
       'eq(tenantResetRequests.startedAt, row.startedAt)',
       statusFence,
