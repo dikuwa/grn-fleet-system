@@ -170,6 +170,8 @@ export async function createVerifiedPlatformOperationalBackup(input: {
 }) {
   const backup = await createPlatformOperationalBackup(input);
   const { payload } = await readPlatformOperationalBackup(backup.id);
+  const backupChecksum = backup.checksum;
+  if (!backupChecksum) throw new Error('Platform recovery archive checksum is missing');
   const archiveSnapshotFingerprint = platformOperationalSnapshotFingerprint(payload.tables);
   const db = getDb();
   const verification = await db.transaction(async (tx) => {
@@ -195,7 +197,7 @@ export async function createVerifiedPlatformOperationalBackup(input: {
       !currentBackup ||
       currentBackup.status !== 'ready' ||
       !currentBackup.storageKey ||
-      currentBackup.checksum !== backup.checksum
+      currentBackup.checksum !== backupChecksum
     ) {
       return {
         ok: false as const,
@@ -222,7 +224,7 @@ export async function createVerifiedPlatformOperationalBackup(input: {
           and(
             eq(platformBackups.id, backup.id),
             eq(platformBackups.status, 'ready'),
-            eq(platformBackups.checksum, backup.checksum),
+            eq(platformBackups.checksum, backupChecksum),
           ),
         )
         .returning({ id: platformBackups.id });
@@ -249,7 +251,7 @@ export async function createVerifiedPlatformOperationalBackup(input: {
         and(
           eq(platformBackups.id, backup.id),
           eq(platformBackups.status, 'ready'),
-          eq(platformBackups.checksum, backup.checksum),
+          eq(platformBackups.checksum, backupChecksum),
         ),
       )
       .returning();
@@ -278,6 +280,8 @@ export async function executeVerifiedPlatformOperationalReset(input: {
   }
 
   const { backup, payload } = await readPlatformOperationalBackup(input.backupId);
+  const backupChecksum = backup.checksum;
+  if (!backupChecksum) throw new Error('Platform recovery archive checksum is missing');
   if (payload.fingerprint !== input.expectedFingerprint) {
     throw new Error('Recovery point does not match the current platform reset plan');
   }
@@ -322,7 +326,7 @@ export async function executeVerifiedPlatformOperationalReset(input: {
       !currentBackup ||
       currentBackup.status !== 'ready' ||
       !currentBackup.storageKey ||
-      currentBackup.checksum !== backup.checksum ||
+      currentBackup.checksum !== backupChecksum ||
       currentMetadata.platformSnapshotVersion !== 2 ||
       currentMetadata.platformSnapshotFingerprint !== storedSnapshotFingerprint
     ) {
