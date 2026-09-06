@@ -30,7 +30,7 @@ describe('reset execution finalization atomicity', () => {
     expect(finalizationFailure).toBeGreaterThan(inProgressGuard);
   });
 
-  it('falls back to a single failed-state marker when finalization persistence fails', () => {
+  it('falls back to a failed-state marker and surfaces the finalization error to callers', () => {
     const finalizationFailure = source.indexOf(
       "throw new Error('Reset finalization lost the in-progress request state.')",
     );
@@ -44,6 +44,10 @@ describe('reset execution finalization atomicity', () => {
       committedMarker,
     );
     const lostFallback = source.indexOf('if (!markedFailed) throw error', inProgressGuard);
+    const surfacedFailure = source.indexOf(
+      'throw new Error(`Reset finalization failed after execution: ${finalizationError}`)',
+      lostFallback,
+    );
 
     expect(catchBlock).toBeGreaterThan(finalizationFailure);
     expect(finalizationError).toBeGreaterThan(catchBlock);
@@ -52,5 +56,6 @@ describe('reset execution finalization atomicity', () => {
     expect(committedMarker).toBeGreaterThan(failedState);
     expect(inProgressGuard).toBeGreaterThan(committedMarker);
     expect(lostFallback).toBeGreaterThan(inProgressGuard);
+    expect(surfacedFailure).toBeGreaterThan(lostFallback);
   });
 });
