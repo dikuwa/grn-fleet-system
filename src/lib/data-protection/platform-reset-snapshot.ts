@@ -240,10 +240,20 @@ export async function createVerifiedPlatformOperationalBackup(input: {
     const [verified] = await tx
       .update(platformBackups)
       .set({
+        recordCount: current.counts.total,
         metadata: sql`COALESCE(${platformBackups.metadata}, '{}'::jsonb) || jsonb_build_object(
           'platformSnapshotVersion', 2,
           'platformSnapshotFingerprint', ${archiveSnapshotFingerprint},
-          'platformSnapshotVerifiedAt', ${verifiedAt.toISOString()}
+          'platformSnapshotVerifiedAt', ${verifiedAt.toISOString()},
+          'counts', jsonb_build_object(
+            'enquiries', ${current.counts.enquiries},
+            'demoRequests', ${current.counts.demoRequests},
+            'notifications', ${current.counts.notifications},
+            'notificationDeliveries', ${current.counts.notificationDeliveries},
+            'notificationReads', ${current.counts.notificationReads},
+            'notificationDismissals', ${current.counts.notificationDismissals},
+            'total', ${current.counts.total}
+          )
         )`,
         updatedAt: verifiedAt,
       })
