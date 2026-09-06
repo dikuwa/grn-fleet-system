@@ -5,6 +5,7 @@ import { tenantResetRequests } from '@/db/schema/reset-requests';
 
 const DEFAULT_APPROVAL_TTL_HOURS = 72;
 const DEFAULT_CLAIM_TTL_MINUTES = 15;
+const DEFAULT_RECOVERY_CLAIM_TTL_MINUTES = 10;
 
 function positiveNumber(value: string | undefined, fallback: number) {
   const parsed = Number(value);
@@ -19,6 +20,11 @@ export const RESET_APPROVAL_TTL_HOURS = positiveNumber(
 export const RESET_EXECUTION_CLAIM_TTL_MINUTES = positiveNumber(
   process.env.RESET_EXECUTION_CLAIM_TTL_MINUTES,
   DEFAULT_CLAIM_TTL_MINUTES,
+);
+
+export const RESET_RECOVERY_CLAIM_TTL_MINUTES = positiveNumber(
+  process.env.RESET_RECOVERY_CLAIM_TTL_MINUTES,
+  DEFAULT_RECOVERY_CLAIM_TTL_MINUTES,
 );
 
 export function resetApprovalExpiresAt(reviewedAt: Date | null) {
@@ -41,13 +47,35 @@ export function isResetRequestBlocking(
   return ['draft', 'pending_review', 'in_progress'].includes(request.status);
 }
 
+function metadataClaimIsLive(
+  metadata: Record<string, unknown>,
+  idKey: string,
+  claimedAtKey: string,
+  ttlMinutes: number,
+  now = new Date(),
+) {
+  const claimId = typeof metadata[idKey] === 'string' ? metadata[idKey] : '';
+  const claimedAtValue =
+    typeof metadata[claimedAtKey] === 'string' ? metadata[claimedAtKey] : '';
+  if (!claimId || !claimedAtValue) return false;
+  const claimedAt = new Date(claimedAtValue);
+  if (Number.isNaN(claimedAt.getTime())) return false;
+  return claimedAt.getTime() > now.getTime() - ttlMinutes * 60 * 1000;
+}
+
 export type ResetExecutionClaimResult =
   | { ok: true; claimId: string; approvalExpiresAt: string | null }
   | {
       ok: false;
       status: 404 | 409;
       code:
-        'not_found' | 'completed' | 'in_progress' | 'not_approved' | 'approval_expired' | 'claimed';
+        | 'not_found'
+        | 'completed'
+        | 'in_progress'
+        | 'not_approved'
+        | 'approval_expired'
+        | 'claimed'
+        | 'recovery_in_progress';
       message: string;
       data?: Record<string, unknown>;
     };
@@ -125,6 +153,23 @@ export async function acquireResetExecutionClaim(input: {
   }
 
   const metadata = (current.metadata ?? {}) as Record<string, unknown>;
+  if (
+    metadataClaimIsLive(
+      metadata,
+      'recoveryPointClaimId',
+      'recoveryPointClaimedAt',
+      RESET_RECOVERY_CLAIM_TTL_MINUTES,
+    )
+  ) {
+    return {
+      ok: false,
+      status: 409,
+      code: 'recovery_in_progress',
+      message:
+        'Recovery point creation is still in progress for this reset. Wait for verification to finish before executing.',
+    };
+  }
+
   const claimId = randomUUID();
   const now = new Date();
   const staleBefore = new Date(now.getTime() - RESET_EXECUTION_CLAIM_TTL_MINUTES * 60 * 1000);
@@ -145,6 +190,11 @@ export async function acquireResetExecutionClaim(input: {
       sql`${tenantResetRequests.metadata}->>'executionClaimId' = ''`,
       sql`NULLIF(${tenantResetRequests.metadata}->>'executionClaimedAt', '')::timestamptz < ${staleBefore}`,
     )!,
+    or(
+      sql`${tenantResetRequests.metadata}->>'recoveryPointClaimId' IS NULL`,
+      sql`${tenantResetRequests.metadata}->>'recoveryPointClaimId' = ''`,
+      sql`NULLIF(${tenantResetRequests.metadata}->>'recoveryPointClaimedAt', '')::timestamptz < ${new Date(now.getTime() - RESET_RECOVERY_CLAIM_TTL_MINUTES * 60 * 1000)}`,
+    )!,
   ];
   const [claimed] = await db
     .update(tenantResetRequests)
@@ -158,7 +208,7 @@ export async function acquireResetExecutionClaim(input: {
       status: 409,
       code: 'claimed',
       message:
-        'Another reset execution request already holds the execution claim. Refresh the reset status before trying again.',
+        'Another reset execution or recovery-point request already holds the reset claim. Refresh the reset status before trying again.',
     };
   }
 
@@ -195,6 +245,147 @@ export async function releaseResetExecutionClaim(input: {
         eq(tenantResetRequests.id, input.resetRequestId),
         eq(tenantResetRequests.status, 'approved' as const),
         sql`${tenantResetRequests.metadata}->>'executionClaimId' = ${input.claimId}`,
+      ),
+    );
+}
+
+export type ResetRecoveryPointClaimResult =
+  | { ok: true; claimId: string; claimedAt: Date }
+  | {
+      ok: false;
+      status: 404 | 409;
+      code: 'not_found' | 'not_approved' | 'approval_expired' | 'changed' | 'claimed';
+      message: string;
+    };
+
+/** Reserve the exact approved revision while its recovery point is built and verified. */
+export async function acquireResetRecoveryPointClaim(input: {
+  resetRequestId: string;
+  expectedUpdatedAt: Date;
+  actorUserId: string;
+}): Promise<ResetRecoveryPointClaimResult> {
+  const db = getDb();
+  const [current] = await db
+    .select({
+      id: tenantResetRequests.id,
+      status: tenantResetRequests.status,
+      reviewedAt: tenantResetRequests.reviewedAt,
+      metadata: tenantResetRequests.metadata,
+      updatedAt: tenantResetRequests.updatedAt,
+    })
+    .from(tenantResetRequests)
+    .where(eq(tenantResetRequests.id, input.resetRequestId))
+    .limit(1);
+
+  if (!current) {
+    return { ok: false, status: 404, code: 'not_found', message: 'Reset request not found.' };
+  }
+  if (current.status !== 'approved') {
+    return {
+      ok: false,
+      status: 409,
+      code: 'not_approved',
+      message: 'The reset is no longer approved for recovery-point creation.',
+    };
+  }
+  if (isResetApprovalExpired(current.reviewedAt)) {
+    return {
+      ok: false,
+      status: 409,
+      code: 'approval_expired',
+      message: 'This approval expired before recovery-point creation could start.',
+    };
+  }
+  if (current.updatedAt.getTime() !== input.expectedUpdatedAt.getTime()) {
+    return {
+      ok: false,
+      status: 409,
+      code: 'changed',
+      message:
+        'This reset request changed while the recovery point was being prepared. Refresh and create a recovery point from the current revision.',
+    };
+  }
+
+  const metadata = (current.metadata ?? {}) as Record<string, unknown>;
+  const now = new Date();
+  const executionStaleBefore = new Date(
+    now.getTime() - RESET_EXECUTION_CLAIM_TTL_MINUTES * 60 * 1000,
+  );
+  const recoveryStaleBefore = new Date(
+    now.getTime() - RESET_RECOVERY_CLAIM_TTL_MINUTES * 60 * 1000,
+  );
+  const claimId = randomUUID();
+  const nextMetadata = {
+    ...metadata,
+    recoveryPointClaimId: claimId,
+    recoveryPointClaimedAt: now.toISOString(),
+    recoveryPointClaimedByUserId: input.actorUserId,
+  };
+
+  const [claimed] = await db
+    .update(tenantResetRequests)
+    .set({ metadata: nextMetadata, updatedAt: now })
+    .where(
+      and(
+        eq(tenantResetRequests.id, input.resetRequestId),
+        eq(tenantResetRequests.status, 'approved' as const),
+        eq(tenantResetRequests.updatedAt, input.expectedUpdatedAt),
+        or(
+          sql`${tenantResetRequests.metadata}->>'executionClaimId' IS NULL`,
+          sql`${tenantResetRequests.metadata}->>'executionClaimId' = ''`,
+          sql`NULLIF(${tenantResetRequests.metadata}->>'executionClaimedAt', '')::timestamptz < ${executionStaleBefore}`,
+        )!,
+        or(
+          sql`${tenantResetRequests.metadata}->>'recoveryPointClaimId' IS NULL`,
+          sql`${tenantResetRequests.metadata}->>'recoveryPointClaimId' = ''`,
+          sql`NULLIF(${tenantResetRequests.metadata}->>'recoveryPointClaimedAt', '')::timestamptz < ${recoveryStaleBefore}`,
+        )!,
+      ),
+    )
+    .returning({ id: tenantResetRequests.id });
+
+  if (!claimed) {
+    return {
+      ok: false,
+      status: 409,
+      code: 'claimed',
+      message:
+        'Another reset execution or recovery-point request changed this reset. Refresh before trying again.',
+    };
+  }
+
+  return { ok: true, claimId, claimedAt: now };
+}
+
+export async function releaseResetRecoveryPointClaim(input: {
+  resetRequestId: string;
+  claimId: string;
+}) {
+  const db = getDb();
+  const [current] = await db
+    .select({ metadata: tenantResetRequests.metadata })
+    .from(tenantResetRequests)
+    .where(
+      and(
+        eq(tenantResetRequests.id, input.resetRequestId),
+        eq(tenantResetRequests.status, 'approved' as const),
+        sql`${tenantResetRequests.metadata}->>'recoveryPointClaimId' = ${input.claimId}`,
+      ),
+    )
+    .limit(1);
+  if (!current) return;
+  const metadata = { ...((current.metadata ?? {}) as Record<string, unknown>) };
+  delete metadata.recoveryPointClaimId;
+  delete metadata.recoveryPointClaimedAt;
+  delete metadata.recoveryPointClaimedByUserId;
+  await db
+    .update(tenantResetRequests)
+    .set({ metadata, updatedAt: new Date() })
+    .where(
+      and(
+        eq(tenantResetRequests.id, input.resetRequestId),
+        eq(tenantResetRequests.status, 'approved' as const),
+        sql`${tenantResetRequests.metadata}->>'recoveryPointClaimId' = ${input.claimId}`,
       ),
     );
 }
