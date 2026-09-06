@@ -1,9 +1,10 @@
-import { and, eq, lt } from 'drizzle-orm';
+import { and, eq, isNull, lt } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { tenantResetRequests } from '@/db/schema/reset-requests';
 
 const DEFAULT_STALE_RESET_MINUTES = 60;
 const MIN_STALE_RESET_MINUTES = 15;
+const MAX_POSTGRES_INTEGER = 2_147_483_647;
 
 function positiveNumber(value: string | undefined, fallback: number) {
   const parsed = Number(value);
@@ -86,6 +87,14 @@ export async function reconcileStaleInProgressResets(
     const existingResults = (row.results ?? {}) as Record<string, unknown>;
     const evidence = executionEvidenceState(metadata);
     const reconciledAt = new Date();
+    const executionTimeMs = Math.min(
+      MAX_POSTGRES_INTEGER,
+      Math.max(0, reconciledAt.getTime() - row.startedAt.getTime()),
+    );
+    const metadataState =
+      row.metadata == null
+        ? isNull(tenantResetRequests.metadata)
+        : eq(tenantResetRequests.metadata, row.metadata);
 
     let classification: 'interrupted_before_commit' | 'committed_unfinalized' | 'unknown_legacy';
     let destructivePlanCommitted: boolean | null;
@@ -113,7 +122,7 @@ export async function reconcileStaleInProgressResets(
       .set({
         status: 'failed',
         completedAt: reconciledAt,
-        executionTimeMs: Math.max(0, reconciledAt.getTime() - row.startedAt.getTime()),
+        executionTimeMs,
         failureReason,
         rollbackPossible: true,
         results: {
@@ -142,6 +151,7 @@ export async function reconcileStaleInProgressResets(
           eq(tenantResetRequests.tenantId, row.tenantId),
           eq(tenantResetRequests.status, 'in_progress'),
           eq(tenantResetRequests.startedAt, row.startedAt),
+          metadataState,
         ),
       )
       .returning({ id: tenantResetRequests.id });
