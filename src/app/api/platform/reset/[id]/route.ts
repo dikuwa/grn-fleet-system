@@ -298,7 +298,9 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     ];
     if (action === 'approve' || action === 'renew') {
       actionGuards.push(
-        eq(tenantResetRequests.validationResults, current.validationResults),
+        current.validationResults == null
+          ? isNull(tenantResetRequests.validationResults)
+          : eq(tenantResetRequests.validationResults, current.validationResults),
       );
     }
     if (action === 'renew') {
