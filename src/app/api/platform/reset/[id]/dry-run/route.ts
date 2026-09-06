@@ -8,6 +8,7 @@ import { previewTenantOperationalReset } from '@/lib/data-protection/reset-servi
 import { recordAuditEvent } from '@/lib/audit-event';
 import { normalizeResetSpec } from '@/lib/reset-catalog';
 import { resolveTenantResetReadyNotification } from '@/lib/platform/reset-notifications';
+import { isUuid } from '@/lib/uuid';
 
 /**
  * Production-safe dry run. This never mutates tenant operational data and does
@@ -22,6 +23,8 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     if (permCheck instanceof NextResponse) return permCheck;
 
     const { id } = await params;
+    if (!isUuid(id))
+      return NextResponse.json({ error: 'Reset request not found' }, { status: 404 });
     const db = getDb();
     const [resetRequest] = await db
       .select()

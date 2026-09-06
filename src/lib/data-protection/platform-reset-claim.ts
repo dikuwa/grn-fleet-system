@@ -2,9 +2,12 @@ import { randomUUID } from 'node:crypto';
 import { and, eq, or, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { platformBackups } from '@/db/schema';
+import { tenantResetRequests } from '@/db/schema/reset-requests';
+import { recoveryPointReleaseBlockReason } from './backup-policy';
 
 const DEFAULT_PLATFORM_RESET_CLAIM_TTL_MINUTES = 10;
 const MIN_PLATFORM_RESET_CLAIM_TTL_MINUTES = 6;
+const PLATFORM_RESET_CLAIM_LOCK = 'govfleet-platform-operational-reset-claim';
 
 function positiveNumber(value: string | undefined, fallback: number) {
   const parsed = Number(value);
@@ -18,6 +21,113 @@ export const PLATFORM_RESET_EXECUTION_CLAIM_TTL_MINUTES = Math.max(
     DEFAULT_PLATFORM_RESET_CLAIM_TTL_MINUTES,
   ),
 );
+
+export function hasLivePlatformResetExecutionClaim(
+  metadata: unknown,
+  now = new Date(),
+) {
+  const record = (metadata ?? {}) as Record<string, unknown>;
+  const claimId =
+    typeof record.platformExecutionClaimId === 'string'
+      ? record.platformExecutionClaimId.trim()
+      : '';
+  const claimedAt =
+    typeof record.platformExecutionClaimedAt === 'string'
+      ? new Date(record.platformExecutionClaimedAt)
+      : null;
+  if (!claimId || !claimedAt || Number.isNaN(claimedAt.getTime())) return false;
+  return (
+    claimedAt.getTime() >=
+    now.getTime() - PLATFORM_RESET_EXECUTION_CLAIM_TTL_MINUTES * 60 * 1000
+  );
+}
+
+export async function assertNoActivePlatformResetExecutionClaim(backupId: string) {
+  const db = getDb();
+  const [backup] = await db
+    .select({
+      scope: platformBackups.scope,
+      metadata: platformBackups.metadata,
+    })
+    .from(platformBackups)
+    .where(eq(platformBackups.id, backupId))
+    .limit(1);
+  if (
+    backup?.scope === 'platform_operational' &&
+    hasLivePlatformResetExecutionClaim(backup.metadata)
+  ) {
+    throw new Error(
+      'This platform recovery point is locked by an active operational reset and cannot be released yet.',
+    );
+  }
+}
+
+/**
+ * Change backup protection while serializing platform unprotect with execution
+ * claim acquisition. The shared advisory lock makes the existing recovery-point
+ * release policy, live-claim check and protection update one atomic decision.
+ */
+export async function setBackupProtectionWithPlatformResetFence(
+  backupId: string,
+  isProtected: boolean,
+) {
+  const db = getDb();
+  return db.transaction(async (tx) => {
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${PLATFORM_RESET_CLAIM_LOCK}))`);
+
+    const [backup] = await tx
+      .select({
+        id: platformBackups.id,
+        scope: platformBackups.scope,
+        metadata: platformBackups.metadata,
+        isProtected: platformBackups.isProtected,
+        status: platformBackups.status,
+        source: platformBackups.source,
+        expiresAt: platformBackups.expiresAt,
+        resetRequestId: platformBackups.resetRequestId,
+      })
+      .from(platformBackups)
+      .where(eq(platformBackups.id, backupId))
+      .limit(1);
+    if (!backup) throw new Error('Backup not found');
+
+    if (!isProtected) {
+      const [resetRequest] = backup.resetRequestId
+        ? await tx
+            .select({ status: tenantResetRequests.status })
+            .from(tenantResetRequests)
+            .where(eq(tenantResetRequests.id, backup.resetRequestId))
+            .limit(1)
+        : [];
+      const policyBlockReason = recoveryPointReleaseBlockReason({
+        action: 'unprotect',
+        isProtected: backup.isProtected,
+        backupStatus: backup.status,
+        source: backup.source,
+        expiresAt: backup.expiresAt,
+        resetStatus: resetRequest?.status ?? null,
+      });
+      if (policyBlockReason) throw new Error(policyBlockReason);
+
+      if (
+        backup.scope === 'platform_operational' &&
+        hasLivePlatformResetExecutionClaim(backup.metadata)
+      ) {
+        throw new Error(
+          'This platform recovery point is locked by an active operational reset and cannot be released yet.',
+        );
+      }
+    }
+
+    const [updated] = await tx
+      .update(platformBackups)
+      .set({ isProtected, updatedAt: new Date() })
+      .where(eq(platformBackups.id, backupId))
+      .returning();
+    if (!updated) throw new Error('Backup not found');
+    return updated;
+  });
+}
 
 export type PlatformResetExecutionClaimResult =
   | { ok: true; claimId: string }
@@ -39,9 +149,7 @@ export async function acquirePlatformResetExecutionClaim(input: {
 }): Promise<PlatformResetExecutionClaimResult> {
   const db = getDb();
   return db.transaction(async (tx) => {
-    await tx.execute(
-      sql`SELECT pg_advisory_xact_lock(hashtext('govfleet-platform-operational-reset-claim'))`,
-    );
+    await tx.execute(sql`SELECT pg_advisory_xact_lock(hashtext(${PLATFORM_RESET_CLAIM_LOCK}))`);
 
     const [target] = await tx
       .select({ id: platformBackups.id })
@@ -51,6 +159,7 @@ export async function acquirePlatformResetExecutionClaim(input: {
           eq(platformBackups.id, input.backupId),
           eq(platformBackups.scope, 'platform_operational'),
           eq(platformBackups.status, 'ready'),
+          eq(platformBackups.isProtected, true),
         ),
       )
       .limit(1);
@@ -59,7 +168,7 @@ export async function acquirePlatformResetExecutionClaim(input: {
         ok: false as const,
         status: 404 as const,
         code: 'not_found' as const,
-        message: 'Verified platform recovery point not found',
+        message: 'Verified protected platform recovery point not found',
       };
     }
 
@@ -104,6 +213,7 @@ export async function acquirePlatformResetExecutionClaim(input: {
           eq(platformBackups.id, input.backupId),
           eq(platformBackups.scope, 'platform_operational'),
           eq(platformBackups.status, 'ready'),
+          eq(platformBackups.isProtected, true),
           or(
             sql`${platformBackups.metadata}->>'platformExecutionClaimId' IS NULL`,
             sql`${platformBackups.metadata}->>'platformExecutionClaimId' = ''`,

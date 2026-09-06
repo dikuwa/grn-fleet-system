@@ -24,8 +24,11 @@ import {
   RESET_APPROVAL_TTL_HOURS,
   resetApprovalExpiresAt,
 } from '@/lib/reset-execution-guard';
+import { isUuid } from '@/lib/uuid';
 
 const RESET_OPEN_STATUSES = ['draft', 'pending_review', 'approved', 'in_progress'] as const;
+const RESET_STATUSES = new Set<string>(resetRequestStatusEnum.enumValues);
+const RESET_SCOPES = new Set<string>(resetScopeEnum.enumValues);
 
 export async function GET(request: NextRequest) {
   try {
@@ -42,6 +45,12 @@ export async function GET(request: NextRequest) {
     const view = searchParams.get('view') === 'history' ? 'history' : 'current';
     const page = Math.max(1, parseInt(searchParams.get('page') || '1', 10) || 1);
     const limit = Math.min(100, Math.max(1, parseInt(searchParams.get('limit') || '25', 10) || 25));
+    if (status && !RESET_STATUSES.has(status)) {
+      return NextResponse.json({ error: 'Invalid reset status filter' }, { status: 400 });
+    }
+    if (scope && !RESET_SCOPES.has(scope)) {
+      return NextResponse.json({ error: 'Invalid reset scope filter' }, { status: 400 });
+    }
     const offset = (page - 1) * limit;
     const db = getDb();
     const recentCutoff = new Date(Date.now() - 30 * 86_400_000);
@@ -220,6 +229,12 @@ export async function POST(request: NextRequest) {
       target = 'tenant',
       resetSpec: resetSpecInput,
     } = body;
+    if (target !== 'tenant' && target !== 'platform') {
+      return NextResponse.json({ error: 'target must be tenant or platform' }, { status: 400 });
+    }
+    if (target === 'tenant' && tenantId && !isUuid(tenantId)) {
+      return NextResponse.json({ error: 'tenantId must be a valid UUID' }, { status: 400 });
+    }
     let resetSpec;
     try {
       resetSpec = normalizeResetSpec(
