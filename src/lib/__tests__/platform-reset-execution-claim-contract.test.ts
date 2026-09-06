@@ -26,6 +26,17 @@ describe('platform reset execution claim', () => {
     expect(claimFence).toBeGreaterThan(claimUpdate);
   });
 
+  it('keeps a live global claim visible even if the claimed backup leaves ready state', () => {
+    const activeSelect = claim.indexOf("platformExecutionClaimId' IS NOT NULL");
+    const activeWindow = claim.slice(Math.max(0, activeSelect - 500), activeSelect + 500);
+    const targetSelect = claim.indexOf('const [target] = await tx');
+    const targetReady = claim.indexOf("eq(platformBackups.status, 'ready')", targetSelect);
+
+    expect(activeSelect).toBeGreaterThan(-1);
+    expect(activeWindow).not.toContain("eq(platformBackups.status, 'ready')");
+    expect(targetReady).toBeGreaterThan(targetSelect);
+  });
+
   it('clamps the platform execution lease above the five-minute route window', () => {
     expect(claim).toContain('const MIN_PLATFORM_RESET_CLAIM_TTL_MINUTES = 6');
     expect(claim).toContain('Math.max(\n  MIN_PLATFORM_RESET_CLAIM_TTL_MINUTES');
