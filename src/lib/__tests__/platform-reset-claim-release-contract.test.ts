@@ -64,21 +64,44 @@ describe('platform reset recovery-point release protection', () => {
     const lock = claim.indexOf('pg_advisory_xact_lock(hashtext(${PLATFORM_RESET_CLAIM_LOCK}))', deletion);
     const policy = claim.indexOf("action: 'delete'", lock);
     const liveClaim = claim.indexOf('hasLivePlatformResetExecutionClaim(current.metadata)', policy);
-    const reserve = claim.indexOf(".set({ status: 'deleting', failureReason: null, updatedAt: new Date() })", liveClaim);
-    const storageDelete = claim.indexOf('await deleteFile(backup.storageKey)', reserve);
+    const reserve = claim.indexOf("status: 'deleting'", liveClaim);
+    const leaseId = claim.indexOf("'backupDeletionClaimId'", reserve);
+    const storageDelete = claim.indexOf('await deleteFile(backup.storageKey)', leaseId);
     const failedClosed = claim.indexOf("status: 'failed'", storageDelete);
-    const finalizeDeleted = claim.indexOf("status: 'deleted'", failedClosed);
-    const deletingFence = claim.indexOf("eq(platformBackups.status, 'deleting')", finalizeDeleted);
+    const failureClaimFence = claim.indexOf("backupDeletionClaimId' = ${deletionClaimId}", failedClosed);
+    const finalizeDeleted = claim.indexOf("status: 'deleted'", failureClaimFence);
+    const finalClaimFence = claim.indexOf("backupDeletionClaimId' = ${deletionClaimId}", finalizeDeleted);
 
     expect(deletion).toBeGreaterThan(-1);
     expect(lock).toBeGreaterThan(deletion);
     expect(policy).toBeGreaterThan(lock);
     expect(liveClaim).toBeGreaterThan(policy);
     expect(reserve).toBeGreaterThan(liveClaim);
-    expect(storageDelete).toBeGreaterThan(reserve);
+    expect(leaseId).toBeGreaterThan(reserve);
+    expect(storageDelete).toBeGreaterThan(leaseId);
     expect(failedClosed).toBeGreaterThan(storageDelete);
-    expect(finalizeDeleted).toBeGreaterThan(failedClosed);
-    expect(deletingFence).toBeGreaterThan(finalizeDeleted);
+    expect(failureClaimFence).toBeGreaterThan(failedClosed);
+    expect(finalizeDeleted).toBeGreaterThan(failureClaimFence);
+    expect(finalClaimFence).toBeGreaterThan(finalizeDeleted);
+  });
+
+  it('reclaims stale deletion reservations while rejecting a live deletion lease', () => {
+    const ttl = claim.indexOf('BACKUP_DELETION_CLAIM_TTL_MINUTES');
+    const liveHelper = claim.indexOf('export function hasLiveBackupDeletionClaim');
+    const deletion = claim.indexOf('export async function deleteBackupWithPlatformResetFence');
+    const reclaimFlag = claim.indexOf("const reclaimingStaleDeletion = current.status === 'deleting'", deletion);
+    const liveGuard = claim.indexOf('hasLiveBackupDeletionClaim(current.metadata, now)', reclaimFlag);
+    const staleBefore = claim.indexOf('const staleDeletionBefore = new Date(', liveGuard);
+    const missingLease = claim.indexOf("backupDeletionClaimId' IS NULL", staleBefore);
+    const staleLease = claim.indexOf("backupDeletionClaimedAt', '')::timestamptz < ${staleDeletionBefore}", missingLease);
+
+    expect(ttl).toBeGreaterThan(-1);
+    expect(liveHelper).toBeGreaterThan(ttl);
+    expect(reclaimFlag).toBeGreaterThan(deletion);
+    expect(liveGuard).toBeGreaterThan(reclaimFlag);
+    expect(staleBefore).toBeGreaterThan(liveGuard);
+    expect(missingLease).toBeGreaterThan(staleBefore);
+    expect(staleLease).toBeGreaterThan(missingLease);
   });
 
   it('requires the selected platform recovery point to remain protected while claiming execution', () => {
