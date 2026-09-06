@@ -10,23 +10,35 @@ const source = readFileSync(
 describe('reset dry-run business-state compare-and-set', () => {
   it('writes the preview only against the exact reviewed business state', () => {
     const preview = source.indexOf('previewTenantOperationalReset');
-    const update = source.indexOf('.update(tenantResetRequests)', preview);
+    const validationState = source.indexOf('const validationState =', preview);
+    const validationNull = source.indexOf('isNull(tenantResetRequests.validationResults)', validationState);
+    const validationExact = source.indexOf(
+      'eq(tenantResetRequests.validationResults, resetRequest.validationResults)',
+      validationNull,
+    );
+    const metadataState = source.indexOf('const metadataState =', validationExact);
+    const metadataNull = source.indexOf('isNull(tenantResetRequests.metadata)', metadataState);
+    const metadataExact = source.indexOf(
+      'eq(tenantResetRequests.metadata, resetRequest.metadata)',
+      metadataNull,
+    );
+    const update = source.indexOf('.update(tenantResetRequests)', metadataExact);
     const statusClaim = source.indexOf(
       'eq(tenantResetRequests.status, resetRequest.status)',
       update,
     );
-    const validationClaim = source.indexOf(
-      'eq(tenantResetRequests.validationResults, resetRequest.validationResults)',
-      statusClaim,
-    );
-    const metadataClaim = source.indexOf(
-      'eq(tenantResetRequests.metadata, resetRequest.metadata)',
-      validationClaim,
-    );
+    const validationClaim = source.indexOf('validationState', statusClaim);
+    const metadataClaim = source.indexOf('metadataState', validationClaim);
     const returning = source.indexOf('.returning({ id: tenantResetRequests.id })', metadataClaim);
 
     expect(preview).toBeGreaterThan(-1);
-    expect(update).toBeGreaterThan(preview);
+    expect(validationState).toBeGreaterThan(preview);
+    expect(validationNull).toBeGreaterThan(validationState);
+    expect(validationExact).toBeGreaterThan(validationNull);
+    expect(metadataState).toBeGreaterThan(validationExact);
+    expect(metadataNull).toBeGreaterThan(metadataState);
+    expect(metadataExact).toBeGreaterThan(metadataNull);
+    expect(update).toBeGreaterThan(metadataExact);
     expect(statusClaim).toBeGreaterThan(update);
     expect(validationClaim).toBeGreaterThan(statusClaim);
     expect(metadataClaim).toBeGreaterThan(validationClaim);
