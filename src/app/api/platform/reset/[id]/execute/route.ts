@@ -9,6 +9,7 @@ import { eq } from 'drizzle-orm';
 import { executeApprovedTenantOperationalReset } from '@/lib/data-protection/reset-service';
 import { normalizeResetSpec } from '@/lib/reset-catalog';
 import { resetExecutionOwner } from '@/lib/reset-workflow';
+import { resetExecutionHttpStatus } from '@/lib/reset-execution-http';
 import {
   notifyPlatformResetExecution,
   notifyResetRequesterOutcome,
@@ -188,10 +189,6 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
         console.error('[Platform Reset Execute] Failure notification failed:', notificationError);
       });
     }
-    const isPrecondition =
-      /approve|expired|dry run|recovery point|confirmation|changed|operational reset|execution claim/i.test(
-        message,
-      );
-    return NextResponse.json({ error: message }, { status: isPrecondition ? 409 : 500 });
+    return NextResponse.json({ error: message }, { status: resetExecutionHttpStatus(error) });
   }
 }
