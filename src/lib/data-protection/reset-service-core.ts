@@ -183,9 +183,8 @@ async function executeResetPlanAtomically(
     }
 
     // Persist the destructive-commit evidence in the same transaction/batch as
-    // the deletes. The SELECT intentionally raises on a lost execution attempt;
-    // that failure rolls back the whole atomic mutation group instead of leaving
-    // destructive changes without durable evidence.
+    // the deletes. The final SELECT raises at execution time when the evidence
+    // update matched zero rows, rolling back the whole mutation group.
     mutations.push(
       executor.execute(sql`
         WITH evidence AS (
@@ -202,7 +201,7 @@ async function executeResetPlanAtomically(
             AND ${tenantResetRequests.metadata}->>'executionTransactionState' = 'not_started'
           RETURNING 1
         )
-        SELECT CASE WHEN EXISTS (SELECT 1 FROM evidence) THEN 1 ELSE 1 / 0 END
+        SELECT 1 / COUNT(*)::int FROM evidence
       `),
     );
     return mutations;
