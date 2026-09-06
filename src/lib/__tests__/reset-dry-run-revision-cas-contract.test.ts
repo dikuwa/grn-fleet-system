@@ -11,7 +11,10 @@ describe('reset dry-run business-state compare-and-set', () => {
   it('writes the preview only against the exact reviewed business state', () => {
     const preview = source.indexOf('previewTenantOperationalReset');
     const validationState = source.indexOf('const validationState =', preview);
-    const validationNull = source.indexOf('isNull(tenantResetRequests.validationResults)', validationState);
+    const validationNull = source.indexOf(
+      'isNull(tenantResetRequests.validationResults)',
+      validationState,
+    );
     const validationExact = source.indexOf(
       'eq(tenantResetRequests.validationResults, resetRequest.validationResults)',
       validationNull,
@@ -22,14 +25,24 @@ describe('reset dry-run business-state compare-and-set', () => {
       'eq(tenantResetRequests.metadata, resetRequest.metadata)',
       metadataNull,
     );
-    const update = source.indexOf('.update(tenantResetRequests)', metadataExact);
+    const reviewedAtState = source.indexOf('const reviewedAtState =', metadataExact);
+    const reviewedAtNull = source.indexOf(
+      'isNull(tenantResetRequests.reviewedAt)',
+      reviewedAtState,
+    );
+    const reviewedAtExact = source.indexOf(
+      'eq(tenantResetRequests.reviewedAt, resetRequest.reviewedAt)',
+      reviewedAtNull,
+    );
+    const update = source.indexOf('.update(tenantResetRequests)', reviewedAtExact);
     const statusClaim = source.indexOf(
       'eq(tenantResetRequests.status, resetRequest.status)',
       update,
     );
     const validationClaim = source.indexOf('validationState', statusClaim);
     const metadataClaim = source.indexOf('metadataState', validationClaim);
-    const returning = source.indexOf('.returning({ id: tenantResetRequests.id })', metadataClaim);
+    const reviewedAtClaim = source.indexOf('reviewedAtState', metadataClaim);
+    const returning = source.indexOf('.returning({ id: tenantResetRequests.id })', reviewedAtClaim);
 
     expect(preview).toBeGreaterThan(-1);
     expect(validationState).toBeGreaterThan(preview);
@@ -38,11 +51,15 @@ describe('reset dry-run business-state compare-and-set', () => {
     expect(metadataState).toBeGreaterThan(validationExact);
     expect(metadataNull).toBeGreaterThan(metadataState);
     expect(metadataExact).toBeGreaterThan(metadataNull);
-    expect(update).toBeGreaterThan(metadataExact);
+    expect(reviewedAtState).toBeGreaterThan(metadataExact);
+    expect(reviewedAtNull).toBeGreaterThan(reviewedAtState);
+    expect(reviewedAtExact).toBeGreaterThan(reviewedAtNull);
+    expect(update).toBeGreaterThan(reviewedAtExact);
     expect(statusClaim).toBeGreaterThan(update);
     expect(validationClaim).toBeGreaterThan(statusClaim);
     expect(metadataClaim).toBeGreaterThan(validationClaim);
-    expect(returning).toBeGreaterThan(metadataClaim);
+    expect(reviewedAtClaim).toBeGreaterThan(metadataClaim);
+    expect(returning).toBeGreaterThan(reviewedAtClaim);
     expect(source).not.toContain('eq(tenantResetRequests.updatedAt, resetRequest.updatedAt)');
   });
 
