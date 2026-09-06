@@ -40,14 +40,25 @@ export interface ResetReconciliationResult {
  * destructive delete plan, so reconciliation never has to infer whether rows
  * were removed. Legacy rows without this evidence are classified as unknown
  * and require manual recovery-point review rather than being guessed safe.
+ *
+ * Tenant-facing callers must pass `tenantId`; platform/cron callers may omit it
+ * to reconcile globally.
  */
 export async function reconcileStaleInProgressResets(
-  now = new Date(),
+  input: { now?: Date; tenantId?: string } = {},
 ): Promise<ResetReconciliationResult> {
   const db = getDb();
+  const now = input.now ?? new Date();
   const staleBefore = new Date(
     now.getTime() - RESET_IN_PROGRESS_STALE_MINUTES * 60 * 1000,
   );
+  const staleConditions = [
+    eq(tenantResetRequests.status, 'in_progress' as const),
+    lt(tenantResetRequests.startedAt, staleBefore),
+  ];
+  if (input.tenantId) {
+    staleConditions.push(eq(tenantResetRequests.tenantId, input.tenantId));
+  }
 
   const staleRows = await db
     .select({
@@ -59,12 +70,7 @@ export async function reconcileStaleInProgressResets(
       rollbackPossible: tenantResetRequests.rollbackPossible,
     })
     .from(tenantResetRequests)
-    .where(
-      and(
-        eq(tenantResetRequests.status, 'in_progress'),
-        lt(tenantResetRequests.startedAt, staleBefore),
-      ),
-    );
+    .where(and(...staleConditions));
 
   const result: ResetReconciliationResult = {
     examined: staleRows.length,
@@ -133,6 +139,7 @@ export async function reconcileStaleInProgressResets(
       .where(
         and(
           eq(tenantResetRequests.id, row.id),
+          eq(tenantResetRequests.tenantId, row.tenantId),
           eq(tenantResetRequests.status, 'in_progress'),
           eq(tenantResetRequests.startedAt, row.startedAt),
         ),
