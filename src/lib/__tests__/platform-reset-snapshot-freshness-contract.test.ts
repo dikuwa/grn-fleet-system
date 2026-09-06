@@ -59,7 +59,7 @@ describe('platform operational snapshot freshness', () => {
     const create = source.indexOf('export async function createVerifiedPlatformOperationalBackup');
     const failure = source.indexOf("status: 'failed'", create);
     const readyFence = source.indexOf("eq(platformBackups.status, 'ready')", failure);
-    const checksumFence = source.indexOf('eq(platformBackups.checksum, backup.checksum)', readyFence);
+    const checksumFence = source.indexOf('eq(platformBackups.checksum, backupChecksum)', readyFence);
 
     expect(failure).toBeGreaterThan(create);
     expect(readyFence).toBeGreaterThan(failure);
