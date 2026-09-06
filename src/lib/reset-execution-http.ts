@@ -18,7 +18,7 @@ export function resetExecutionHttpStatus(error: unknown): ResetExecutionHttpStat
   }
 
   if (
-    /approve|expired|dry run|recovery point|confirmation|changed after execution validation|changed after the dry run|operational reset|not ready to execute|execution claim|backup checksum|backup archive|backup tenant|tenant identity/i.test(
+    /approve|expired|dry run|recovery point|confirmation|changed after execution validation|changed after the dry run|operational reset|not ready to execute|execution claim|backup is not ready|backup archive|backup tenant|backup integrity check|unsupported backup format|tenant identity/i.test(
       message,
     )
   ) {
