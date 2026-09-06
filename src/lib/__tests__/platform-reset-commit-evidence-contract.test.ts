@@ -14,6 +14,10 @@ const claim = readFileSync(
   resolve(process.cwd(), 'src/lib/data-protection/platform-reset-claim.ts'),
   'utf8',
 );
+const restore = readFileSync(
+  resolve(process.cwd(), 'src/lib/data-protection/platform-restore-service.ts'),
+  'utf8',
+);
 
 describe('platform operational reset commit evidence', () => {
   it('passes the exact execution claim into the destructive reset service', () => {
@@ -200,5 +204,37 @@ describe('platform operational reset commit evidence', () => {
     expect(committed).toBeGreaterThan(archiveRead);
     expect(counts).toBeGreaterThan(committed);
     expect(transaction).toBeGreaterThan(counts);
+  });
+
+  it('invalidates prior committed reset evidence atomically when a recovery point is restored', () => {
+    const transaction = restore.indexOf('const restored = await db.transaction(async (tx) =>');
+    const restoreRows = restore.indexOf('json_populate_recordset', transaction);
+    const mark = restore.indexOf('.update(platformBackups)', restoreRows);
+    const metadata = restore.indexOf("metadata: sql`COALESCE(${platformBackups.metadata}", mark);
+    const executionVersion = restore.indexOf("- 'platformResetExecutionVersion'", metadata);
+    const executionClaim = restore.indexOf("- 'platformResetExecutionClaimId'", executionVersion);
+    const executionState = restore.indexOf("- 'platformResetExecutionState'", executionClaim);
+    const committedAt = restore.indexOf("- 'platformResetExecutionCommittedAt'", executionState);
+    const planFingerprint = restore.indexOf("- 'platformResetExecutionPlanFingerprint'", committedAt);
+    const snapshotFingerprint = restore.indexOf("- 'platformResetExecutionSnapshotFingerprint'", planFingerprint);
+    const counts = restore.indexOf("- 'platformResetExecutionCounts'", snapshotFingerprint);
+    const restoredAt = restore.indexOf('restoredAt,', counts);
+    const transactionEnd = restore.indexOf('return restoredTables;', restoredAt);
+    const mutationWindow = restore.slice(metadata, transactionEnd);
+
+    expect(transaction).toBeGreaterThan(-1);
+    expect(restoreRows).toBeGreaterThan(transaction);
+    expect(mark).toBeGreaterThan(restoreRows);
+    expect(metadata).toBeGreaterThan(mark);
+    expect(executionVersion).toBeGreaterThan(metadata);
+    expect(executionClaim).toBeGreaterThan(executionVersion);
+    expect(executionState).toBeGreaterThan(executionClaim);
+    expect(committedAt).toBeGreaterThan(executionState);
+    expect(planFingerprint).toBeGreaterThan(committedAt);
+    expect(snapshotFingerprint).toBeGreaterThan(planFingerprint);
+    expect(counts).toBeGreaterThan(snapshotFingerprint);
+    expect(restoredAt).toBeGreaterThan(counts);
+    expect(transactionEnd).toBeGreaterThan(restoredAt);
+    expect(mutationWindow).not.toContain("- 'platformSnapshotFingerprint'");
   });
 });
