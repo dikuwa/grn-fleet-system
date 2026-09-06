@@ -1,7 +1,7 @@
 const DEFAULT_TESSERACT_TIMEOUT_MS = 20_000;
 const TERMINATION_GRACE_MS = 2_000;
 
-type TesseractRecognition = {
+export type TesseractRecognition = {
   data: {
     text: string;
     confidence: number;
@@ -14,6 +14,11 @@ type TesseractWorker = {
 };
 
 type WorkerFactory = () => Promise<TesseractWorker>;
+
+type TesseractOptions = {
+  timeoutMs?: number;
+  workerFactory?: WorkerFactory;
+};
 
 export class TesseractOcrTimeoutError extends Error {
   constructor(public timeoutMs: number) {
@@ -61,17 +66,17 @@ async function terminateWorker(worker: TesseractWorker) {
 }
 
 /**
- * Run Tesseract under one application-level deadline covering worker startup
- * and recognition. A timed-out worker is terminated best-effort so OCR cannot
- * consume the entire serverless request window and block manual-entry fallback.
+ * Recognize one or more images with a single Tesseract worker under one total
+ * application-level deadline covering worker startup and every recognition.
+ * The worker is always terminated best-effort, including when startup itself
+ * finishes only after the deadline has already expired.
  */
-export async function recognizeWithTesseract(
-  image: Buffer,
-  options: {
-    timeoutMs?: number;
-    workerFactory?: WorkerFactory;
-  } = {},
-): Promise<TesseractRecognition> {
+export async function recognizeManyWithTesseract(
+  images: Buffer[],
+  options: TesseractOptions = {},
+): Promise<TesseractRecognition[]> {
+  if (!images.length) return [];
+
   const timeoutMs = Math.max(1, options.timeoutMs ?? DEFAULT_TESSERACT_TIMEOUT_MS);
   const deadline = Date.now() + timeoutMs;
   const workerPromise = (options.workerFactory ?? defaultWorkerFactory)();
@@ -79,7 +84,13 @@ export async function recognizeWithTesseract(
 
   try {
     worker = await raceWithTimeout(workerPromise, remainingMs(deadline), timeoutMs);
-    return await raceWithTimeout(worker.recognize(image), remainingMs(deadline), timeoutMs);
+    const results: TesseractRecognition[] = [];
+    for (const image of images) {
+      results.push(
+        await raceWithTimeout(worker.recognize(image), remainingMs(deadline), timeoutMs),
+      );
+    }
+    return results;
   } finally {
     if (worker) {
       await terminateWorker(worker);
@@ -89,4 +100,17 @@ export async function recognizeWithTesseract(
       void workerPromise.then(terminateWorker).catch(() => undefined);
     }
   }
+}
+
+/**
+ * Run single-image Tesseract OCR through the shared bounded worker lifecycle.
+ * Existing receipt OCR callers retain the same API while multi-image callers
+ * can share one worker and one total deadline via recognizeManyWithTesseract.
+ */
+export async function recognizeWithTesseract(
+  image: Buffer,
+  options: TesseractOptions = {},
+): Promise<TesseractRecognition> {
+  const [result] = await recognizeManyWithTesseract([image], options);
+  return result;
 }
