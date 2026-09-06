@@ -8,23 +8,56 @@ const source = readFileSync(
 );
 
 describe('reset request review transition compare-and-set', () => {
-  it('claims the exact reviewed status and revision before changing lifecycle state', () => {
+  it('claims the reviewed business state before changing lifecycle state', () => {
     const patch = source.indexOf('export async function PATCH');
-    const update = source.indexOf('const [updated] = await db', patch);
-    const idClaim = source.indexOf('eq(tenantResetRequests.id, id)', update);
-    const statusClaim = source.indexOf('eq(tenantResetRequests.status, current.status)', idClaim);
-    const revisionClaim = source.indexOf('eq(tenantResetRequests.updatedAt, current.updatedAt)', statusClaim);
-    const returning = source.indexOf('.returning()', revisionClaim);
+    const guards = source.indexOf('const actionGuards = [', patch);
+    const idClaim = source.indexOf('eq(tenantResetRequests.id, id)', guards);
+    const statusClaim = source.indexOf(
+      'eq(tenantResetRequests.status, current.status)',
+      idClaim,
+    );
+    const validationGuard = source.indexOf(
+      "if (action === 'approve' || action === 'renew')",
+      statusClaim,
+    );
+    const validationNullClaim = source.indexOf(
+      'isNull(tenantResetRequests.validationResults)',
+      validationGuard,
+    );
+    const validationValueClaim = source.indexOf(
+      'eq(tenantResetRequests.validationResults, current.validationResults)',
+      validationNullClaim,
+    );
+    const renewalGuard = source.indexOf("if (action === 'renew')", validationValueClaim);
+    const reviewNotesNullClaim = source.indexOf(
+      'isNull(tenantResetRequests.reviewNotes)',
+      renewalGuard,
+    );
+    const reviewNotesValueClaim = source.indexOf(
+      'eq(tenantResetRequests.reviewNotes, current.reviewNotes)',
+      reviewNotesNullClaim,
+    );
+    const update = source.indexOf('const [updated] = await db', reviewNotesValueClaim);
+    const where = source.indexOf('.where(and(...actionGuards))', update);
+    const returning = source.indexOf('.returning()', where);
 
     expect(patch).toBeGreaterThan(-1);
-    expect(update).toBeGreaterThan(patch);
-    expect(idClaim).toBeGreaterThan(update);
+    expect(guards).toBeGreaterThan(patch);
+    expect(idClaim).toBeGreaterThan(guards);
     expect(statusClaim).toBeGreaterThan(idClaim);
-    expect(revisionClaim).toBeGreaterThan(statusClaim);
-    expect(returning).toBeGreaterThan(revisionClaim);
+    expect(validationGuard).toBeGreaterThan(statusClaim);
+    expect(validationNullClaim).toBeGreaterThan(validationGuard);
+    expect(validationValueClaim).toBeGreaterThan(validationNullClaim);
+    expect(renewalGuard).toBeGreaterThan(validationValueClaim);
+    expect(reviewNotesNullClaim).toBeGreaterThan(renewalGuard);
+    expect(reviewNotesValueClaim).toBeGreaterThan(reviewNotesNullClaim);
+    expect(update).toBeGreaterThan(reviewNotesValueClaim);
+    expect(where).toBeGreaterThan(update);
+    expect(returning).toBeGreaterThan(where);
+    expect(source).not.toContain('eq(tenantResetRequests.updatedAt, current.updatedAt)');
   });
 
-  it('returns conflict and does not audit when the revision claim is lost', () => {
+  it('returns conflict and does not audit when the business-state claim is lost', () => {
     const lostClaim = source.indexOf('if (!updated)');
     const conflict = source.indexOf("{ status: 409 }", lostClaim);
     const audit = source.indexOf('await recordAuditEvent', lostClaim);
