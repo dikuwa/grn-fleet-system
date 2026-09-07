@@ -5,6 +5,7 @@ import {
   requestPassengers,
   requestDrivers,
   requestRoutes,
+  requestGoodsEquipment,
   requestAttachments,
 } from '@/db/schema/requests';
 import { employees } from '@/db/schema/people';
@@ -32,6 +33,8 @@ import {
   Paperclip,
   ArrowRight,
   ClipboardList,
+  Package,
+  WalletCards,
 } from 'lucide-react';
 import Link from 'next/link';
 import { CancelRequestButton } from './CancelRequestButton';
@@ -48,6 +51,31 @@ interface PageProps {
 
 const SCOPES = { regional: 'Regional', national: 'National' } as const;
 
+const FINANCIAL_IMPACT_LABELS: Record<string, string> = {
+  none: 'No financial impact',
+  within_budget: 'Within approved budget',
+  additional_funding: 'Additional funding required',
+};
+
+const TRIP_CATEGORY_LABELS: Record<string, string> = {
+  general: 'General official travel',
+  programme_transport: 'Programme transport',
+  learner_transport: 'Learner transport',
+  event_transport: 'Event transport',
+};
+
+const REQUEST_ORIGIN_LABELS: Record<string, string> = {
+  internal: 'Internal request',
+  external: 'External / sponsored request',
+  programme: 'Programme-driven request',
+};
+
+const DRIVER_PREFERENCE_LABELS: Record<string, string> = {
+  no_preference: 'No preference',
+  transport_admin_assign: 'Transport Office to assign',
+  nominated: 'Requester nominated driver',
+};
+
 async function fetchRequestDetail(id: string, tenantId: string) {
   const db = getDb();
 
@@ -63,6 +91,19 @@ async function fetchRequestDetail(id: string, tenantId: string) {
       purpose: transportRequests.purpose,
       department: transportRequests.department,
       programmeId: transportRequests.programmeId,
+      requestOrigin: transportRequests.requestOrigin,
+      financialImpact: transportRequests.financialImpact,
+      tripCategory: transportRequests.tripCategory,
+      estimatedCost: transportRequests.estimatedCost,
+      currency: transportRequests.currency,
+      costCentre: transportRequests.costCentre,
+      fundingSource: transportRequests.fundingSource,
+      budgetReference: transportRequests.budgetReference,
+      driverPreference: transportRequests.driverPreference,
+      assistedReason: transportRequests.assistedReason,
+      urgency: transportRequests.urgency,
+      overnight: transportRequests.overnight,
+      specialRequirements: transportRequests.specialRequirements,
       specialAuthorityRequired: transportRequests.specialAuthorityRequired,
       specialAuthorityReason: transportRequests.specialAuthorityReason,
       specialAuthorityApproved: transportRequests.specialAuthorityApproved,
@@ -83,7 +124,7 @@ async function fetchRequestDetail(id: string, tenantId: string) {
 
   if (!request) notFound();
 
-  const [activities, passengers, drivers, routes, attachments, linkedProgramme] =
+  const [activities, passengers, drivers, routes, goodsEquipment, attachments, linkedProgramme] =
     await Promise.all([
       db
         .select()
@@ -95,6 +136,12 @@ async function fetchRequestDetail(id: string, tenantId: string) {
           id: requestPassengers.id,
           employeeId: requestPassengers.employeeId,
           externalName: requestPassengers.externalName,
+          externalIdReference: requestPassengers.externalIdReference,
+          externalOrganisation: requestPassengers.externalOrganisation,
+          externalPhone: requestPassengers.externalPhone,
+          externalEmail: requestPassengers.externalEmail,
+          travellerRole: requestPassengers.travellerRole,
+          reasonForTravel: requestPassengers.reasonForTravel,
           status: requestPassengers.status,
           createdAt: requestPassengers.createdAt,
           empFirstName: employees.firstName,
@@ -126,6 +173,11 @@ async function fetchRequestDetail(id: string, tenantId: string) {
         .orderBy(requestRoutes.createdAt),
       db
         .select()
+        .from(requestGoodsEquipment)
+        .where(eq(requestGoodsEquipment.requestId, id))
+        .orderBy(requestGoodsEquipment.sortOrder),
+      db
+        .select()
         .from(requestAttachments)
         .where(eq(requestAttachments.requestId, id))
         .orderBy(desc(requestAttachments.createdAt)),
@@ -149,7 +201,16 @@ async function fetchRequestDetail(id: string, tenantId: string) {
         : Promise.resolve(null),
     ]);
 
-  return { request, activities, passengers, drivers, routes, attachments, linkedProgramme };
+  return {
+    request,
+    activities,
+    passengers,
+    drivers,
+    routes,
+    goodsEquipment,
+    attachments,
+    linkedProgramme,
+  };
 }
 
 export default async function RequestDetailPage({ params }: PageProps) {
@@ -220,7 +281,16 @@ export default async function RequestDetailPage({ params }: PageProps) {
     );
   }
 
-  const { request, activities, passengers, drivers, routes, attachments, linkedProgramme } = data;
+  const {
+    request,
+    activities,
+    passengers,
+    drivers,
+    routes,
+    goodsEquipment,
+    attachments,
+    linkedProgramme,
+  } = data;
   if (request.requesterType === 'external') {
     redirect(`/dashboard/requests/external/${request.id}`);
   }
@@ -294,6 +364,7 @@ export default async function RequestDetailPage({ params }: PageProps) {
     request.requesterFirstName && request.requesterLastName
       ? `${request.requesterFirstName} ${request.requesterLastName}`
       : 'Unknown';
+  const estimatedCost = request.estimatedCost == null ? null : Number(request.estimatedCost);
 
   return (
     <div className="space-y-6">
@@ -364,8 +435,12 @@ export default async function RequestDetailPage({ params }: PageProps) {
             <div>
               <p className="text-ink-500 text-xs font-medium">Requester</p>
               <p className="text-ink-950 mt-0.5 text-sm">{requesterName}</p>
-              {request.requesterJobTitle && <p className="text-ink-500 text-xs">{request.requesterJobTitle}</p>}
-              {request.requesterEmail && <p className="text-ink-500 text-xs">{request.requesterEmail}</p>}
+              {request.requesterJobTitle && (
+                <p className="text-ink-500 text-xs">{request.requesterJobTitle}</p>
+              )}
+              {request.requesterEmail && (
+                <p className="text-ink-500 text-xs">{request.requesterEmail}</p>
+              )}
             </div>
             <div>
               <p className="text-ink-500 text-xs font-medium">Department</p>
@@ -378,20 +453,108 @@ export default async function RequestDetailPage({ params }: PageProps) {
             <div>
               <p className="text-ink-500 text-xs font-medium">Authorised Kilometres</p>
               <p className="text-ink-950 mt-0.5 text-sm tabular-nums">
-                {request.totalAuthorisedKilometres ? `${request.totalAuthorisedKilometres.toLocaleString()} km` : '—'}
+                {request.totalAuthorisedKilometres
+                  ? `${request.totalAuthorisedKilometres.toLocaleString()} km`
+                  : '—'}
               </p>
             </div>
           </div>
 
-          {request.specialAuthorityRequired && (
-            <div className="border-status-pending-bg bg-status-pending-bg mt-4 rounded-[8px] border px-4 py-3">
-              <p className="text-status-pending-text text-xs font-medium">Special Authority Required</p>
-              <p className="text-ink-700 mt-1 text-sm">{request.specialAuthorityReason || 'No reason provided'}</p>
-              {request.specialAuthorityApproved !== null && (
-                <p className="mt-1 text-xs">Status: {request.specialAuthorityApproved ? 'Approved' : 'Not Approved'}</p>
+          {(request.assistedReason || request.specialRequirements) && (
+            <div className="border-border mt-4 grid gap-3 rounded-[8px] border p-4 sm:grid-cols-2">
+              {request.assistedReason && (
+                <div>
+                  <p className="text-ink-500 text-xs font-medium">Assisted submission reason</p>
+                  <p className="text-ink-700 mt-1 text-sm">{request.assistedReason}</p>
+                </div>
+              )}
+              {request.specialRequirements && (
+                <div>
+                  <p className="text-ink-500 text-xs font-medium">Special requirements</p>
+                  <p className="text-ink-700 mt-1 text-sm">{request.specialRequirements}</p>
+                </div>
               )}
             </div>
           )}
+
+          {request.specialAuthorityRequired && (
+            <div className="border-status-pending-bg bg-status-pending-bg mt-4 rounded-[8px] border px-4 py-3">
+              <p className="text-status-pending-text text-xs font-medium">Special Authority Required</p>
+              <p className="text-ink-700 mt-1 text-sm">
+                {request.specialAuthorityReason || 'No reason provided'}
+              </p>
+              {request.specialAuthorityApproved !== null && (
+                <p className="mt-1 text-xs">
+                  Status: {request.specialAuthorityApproved ? 'Approved' : 'Not Approved'}
+                </p>
+              )}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <WalletCards className="h-4 w-4" /> Trip & Budget Classification
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div>
+            <p className="text-ink-500 text-xs font-medium">Request origin</p>
+            <p className="text-ink-950 mt-0.5 text-sm">
+              {REQUEST_ORIGIN_LABELS[request.requestOrigin] ?? request.requestOrigin.replaceAll('_', ' ')}
+            </p>
+          </div>
+          <div>
+            <p className="text-ink-500 text-xs font-medium">Trip category</p>
+            <p className="text-ink-950 mt-0.5 text-sm">
+              {TRIP_CATEGORY_LABELS[request.tripCategory] ?? request.tripCategory.replaceAll('_', ' ')}
+            </p>
+          </div>
+          <div>
+            <p className="text-ink-500 text-xs font-medium">Financial impact</p>
+            <p className="text-ink-950 mt-0.5 text-sm">
+              {FINANCIAL_IMPACT_LABELS[request.financialImpact] ?? request.financialImpact.replaceAll('_', ' ')}
+            </p>
+          </div>
+          <div>
+            <p className="text-ink-500 text-xs font-medium">Estimated cost</p>
+            <p className="text-ink-950 mt-0.5 text-sm tabular-nums">
+              {estimatedCost == null || Number.isNaN(estimatedCost)
+                ? '—'
+                : `${request.currency === 'NAD' ? 'N$' : request.currency} ${estimatedCost.toLocaleString('en-NA', {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}`}
+            </p>
+          </div>
+          <div>
+            <p className="text-ink-500 text-xs font-medium">Cost centre</p>
+            <p className="text-ink-950 mt-0.5 text-sm">{request.costCentre || '—'}</p>
+          </div>
+          <div>
+            <p className="text-ink-500 text-xs font-medium">Funding source</p>
+            <p className="text-ink-950 mt-0.5 text-sm">{request.fundingSource || '—'}</p>
+          </div>
+          <div>
+            <p className="text-ink-500 text-xs font-medium">Budget reference</p>
+            <p className="text-ink-950 mt-0.5 text-sm">{request.budgetReference || '—'}</p>
+          </div>
+          <div>
+            <p className="text-ink-500 text-xs font-medium">Driver preference</p>
+            <p className="text-ink-950 mt-0.5 text-sm">
+              {DRIVER_PREFERENCE_LABELS[request.driverPreference] ?? request.driverPreference.replaceAll('_', ' ')}
+            </p>
+          </div>
+          <div>
+            <p className="text-ink-500 text-xs font-medium">Urgency</p>
+            <p className="text-ink-950 mt-0.5 text-sm capitalize">{request.urgency.replaceAll('_', ' ')}</p>
+          </div>
+          <div>
+            <p className="text-ink-500 text-xs font-medium">Overnight travel</p>
+            <p className="text-ink-950 mt-0.5 text-sm">{request.overnight ? 'Yes' : 'No'}</p>
+          </div>
         </CardContent>
       </Card>
 
@@ -418,7 +581,9 @@ export default async function RequestDetailPage({ params }: PageProps) {
                 </div>
               </div>
               <div className="flex items-center gap-2">
-                <Badge variant="info" size="sm">{linkedProgramme.status.replace(/_/g, ' ')}</Badge>
+                <Badge variant="info" size="sm">
+                  {linkedProgramme.status.replace(/_/g, ' ')}
+                </Badge>
                 <Button variant="secondary" size="sm" asChild>
                   <Link href={`/dashboard/programmes/${linkedProgramme.id}`}>View Programme</Link>
                 </Button>
@@ -434,7 +599,9 @@ export default async function RequestDetailPage({ params }: PageProps) {
         </CardHeader>
         <CardContent className="p-0">
           {activities.length === 0 ? (
-            <div className="px-5 pb-4"><p className="text-ink-500 text-sm">No activities added yet.</p></div>
+            <div className="px-5 pb-4">
+              <p className="text-ink-500 text-sm">No activities added yet.</p>
+            </div>
           ) : (
             <div className="overflow-x-auto">
               <table className="w-full text-sm">
@@ -455,7 +622,7 @@ export default async function RequestDetailPage({ params }: PageProps) {
                       <td className="text-ink-500 px-3 py-2 text-xs">{formatDate(a.startDate)}</td>
                       <td className="text-ink-500 px-3 py-2 text-xs">{formatDate(a.endDate)}</td>
                       <td className="text-ink-500 px-3 py-2 text-right text-xs tabular-nums">
-                        {a.estimatedKilometres ? `${a.estimatedKilometres.toLocaleString()}` : '—'}
+                        {a.estimatedKilometres ? a.estimatedKilometres.toLocaleString() : '—'}
                       </td>
                     </tr>
                   ))}
@@ -466,28 +633,97 @@ export default async function RequestDetailPage({ params }: PageProps) {
         </CardContent>
       </Card>
 
+      {goodsEquipment.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Package className="h-4 w-4" /> Goods & Equipment ({goodsEquipment.length})
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-border border-b">
+                    <th className="text-ink-500 px-4 py-2 text-left text-xs font-medium">Description</th>
+                    <th className="text-ink-500 px-4 py-2 text-left text-xs font-medium">Quantity</th>
+                    <th className="text-ink-500 px-4 py-2 text-left text-xs font-medium">Purpose</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-border divide-y">
+                  {goodsEquipment.map((item) => (
+                    <tr key={item.id}>
+                      <td className="text-ink-950 px-4 py-3 font-medium">{item.description}</td>
+                      <td className="text-ink-700 px-4 py-3">{item.quantity || '—'}</td>
+                      <td className="text-ink-500 px-4 py-3">{item.purpose || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       <div className="grid gap-6 lg:grid-cols-2">
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2"><Users className="h-4 w-4" /> Passengers ({passengers.length})</CardTitle>
+            <CardTitle className="flex items-center gap-2">
+              <Users className="h-4 w-4" /> Passengers ({passengers.length})
+            </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
             {passengers.length === 0 ? (
-              <div className="px-5 pb-4"><p className="text-ink-500 text-sm">No passengers listed.</p></div>
+              <div className="px-5 pb-4">
+                <p className="text-ink-500 text-sm">No passengers listed.</p>
+              </div>
             ) : (
               <div className="divide-border divide-y">
                 {passengers.map((p) => {
-                  const name = p.empFirstName && p.empLastName ? `${p.empFirstName} ${p.empLastName}` : p.externalName || 'Unknown';
+                  const name =
+                    p.empFirstName && p.empLastName
+                      ? `${p.empFirstName} ${p.empLastName}`
+                      : p.externalName || 'Unknown';
+                  const passengerMeta = [
+                    p.travellerRole && p.travellerRole !== 'passenger'
+                      ? p.travellerRole.replaceAll('_', ' ')
+                      : null,
+                    !p.employeeId ? p.externalOrganisation : null,
+                    !p.employeeId ? p.externalPhone : null,
+                    !p.employeeId ? p.externalEmail : null,
+                    !p.employeeId && p.externalIdReference
+                      ? `ID: ${p.externalIdReference}`
+                      : null,
+                  ].filter(Boolean);
                   return (
-                    <div key={p.id} className="flex items-center justify-between px-5 py-3">
-                      <div className="flex items-center gap-3">
-                        <div className="bg-brand-50 text-brand-700 flex h-8 w-8 items-center justify-center rounded-full text-xs font-medium">{name.charAt(0)}</div>
-                        <div>
+                    <div key={p.id} className="flex items-start justify-between gap-3 px-5 py-3">
+                      <div className="flex min-w-0 items-start gap-3">
+                        <div className="bg-brand-50 text-brand-700 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-medium">
+                          {name.charAt(0)}
+                        </div>
+                        <div className="min-w-0">
                           <p className="text-ink-950 text-sm font-medium">{name}</p>
-                          {!p.employeeId && <p className="text-ink-500 text-xs">External</p>}
+                          <p className="text-ink-500 text-xs">
+                            {p.employeeId ? 'Employee' : 'External traveller'}
+                          </p>
+                          {passengerMeta.length > 0 && (
+                            <p className="text-ink-500 mt-1 text-xs">
+                              {passengerMeta.join(' · ')}
+                            </p>
+                          )}
+                          {p.reasonForTravel && (
+                            <p className="text-ink-700 mt-1 text-xs">
+                              Travel reason: {p.reasonForTravel}
+                            </p>
+                          )}
                         </div>
                       </div>
-                      <Badge variant={p.status === 'confirmed' ? 'success' : 'pending'} size="sm">{p.status}</Badge>
+                      <Badge
+                        variant={p.status === 'confirmed' ? 'success' : 'pending'}
+                        size="sm"
+                      >
+                        {p.status}
+                      </Badge>
                     </div>
                   );
                 })}
@@ -498,24 +734,40 @@ export default async function RequestDetailPage({ params }: PageProps) {
 
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2"><User className="h-4 w-4" /> Drivers ({drivers.length})</CardTitle>
+            <CardTitle className="flex items-center gap-2">
+              <User className="h-4 w-4" /> Drivers ({drivers.length})
+            </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
             {drivers.length === 0 ? (
-              <div className="px-5 pb-4"><p className="text-ink-500 text-sm">No drivers assigned.</p></div>
+              <div className="px-5 pb-4">
+                <p className="text-ink-500 text-sm">No drivers assigned.</p>
+              </div>
             ) : (
               <div className="divide-border divide-y">
                 {drivers.map((d) => {
-                  const name = d.empFirstName && d.empLastName ? `${d.empFirstName} ${d.empLastName}` : 'Unknown';
-                  const driverTypeLabel = d.driverType === 'nominated' ? 'Nominated' : d.driverType === 'assigned' ? 'Assigned' : 'Additional';
+                  const name =
+                    d.empFirstName && d.empLastName
+                      ? `${d.empFirstName} ${d.empLastName}`
+                      : 'Unknown';
+                  const driverTypeLabel =
+                    d.driverType === 'nominated'
+                      ? 'Nominated'
+                      : d.driverType === 'assigned'
+                        ? 'Assigned'
+                        : 'Additional';
                   return (
                     <div key={d.id} className="flex items-center justify-between px-5 py-3">
                       <div className="flex items-center gap-3">
-                        <div className="bg-brand-50 text-brand-700 flex h-8 w-8 items-center justify-center rounded-full text-xs font-medium">{name.charAt(0)}</div>
+                        <div className="bg-brand-50 text-brand-700 flex h-8 w-8 items-center justify-center rounded-full text-xs font-medium">
+                          {name.charAt(0)}
+                        </div>
                         <div>
                           <p className="text-ink-950 text-sm font-medium">{name}</p>
                           <div className="text-ink-500 flex items-center gap-2 text-xs">
-                            <Badge variant="info" size="sm">{driverTypeLabel}</Badge>
+                            <Badge variant="info" size="sm">
+                              {driverTypeLabel}
+                            </Badge>
                             {d.isConfirmed && <span>Confirmed</span>}
                             {d.licenceValidated && <span>Licence Validated</span>}
                           </div>
@@ -540,7 +792,9 @@ export default async function RequestDetailPage({ params }: PageProps) {
       {routes.length > 0 && (
         <Card>
           <CardHeader>
-            <CardTitle className="flex items-center gap-2"><MapPin className="h-4 w-4" /> Routes ({routes.length})</CardTitle>
+            <CardTitle className="flex items-center gap-2">
+              <MapPin className="h-4 w-4" /> Routes ({routes.length})
+            </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
             <div className="px-5 pt-4 pb-3">
@@ -563,23 +817,58 @@ export default async function RequestDetailPage({ params }: PageProps) {
                 <div key={r.id} className="px-5 py-4">
                   <div className="flex items-start gap-4">
                     <div className="flex flex-col items-center gap-1">
-                      <div className="bg-brand-50 text-brand-700 flex h-6 w-6 items-center justify-center rounded-full text-xs font-medium">O</div>
+                      <div className="bg-brand-50 text-brand-700 flex h-6 w-6 items-center justify-center rounded-full text-xs font-medium">
+                        O
+                      </div>
                       <div className="bg-border h-6 w-px" />
-                      <div className="bg-ink-50 text-ink-500 flex h-6 w-6 items-center justify-center rounded-full text-xs font-medium">D</div>
+                      <div className="bg-ink-50 text-ink-500 flex h-6 w-6 items-center justify-center rounded-full text-xs font-medium">
+                        D
+                      </div>
                     </div>
                     <div className="min-w-0 flex-1">
                       <p className="text-ink-950 text-sm">{r.originName || 'Unknown origin'}</p>
-                      <div className="text-ink-500 flex items-center gap-2 text-xs"><ArrowRight className="h-3 w-3" /></div>
-                      <p className="text-ink-950 text-sm">{r.destinationName || 'Unknown destination'}</p>
-                      <div className="text-ink-500 mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs">
-                        {r.mappedDistanceKm != null && <span className="tabular-nums">{r.mappedDistanceKm.toLocaleString()} km (mapped)</span>}
-                        {r.additionalKilometres > 0 && <span className="tabular-nums">+{r.additionalKilometres} km additional</span>}
-                        {r.totalKilometres > 0 && <span className="text-ink-700 font-medium tabular-nums">Total: {r.totalKilometres.toLocaleString()} km</span>}
-                        {r.mappedDurationMinutes != null && <span>~{Math.round(r.mappedDurationMinutes / 60)}h{r.mappedDurationMinutes % 60}m</span>}
-                        {r.isVerified && <span className="text-status-success-text">✓ Verified</span>}
+                      <div className="text-ink-500 flex items-center gap-2 text-xs">
+                        <ArrowRight className="h-3 w-3" />
                       </div>
-                      {r.overrideReason && <p className="text-status-pending-text mt-1 text-xs">Override: {r.overrideReason}</p>}
-                      {r.calculationTimestamp && <p className="text-ink-400 mt-0.5 text-[11px]">Calculated {formatDateTime(r.calculationTimestamp)}</p>}
+                      <p className="text-ink-950 text-sm">
+                        {r.destinationName || 'Unknown destination'}
+                      </p>
+                      <div className="text-ink-500 mt-2 flex flex-wrap gap-x-4 gap-y-1 text-xs">
+                        {r.mappedDistanceKm != null && (
+                          <span className="tabular-nums">
+                            {r.mappedDistanceKm.toLocaleString()} km (mapped)
+                          </span>
+                        )}
+                        {r.additionalKilometres > 0 && (
+                          <span className="tabular-nums">
+                            +{r.additionalKilometres} km additional
+                          </span>
+                        )}
+                        {r.totalKilometres > 0 && (
+                          <span className="text-ink-700 font-medium tabular-nums">
+                            Total: {r.totalKilometres.toLocaleString()} km
+                          </span>
+                        )}
+                        {r.mappedDurationMinutes != null && (
+                          <span>
+                            ~{Math.round(r.mappedDurationMinutes / 60)}h
+                            {r.mappedDurationMinutes % 60}m
+                          </span>
+                        )}
+                        {r.isVerified && (
+                          <span className="text-status-success-text">✓ Verified</span>
+                        )}
+                      </div>
+                      {r.overrideReason && (
+                        <p className="text-status-pending-text mt-1 text-xs">
+                          Override: {r.overrideReason}
+                        </p>
+                      )}
+                      {r.calculationTimestamp && (
+                        <p className="text-ink-400 mt-0.5 text-[11px]">
+                          Calculated {formatDateTime(r.calculationTimestamp)}
+                        </p>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -592,17 +881,23 @@ export default async function RequestDetailPage({ params }: PageProps) {
       {attachments.length > 0 && (
         <Card id="attachments">
           <CardHeader>
-            <CardTitle className="flex items-center gap-2"><Paperclip className="h-4 w-4" /> Attachments ({attachments.length})</CardTitle>
+            <CardTitle className="flex items-center gap-2">
+              <Paperclip className="h-4 w-4" /> Attachments ({attachments.length})
+            </CardTitle>
           </CardHeader>
           <CardContent className="p-0">
             <div className="divide-border divide-y">
               {attachments.map((a) => (
                 <div key={a.id} className="flex items-center justify-between px-5 py-3">
                   <div className="flex items-center gap-3">
-                    <div className="bg-muted text-ink-500 flex h-8 w-8 items-center justify-center rounded-[6px]"><Paperclip className="h-4 w-4" /></div>
+                    <div className="bg-muted text-ink-500 flex h-8 w-8 items-center justify-center rounded-[6px]">
+                      <Paperclip className="h-4 w-4" />
+                    </div>
                     <div>
                       <p className="text-ink-950 text-sm">{a.fileName}</p>
-                      <p className="text-ink-500 text-xs">{a.fileSize ? `${(a.fileSize / 1024).toFixed(1)} KB` : ''} · {a.mimeType}</p>
+                      <p className="text-ink-500 text-xs">
+                        {a.fileSize ? `${(a.fileSize / 1024).toFixed(1)} KB` : ''} · {a.mimeType}
+                      </p>
                     </div>
                   </div>
                   <span className="text-ink-500 text-xs">{formatDate(a.createdAt)}</span>
