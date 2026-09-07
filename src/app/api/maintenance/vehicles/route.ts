@@ -11,6 +11,8 @@ import { Permissions } from '@/lib/permissions';
 
 const DEFAULT_LIMIT = 20;
 const MAX_LIMIT = 50;
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * GET /api/maintenance/vehicles
@@ -39,6 +41,10 @@ export async function GET(req: NextRequest) {
     const limit = Number.isInteger(requestedLimit)
       ? Math.min(Math.max(requestedLimit, 1), MAX_LIMIT)
       : DEFAULT_LIMIT;
+
+    if (id && !UUID_PATTERN.test(id)) {
+      return NextResponse.json({ rows: [] });
+    }
 
     const conditions: SQL[] = [
       eq(vehicles.tenantId, session.tenantId),
