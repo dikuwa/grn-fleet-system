@@ -101,11 +101,15 @@ export const notificationDeliveries = pgTable(
     channel: text('channel').notNull(), // in_app, email, manual_whatsapp
     providerId: text('provider_id'),
     attempt: integer('attempt').notNull().default(1),
+    retryOfDeliveryId: uuid('retry_of_delivery_id'),
     status: text('status').notNull().default('pending'), // pending, sent, delivered, failed, skipped
     errorSummary: text('error_summary'),
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
+    retryPredecessorUnique: uniqueIndex('notification_deliveries_retry_predecessor_idx')
+      .on(table.retryOfDeliveryId)
+      .where(sql`${table.retryOfDeliveryId} is not null`),
     onePendingPerChannel: uniqueIndex(
       'notification_deliveries_one_pending_per_channel_idx',
     )
