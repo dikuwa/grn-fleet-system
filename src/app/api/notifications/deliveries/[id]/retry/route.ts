@@ -11,6 +11,7 @@ import { getDb } from '@/db';
 import { user } from '@/db/schema/better-auth';
 import { notificationDeliveries, notifications } from '@/db/schema/notifications';
 import { employees } from '@/db/schema/people';
+import { tenantMemberships } from '@/db/schema/tenants';
 import { eq, and, desc } from 'drizzle-orm';
 import {
   requireAnyPermission,
@@ -132,6 +133,24 @@ export async function POST(
 
     let recipientEmail: string | null = null;
     if (delivery.notification.recipientUserId) {
+      const [activeMembership] = await db
+        .select({ id: tenantMemberships.id })
+        .from(tenantMemberships)
+        .where(
+          and(
+            eq(tenantMemberships.tenantId, session.tenantId),
+            eq(tenantMemberships.userId, delivery.notification.recipientUserId),
+            eq(tenantMemberships.status, 'active'),
+          ),
+        )
+        .limit(1);
+      if (!activeMembership) {
+        return NextResponse.json(
+          { error: 'Notification recipient is no longer an active tenant member' },
+          { status: 409 },
+        );
+      }
+
       const [employee] = await db
         .select({ email: employees.email })
         .from(employees)
@@ -144,10 +163,9 @@ export async function POST(
         .limit(1);
       recipientEmail = employee?.email?.trim() || null;
 
-      // Not every tenant login account has a Staff record (for example some
-      // administrative/service accounts). The notification itself is already
-      // tenant-scoped above, so it is safe to fall back to the Better Auth
-      // account email for the same recipient user id.
+      // Some active tenant login accounts do not have a Staff record. The
+      // active membership check above keeps the auth-account fallback scoped to
+      // a recipient who still belongs to this tenant.
       if (!recipientEmail) {
         const [recipientUser] = await db
           .select({ email: user.email })
