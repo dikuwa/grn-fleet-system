@@ -183,14 +183,15 @@ export async function POST(
       );
     }
 
-    // The next attempt is reserved before the external provider call. If a
-    // process dies after reservation, a later request may safely reuse that
-    // reservation once it is stale because the provider call uses a stable
-    // idempotency key derived from the reservation id.
+    // The next attempt is reserved before the external provider call. Its
+    // retryOfDeliveryId is an immutable predecessor claim: even after this row
+    // leaves pending state, no delayed concurrent request can create a second
+    // retry child for the same failed delivery.
     const [latestDelivery] = await db
       .select({
         id: notificationDeliveries.id,
         attempt: notificationDeliveries.attempt,
+        retryOfDeliveryId: notificationDeliveries.retryOfDeliveryId,
         status: notificationDeliveries.status,
         createdAt: notificationDeliveries.createdAt,
       })
@@ -213,6 +214,7 @@ export async function POST(
           notificationId: delivery.notificationId,
           channel: 'email',
           attempt: latestDelivery.attempt + 1,
+          retryOfDeliveryId: delivery.id,
           status: 'pending',
         })
         .onConflictDoNothing()
@@ -221,13 +223,14 @@ export async function POST(
 
       if (!reservedAttempt) {
         return NextResponse.json(
-          { error: 'A retry is already in progress for this delivery. Refresh delivery history.' },
+          { error: 'A retry has already been claimed for this delivery. Refresh delivery history.' },
           { status: 409 },
         );
       }
     } else if (
       latestDelivery?.status === 'pending' &&
-      latestDelivery.attempt === delivery.attempt + 1
+      latestDelivery.attempt === delivery.attempt + 1 &&
+      latestDelivery.retryOfDeliveryId === delivery.id
     ) {
       const pendingAgeMs = Date.now() - latestDelivery.createdAt.getTime();
       if (pendingAgeMs < RETRY_PENDING_RECLAIM_MS) {
@@ -251,6 +254,7 @@ export async function POST(
         .where(
           and(
             eq(notificationDeliveries.id, latestDelivery.id),
+            eq(notificationDeliveries.retryOfDeliveryId, delivery.id),
             eq(notificationDeliveries.notificationId, delivery.notificationId),
             eq(notificationDeliveries.channel, delivery.channel),
             eq(notificationDeliveries.status, 'pending'),
@@ -266,7 +270,7 @@ export async function POST(
       }
     } else {
       return NextResponse.json(
-        { error: 'This delivery is no longer the latest failed attempt. Refresh delivery history.' },
+        { error: 'This delivery is no longer the retryable failed attempt. Refresh delivery history.' },
         { status: 409 },
       );
     }
@@ -333,6 +337,7 @@ export async function POST(
       .where(
         and(
           eq(notificationDeliveries.id, reservedAttempt.id),
+          eq(notificationDeliveries.retryOfDeliveryId, delivery.id),
           eq(notificationDeliveries.status, 'pending'),
         ),
       )
