@@ -26,6 +26,7 @@ interface VehicleComboboxProps {
   disabled?: boolean;
   status?: string;
   className?: string;
+  endpoint?: string;
 }
 
 export function VehicleCombobox({
@@ -36,6 +37,7 @@ export function VehicleCombobox({
   disabled,
   status,
   className,
+  endpoint = '/api/fleet',
 }: VehicleComboboxProps) {
   const listboxId = useId();
   const [open, setOpen] = useState(false);
@@ -49,13 +51,13 @@ export function VehicleCombobox({
 
   const canSearch = debouncedSearch.length >= 2;
   const query = useQuery<VehicleSearchOption[]>({
-    queryKey: ['vehicle-search', debouncedSearch, status || 'all'],
+    queryKey: ['vehicle-search', endpoint, debouncedSearch, status || 'all'],
     enabled: open && canSearch,
     staleTime: 30_000,
     queryFn: async ({ signal }) => {
       const params = new URLSearchParams({ search: debouncedSearch, limit: '20' });
       if (status) params.set('status', status);
-      const response = await fetch(`/api/fleet?${params}`, { signal, cache: 'no-store' });
+      const response = await fetch(`${endpoint}?${params}`, { signal, cache: 'no-store' });
       const json = await response.json();
       if (!response.ok) throw new Error(json.error || 'Unable to search vehicles');
       return ((Array.isArray(json) ? json : json.rows || []) as VehicleSearchOption[]).slice(0, 20);
