@@ -27,13 +27,17 @@ test('maintenance history commits atomically without changing vehicle availabili
   const requester = await login('requester@kavangoeast.test');
   const db = getDb();
 
-  // Select through the same scoped fleet boundary used by the Maintenance workspace.
-  // This avoids fabricating access to a tenant vehicle the officer is not assigned/related to.
-  const fleetResponse = await maintenance.get('/api/fleet');
-  expect(fleetResponse.status(), await fleetResponse.text()).toBe(200);
-  const fleetBody = await fleetResponse.json();
-  const visibleVehicle = (fleetBody.rows as Array<{ id: string }> | undefined)?.[0];
-  expect(visibleVehicle?.id, 'vehicle visible in maintenance scope').toBeTruthy();
+  const deniedLookup = await requester.get('/api/maintenance/vehicles?search=GRN');
+  expect(deniedLookup.status()).toBe(403);
+
+  // Scheduled maintenance must be able to start before any trip, inspection,
+  // defect or previous maintenance relationship exists. Use the dedicated,
+  // permission-gated tenant-fleet selector that backs the maintenance form.
+  const selectorResponse = await maintenance.get('/api/maintenance/vehicles?limit=20');
+  expect(selectorResponse.status(), await selectorResponse.text()).toBe(200);
+  const selectorBody = await selectorResponse.json();
+  const visibleVehicle = (selectorBody.rows as Array<{ id: string }> | undefined)?.[0];
+  expect(visibleVehicle?.id, 'active vehicle visible to Maintenance selector').toBeTruthy();
 
   const [vehicle] = await db
     .select({
@@ -51,7 +55,7 @@ test('maintenance history commits atomically without changing vehicle availabili
     )
     .limit(1);
 
-  expect(vehicle, 'scoped seeded tenant vehicle').toBeTruthy();
+  expect(vehicle, 'maintenance-selector tenant vehicle').toBeTruthy();
 
   const denied = await requester.post('/api/maintenance', {
     data: {
