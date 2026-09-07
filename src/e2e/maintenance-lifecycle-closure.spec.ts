@@ -30,6 +30,10 @@ test('maintenance history commits atomically without changing vehicle availabili
   const deniedLookup = await requester.get('/api/maintenance/vehicles?search=GRN');
   expect(deniedLookup.status()).toBe(403);
 
+  const malformedLookup = await maintenance.get('/api/maintenance/vehicles?id=not-a-uuid');
+  expect(malformedLookup.status(), await malformedLookup.text()).toBe(200);
+  expect((await malformedLookup.json()).rows).toEqual([]);
+
   // Scheduled maintenance must be able to start before any trip, inspection,
   // defect or previous maintenance relationship exists. Use the dedicated,
   // permission-gated tenant-fleet selector that backs the maintenance form.
@@ -38,6 +42,12 @@ test('maintenance history commits atomically without changing vehicle availabili
   const selectorBody = await selectorResponse.json();
   const visibleVehicle = (selectorBody.rows as Array<{ id: string }> | undefined)?.[0];
   expect(visibleVehicle?.id, 'active vehicle visible to Maintenance selector').toBeTruthy();
+
+  // The dedicated selector must not widen the general Fleet related-record scope.
+  // Before this first maintenance record exists, the same unrelated vehicle stays
+  // hidden from the ordinary Fleet detail endpoint.
+  const generalFleetBefore = await maintenance.get(`/api/fleet/${visibleVehicle!.id}`);
+  expect(generalFleetBefore.status()).toBe(404);
 
   const [vehicle] = await db
     .select({
