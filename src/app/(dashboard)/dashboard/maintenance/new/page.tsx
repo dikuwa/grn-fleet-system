@@ -15,6 +15,8 @@ import { VehicleCombobox, type VehicleSearchOption } from '@/components/ui/vehic
 import { useToast } from '@/lib/use-toast';
 import { currentNamibiaDate, validateMaintenanceServiceDate } from '@/lib/maintenance-record-validation';
 
+const MAINTENANCE_VEHICLE_ENDPOINT = '/api/maintenance/vehicles';
+
 export default function NewMaintenancePage() {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -45,11 +47,12 @@ export default function NewMaintenancePage() {
     let cancelled = false;
     void (async () => {
       try {
-        const response = await fetch(`/api/fleet/${vehicleId}`, { cache: 'no-store' });
+        const response = await fetch(`${MAINTENANCE_VEHICLE_ENDPOINT}?id=${encodeURIComponent(vehicleId)}`, { cache: 'no-store' });
         const json = await response.json();
         if (!response.ok) throw new Error(json.error || 'Vehicle could not be loaded');
         if (cancelled) return;
-        const vehicle = json.vehicle as VehicleSearchOption;
+        const vehicle = (json.rows as VehicleSearchOption[] | undefined)?.[0];
+        if (!vehicle) throw new Error('Vehicle is not available for maintenance in this tenant');
         setSelectedVehicle(vehicle);
         setFormData((prev) => ({
           ...prev,
@@ -151,6 +154,7 @@ export default function NewMaintenancePage() {
                   });
                 }}
                 placeholder="Search plate, register number, make or model…"
+                endpoint={MAINTENANCE_VEHICLE_ENDPOINT}
               />
               {selectedVehicle && (
                 <div className="mt-1.5 flex flex-wrap items-center gap-2">
