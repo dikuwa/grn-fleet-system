@@ -29,7 +29,7 @@ export async function GET(req: NextRequest) {
     if (!auth.ok) return auth.error;
     const { session } = auth;
 
-    const roleCheck = await requireDashboardAction(session, '/dashboard/maintenance/new', 'view');
+    const roleCheck = await requireDashboardAction(session, '/dashboard/maintenance/new', 'create');
     if (roleCheck instanceof NextResponse) return roleCheck;
     const permCheck = await requirePermission(session, Permissions.MAINTENANCE_MANAGE);
     if (permCheck instanceof NextResponse) return permCheck;
