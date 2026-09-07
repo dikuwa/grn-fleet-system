@@ -5,7 +5,6 @@ import { getDb } from '@/db';
 import { maintenanceEvents, vehicleOdometerEvents, vehicles } from '@/db/schema/fleet';
 import { auditEvents } from '@/db/schema/audit';
 import {
-  getSessionRoleNames,
   requireDashboardAction,
   requireRequestAuth,
   requirePermission,
@@ -14,8 +13,6 @@ import { Permissions } from '@/lib/permissions';
 import { createScopedNotifications } from '@/lib/notification-service';
 import { WorkspaceIds } from '@/lib/workspaces';
 import { runAtomicMutations } from '@/lib/db-atomic';
-import { resolveDashboardAccess } from '@/lib/dashboard-access';
-import { vehicleScopeCondition } from '@/lib/record-scope';
 import {
   validateMaintenanceServiceDate,
   validateNextServiceOdometer,
@@ -67,8 +64,13 @@ function postgresErrorDetails(error: unknown) {
 
 /**
  * POST /api/maintenance
- * Record a maintenance-history event for a vehicle already within the active
- * Maintenance workspace's vehicle scope.
+ * Record a maintenance-history event for an active vehicle in the signed-in
+ * Maintenance Officer's tenant.
+ *
+ * Scheduled service must be recordable before a trip, inspection, defect, or
+ * previous maintenance relationship exists. Authorization is therefore the
+ * Maintenance workspace + MAINTENANCE_MANAGE permission + tenant boundary,
+ * rather than the narrower general Fleet lookup relationship scope.
  *
  * A history row is not itself a vehicle safety decision. Vehicle blocking is
  * controlled by unresolved blocking defects / explicit fleet state changes,
@@ -129,29 +131,26 @@ export async function POST(req: NextRequest) {
 
     if (!UUID_PATTERN.test(vehicleId)) {
       return NextResponse.json(
-        { error: 'Vehicle is not available in your current maintenance scope' },
+        { error: 'Vehicle is not available for maintenance in your tenant' },
         { status: 404 },
       );
     }
 
     const db = getDb();
-    const roleNames = await getSessionRoleNames(session);
-    const fleetAccess = resolveDashboardAccess('/dashboard/fleet', roleNames);
     const [vehicle] = await db
       .select({ id: vehicles.id, currentOdometer: vehicles.currentOdometer })
       .from(vehicles)
-      .where(and(
-        eq(vehicles.id, vehicleId),
-        vehicleScopeCondition({
-          tenantId: session.tenantId,
-          userId: session.user.id,
-          recordScope: fleetAccess.recordScope ?? 'related',
-        }),
-      ))
+      .where(
+        and(
+          eq(vehicles.id, vehicleId),
+          eq(vehicles.tenantId, session.tenantId),
+          eq(vehicles.isActive, true),
+        ),
+      )
       .limit(1);
 
     if (!vehicle) {
-      return NextResponse.json({ error: 'Vehicle is not available in your current maintenance scope' }, { status: 404 });
+      return NextResponse.json({ error: 'Vehicle is not available for maintenance in your tenant' }, { status: 404 });
     }
     if (serviceOdometer !== null && serviceOdometer < vehicle.currentOdometer) {
       return NextResponse.json({ error: `Service odometer cannot be below the current vehicle odometer (${vehicle.currentOdometer} km)` }, { status: 409 });
