@@ -172,6 +172,7 @@ jobs:
           src/e2e/external-driver-lifecycle-closure.spec.ts
           src/e2e/driver-licence-upload-review.smoke.spec.ts
           src/e2e/programme-selector-scale.spec.ts
+          src/e2e/maintenance-lifecycle-closure.spec.ts
           --project=chromium --workers=1
         env:
           CI: ''
