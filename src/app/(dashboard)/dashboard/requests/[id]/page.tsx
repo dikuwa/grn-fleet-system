@@ -359,6 +359,7 @@ export default async function RequestDetailPage({ params }: PageProps) {
   }
 
   const canModify = access.actions.includes('update') && (access.recordScope === 'tenant' || isOwner);
+  const canViewPassengerPII = access.recordScope === 'tenant' || isOwner;
   const variant = STATUS_VARIANTS[request.status as keyof typeof STATUS_VARIANTS] ?? 'info';
   const requesterName =
     request.requesterFirstName && request.requesterLastName
@@ -689,9 +690,9 @@ export default async function RequestDetailPage({ params }: PageProps) {
                       ? p.travellerRole.replaceAll('_', ' ')
                       : null,
                     !p.employeeId ? p.externalOrganisation : null,
-                    !p.employeeId ? p.externalPhone : null,
-                    !p.employeeId ? p.externalEmail : null,
-                    !p.employeeId && p.externalIdReference
+                    !p.employeeId && canViewPassengerPII ? p.externalPhone : null,
+                    !p.employeeId && canViewPassengerPII ? p.externalEmail : null,
+                    !p.employeeId && canViewPassengerPII && p.externalIdReference
                       ? `ID: ${p.externalIdReference}`
                       : null,
                   ].filter(Boolean);
