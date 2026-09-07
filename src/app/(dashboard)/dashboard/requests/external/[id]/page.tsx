@@ -7,6 +7,7 @@ import { employees } from '@/db/schema/people';
 import {
   externalRequestDrivers,
   requestActivities,
+  requestGoodsEquipment,
   requestPassengers,
   requestRoutes,
   transportRequests,
@@ -26,9 +27,11 @@ import {
   Database,
   FileText,
   MapPin,
+  Package,
   ShieldCheck,
   User,
   Users,
+  WalletCards,
 } from 'lucide-react';
 import { STATUS_LABELS, STATUS_VARIANTS } from '@/lib/constants';
 import { formatDate, formatDateTime } from '@/lib/utils';
@@ -52,6 +55,31 @@ const ALLOCATABLE_STATUSES = [
 ];
 const CORRECTABLE_STATUSES = ['returned', 'rejected', 'supervisor_rejected'];
 
+const FINANCIAL_IMPACT_LABELS: Record<string, string> = {
+  none: 'No financial impact',
+  within_budget: 'Within approved budget',
+  additional_funding: 'Additional funding required',
+};
+
+const TRIP_CATEGORY_LABELS: Record<string, string> = {
+  general: 'General official travel',
+  programme_transport: 'Programme transport',
+  learner_transport: 'Learner transport',
+  event_transport: 'Event transport',
+};
+
+const REQUEST_ORIGIN_LABELS: Record<string, string> = {
+  internal: 'Internal request',
+  external: 'External / sponsored request',
+  programme: 'Programme-driven request',
+};
+
+const DRIVER_PREFERENCE_LABELS: Record<string, string> = {
+  no_preference: 'No preference',
+  transport_admin_assign: 'Transport Office to assign',
+  nominated: 'Requester nominated driver',
+};
+
 async function fetchExternalRequest(id: string, tenantId: string) {
   const db = getDb();
   const [request] = await db
@@ -68,7 +96,18 @@ async function fetchExternalRequest(id: string, tenantId: string) {
       purpose: transportRequests.purpose,
       department: transportRequests.department,
       requestingOfficeSnapshot: transportRequests.requestingOfficeSnapshot,
+      requestOrigin: transportRequests.requestOrigin,
+      financialImpact: transportRequests.financialImpact,
+      tripCategory: transportRequests.tripCategory,
+      estimatedCost: transportRequests.estimatedCost,
+      currency: transportRequests.currency,
+      costCentre: transportRequests.costCentre,
+      fundingSource: transportRequests.fundingSource,
+      budgetReference: transportRequests.budgetReference,
+      driverPreference: transportRequests.driverPreference,
       urgency: transportRequests.urgency,
+      overnight: transportRequests.overnight,
+      assistedReason: transportRequests.assistedReason,
       specialRequirements: transportRequests.specialRequirements,
       specialAuthorityRequired: transportRequests.specialAuthorityRequired,
       specialAuthorityReason: transportRequests.specialAuthorityReason,
@@ -96,7 +135,7 @@ async function fetchExternalRequest(id: string, tenantId: string) {
 
   if (!request || request.requesterType !== 'external' || !request.externalRequesterId) notFound();
 
-  const [activities, passengers, routes, externalDrivers] = await Promise.all([
+  const [activities, passengers, routes, goodsEquipment, externalDrivers] = await Promise.all([
     db
       .select()
       .from(requestActivities)
@@ -112,6 +151,11 @@ async function fetchExternalRequest(id: string, tenantId: string) {
       .from(requestRoutes)
       .where(eq(requestRoutes.requestId, id))
       .orderBy(requestRoutes.createdAt),
+    db
+      .select()
+      .from(requestGoodsEquipment)
+      .where(eq(requestGoodsEquipment.requestId, id))
+      .orderBy(requestGoodsEquipment.sortOrder),
     db
       .select({
         id: externalRequestDrivers.id,
@@ -144,7 +188,14 @@ async function fetchExternalRequest(id: string, tenantId: string) {
     new Map(externalDrivers.map((driver) => [driver.externalPartyId, driver])).values(),
   );
 
-  return { request, activities, passengers, routes, externalDrivers: uniqueDrivers };
+  return {
+    request,
+    activities,
+    passengers,
+    routes,
+    goodsEquipment,
+    externalDrivers: uniqueDrivers,
+  };
 }
 
 export default async function ExternalRequestDetailPage({ params }: PageProps) {
@@ -170,7 +221,7 @@ export default async function ExternalRequestDetailPage({ params }: PageProps) {
   }
 
   const data = await fetchExternalRequest(id, session.tenantId);
-  const { request, activities, passengers, routes, externalDrivers } = data;
+  const { request, activities, passengers, routes, goodsEquipment, externalDrivers } = data;
   const roleNames = await getSessionRoleNames(session);
   const access = resolveDashboardAccess('/dashboard/requests', roleNames);
   const isEnteredBy = request.enteredByUserId === session.user.id;
@@ -231,6 +282,7 @@ export default async function ExternalRequestDetailPage({ params }: PageProps) {
     canPerformDashboardAction('/dashboard/allocations', roleNames, 'create') &&
     ALLOCATABLE_STATUSES.includes(request.status);
   const variant = STATUS_VARIANTS[request.status as keyof typeof STATUS_VARIANTS] ?? 'info';
+  const estimatedCost = request.estimatedCost == null ? null : Number(request.estimatedCost);
 
   return (
     <div className="space-y-6">
@@ -273,7 +325,9 @@ export default async function ExternalRequestDetailPage({ params }: PageProps) {
       <div className="border-status-info-text/20 bg-status-info-bg text-status-info-text flex flex-wrap items-center gap-2 rounded-[8px] border px-4 py-3 text-sm">
         <Building2 className="h-4 w-4" aria-hidden="true" />
         <strong>External request.</strong>
-        <span>The named requester is outside the tenant staff directory. The internal employee below is the routing and operational contact only.</span>
+        <span>
+          The named requester is outside the tenant staff directory. The internal employee below is the routing and operational contact only.
+        </span>
       </div>
 
       <Card>
@@ -291,10 +345,18 @@ export default async function ExternalRequestDetailPage({ params }: PageProps) {
             </Badge>
           </div>
           <div className="text-ink-500 mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs">
-            <span className="flex items-center gap-1"><User className="h-3.5 w-3.5" /> {requesterName}</span>
+            <span className="flex items-center gap-1">
+              <User className="h-3.5 w-3.5" /> {requesterName}
+            </span>
             {request.requesterOrganisation && <span>{request.requesterOrganisation}</span>}
-            <span className="flex items-center gap-1"><CalendarDays className="h-3.5 w-3.5" /> Created {formatDate(request.createdAt)}</span>
-            {request.submittedAt && <span className="flex items-center gap-1"><Clock className="h-3.5 w-3.5" /> Submitted {formatDateTime(request.submittedAt)}</span>}
+            <span className="flex items-center gap-1">
+              <CalendarDays className="h-3.5 w-3.5" /> Created {formatDate(request.createdAt)}
+            </span>
+            {request.submittedAt && (
+              <span className="flex items-center gap-1">
+                <Clock className="h-3.5 w-3.5" /> Submitted {formatDateTime(request.submittedAt)}
+              </span>
+            )}
           </div>
         </CardContent>
       </Card>
@@ -305,10 +367,14 @@ export default async function ExternalRequestDetailPage({ params }: PageProps) {
           <CardContent className="space-y-2 text-sm">
             <p className="text-ink-950 font-semibold">{requesterName}</p>
             <p className="text-ink-600">{request.requesterOrganisation || 'Organisation not recorded'}</p>
-            {request.requesterOrganisationType && <p className="text-ink-500 capitalize">{request.requesterOrganisationType.replace(/_/g, ' ')}</p>}
+            {request.requesterOrganisationType && (
+              <p className="text-ink-500 capitalize">{request.requesterOrganisationType.replace(/_/g, ' ')}</p>
+            )}
             {request.requesterEmail && <p className="text-ink-500">{request.requesterEmail}</p>}
             {request.requesterPhone && <p className="text-ink-500">{request.requesterPhone}</p>}
-            {request.requesterIdReference && <p className="text-ink-500">ID reference: {request.requesterIdReference}</p>}
+            {request.requesterIdReference && (
+              <p className="text-ink-500">ID reference: {request.requesterIdReference}</p>
+            )}
           </CardContent>
         </Card>
 
@@ -316,15 +382,86 @@ export default async function ExternalRequestDetailPage({ params }: PageProps) {
           <CardHeader><CardTitle>Responsible internal employee</CardTitle></CardHeader>
           <CardContent className="space-y-2 text-sm">
             <p className="text-ink-950 font-semibold">{responsibleName}</p>
-            {request.responsibleEmployeeNumber && <p className="text-ink-500">Employee no. {request.responsibleEmployeeNumber}</p>}
+            {request.responsibleEmployeeNumber && (
+              <p className="text-ink-500">Employee no. {request.responsibleEmployeeNumber}</p>
+            )}
             {request.responsibleJobTitle && <p className="text-ink-500">{request.responsibleJobTitle}</p>}
             {request.department && <p className="text-ink-500">{request.department}</p>}
-            {request.requestingOfficeSnapshot && <p className="text-ink-500">{request.requestingOfficeSnapshot}</p>}
+            {request.requestingOfficeSnapshot && (
+              <p className="text-ink-500">{request.requestingOfficeSnapshot}</p>
+            )}
             {request.responsibleEmail && <p className="text-ink-500">{request.responsibleEmail}</p>}
-            <p className="text-ink-400 pt-1 text-xs">Used for tenant approval routing and operational follow-up; not the requester identity.</p>
+            <p className="text-ink-400 pt-1 text-xs">
+              Used for tenant approval routing and operational follow-up; not the requester identity.
+            </p>
           </CardContent>
         </Card>
       </div>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <WalletCards className="h-4 w-4" /> Trip & Budget Classification
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <div>
+            <p className="text-ink-500 text-xs">Request origin</p>
+            <p className="text-ink-950 mt-1 text-sm">
+              {REQUEST_ORIGIN_LABELS[request.requestOrigin] ?? request.requestOrigin.replaceAll('_', ' ')}
+            </p>
+          </div>
+          <div>
+            <p className="text-ink-500 text-xs">Trip category</p>
+            <p className="text-ink-950 mt-1 text-sm">
+              {TRIP_CATEGORY_LABELS[request.tripCategory] ?? request.tripCategory.replaceAll('_', ' ')}
+            </p>
+          </div>
+          <div>
+            <p className="text-ink-500 text-xs">Financial impact</p>
+            <p className="text-ink-950 mt-1 text-sm">
+              {FINANCIAL_IMPACT_LABELS[request.financialImpact] ?? request.financialImpact.replaceAll('_', ' ')}
+            </p>
+          </div>
+          <div>
+            <p className="text-ink-500 text-xs">Estimated cost</p>
+            <p className="text-ink-950 mt-1 text-sm tabular-nums">
+              {estimatedCost == null || Number.isNaN(estimatedCost)
+                ? '—'
+                : `${request.currency === 'NAD' ? 'N$' : request.currency} ${estimatedCost.toLocaleString('en-NA', {
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}`}
+            </p>
+          </div>
+          <div>
+            <p className="text-ink-500 text-xs">Cost centre</p>
+            <p className="text-ink-950 mt-1 text-sm">{request.costCentre || '—'}</p>
+          </div>
+          <div>
+            <p className="text-ink-500 text-xs">Funding source</p>
+            <p className="text-ink-950 mt-1 text-sm">{request.fundingSource || '—'}</p>
+          </div>
+          <div>
+            <p className="text-ink-500 text-xs">Budget reference</p>
+            <p className="text-ink-950 mt-1 text-sm">{request.budgetReference || '—'}</p>
+          </div>
+          <div>
+            <p className="text-ink-500 text-xs">Driver preference</p>
+            <p className="text-ink-950 mt-1 text-sm">
+              {DRIVER_PREFERENCE_LABELS[request.driverPreference] ?? request.driverPreference.replaceAll('_', ' ')}
+            </p>
+          </div>
+          <div>
+            <p className="text-ink-500 text-xs">Urgency</p>
+            <p className="text-ink-950 mt-1 text-sm capitalize">{request.urgency.replaceAll('_', ' ')}</p>
+          </div>
+          <div>
+            <p className="text-ink-500 text-xs">Overnight travel</p>
+            <p className="text-ink-950 mt-1 text-sm">{request.overnight ? 'Yes' : 'No'}</p>
+          </div>
+        </CardContent>
+      </Card>
 
       <Card>
         <CardHeader><CardTitle>Journey and purpose</CardTitle></CardHeader>
@@ -335,14 +472,59 @@ export default async function ExternalRequestDetailPage({ params }: PageProps) {
             <div><p className="text-ink-500 text-xs">Department</p><p className="text-ink-950 mt-1 text-sm">{request.department || '—'}</p></div>
             <div><p className="text-ink-500 text-xs">Authorised distance</p><p className="text-ink-950 mt-1 text-sm tabular-nums">{request.totalAuthorisedKilometres ? `${request.totalAuthorisedKilometres.toLocaleString()} km` : '—'}</p></div>
           </div>
-          {request.specialRequirements && <div><p className="text-ink-500 text-xs">Special requirements</p><p className="text-ink-700 mt-1 text-sm">{request.specialRequirements}</p></div>}
-          {request.specialAuthorityRequired && <div className="bg-status-pending-bg text-status-pending-text rounded-[8px] px-4 py-3 text-sm">Special authority required{request.specialAuthorityReason ? `: ${request.specialAuthorityReason}` : ''}</div>}
+          {request.assistedReason && (
+            <div><p className="text-ink-500 text-xs">Assisted submission reason</p><p className="text-ink-700 mt-1 text-sm">{request.assistedReason}</p></div>
+          )}
+          {request.specialRequirements && (
+            <div><p className="text-ink-500 text-xs">Special requirements</p><p className="text-ink-700 mt-1 text-sm">{request.specialRequirements}</p></div>
+          )}
+          {request.specialAuthorityRequired && (
+            <div className="bg-status-pending-bg text-status-pending-text rounded-[8px] px-4 py-3 text-sm">
+              Special authority required{request.specialAuthorityReason ? `: ${request.specialAuthorityReason}` : ''}
+            </div>
+          )}
         </CardContent>
       </Card>
 
+      {goodsEquipment.length > 0 && (
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Package className="h-4 w-4" /> Goods & Equipment ({goodsEquipment.length})
+            </CardTitle>
+          </CardHeader>
+          <CardContent className="p-0">
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="border-border border-b">
+                    <th className="text-ink-500 px-4 py-2 text-left text-xs font-medium">Description</th>
+                    <th className="text-ink-500 px-4 py-2 text-left text-xs font-medium">Quantity</th>
+                    <th className="text-ink-500 px-4 py-2 text-left text-xs font-medium">Purpose</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-border divide-y">
+                  {goodsEquipment.map((item) => (
+                    <tr key={item.id}>
+                      <td className="text-ink-950 px-4 py-3 font-medium">{item.description}</td>
+                      <td className="text-ink-700 px-4 py-3">{item.quantity || '—'}</td>
+                      <td className="text-ink-500 px-4 py-3">{item.purpose || '—'}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       <div className="grid gap-5 lg:grid-cols-2">
         <Card>
-          <CardHeader><CardTitle className="flex items-center gap-2"><ShieldCheck className="h-4 w-4" /> External driver nomination</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <ShieldCheck className="h-4 w-4" /> External driver nomination
+            </CardTitle>
+          </CardHeader>
           <CardContent className="space-y-3">
             {externalDrivers.length === 0 ? (
               <p className="text-ink-500 text-sm">No external driver nominated. Transport Administration will assign a compliant driver.</p>
@@ -350,10 +532,16 @@ export default async function ExternalRequestDetailPage({ params }: PageProps) {
               <div key={driver.id} className="border-border rounded-[8px] border p-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <p className="text-ink-950 text-sm font-semibold">{driver.firstName} {driver.lastName}</p>
-                  <Badge variant={driver.licenceValidated ? 'success' : 'pending'} size="sm">{driver.licenceValidated ? 'Licence validated' : 'Licence pending'}</Badge>
+                  <Badge variant={driver.licenceValidated ? 'success' : 'pending'} size="sm">
+                    {driver.licenceValidated ? 'Licence validated' : 'Licence pending'}
+                  </Badge>
                 </div>
                 <p className="text-ink-500 mt-1 text-xs">{driver.organisationName}</p>
-                {driver.licenceClass && <p className="text-ink-500 mt-1 text-xs">Class {driver.licenceClass}{driver.expiryDate ? ` · expires ${driver.expiryDate}` : ''}</p>}
+                {driver.licenceClass && (
+                  <p className="text-ink-500 mt-1 text-xs">
+                    Class {driver.licenceClass}{driver.expiryDate ? ` · expires ${driver.expiryDate}` : ''}
+                  </p>
+                )}
                 <p className="text-ink-400 mt-2 text-xs">Nomination only — final trip allocation must revalidate eligibility.</p>
               </div>
             ))}
@@ -361,15 +549,29 @@ export default async function ExternalRequestDetailPage({ params }: PageProps) {
         </Card>
 
         <Card>
-          <CardHeader><CardTitle className="flex items-center gap-2"><Users className="h-4 w-4" /> Travellers ({passengers.length})</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Users className="h-4 w-4" /> Travellers ({passengers.length})
+            </CardTitle>
+          </CardHeader>
           <CardContent className="space-y-2">
-            {passengers.length === 0 ? <p className="text-ink-500 text-sm">No travellers recorded.</p> : passengers.map((passenger) => (
-              <div key={passenger.id} className="border-border flex flex-wrap items-center justify-between gap-2 border-b py-2 last:border-0">
+            {passengers.length === 0 ? (
+              <p className="text-ink-500 text-sm">No travellers recorded.</p>
+            ) : passengers.map((passenger) => (
+              <div key={passenger.id} className="border-border flex flex-wrap items-start justify-between gap-2 border-b py-2 last:border-0">
                 <div>
                   <p className="text-ink-950 text-sm">{passenger.externalName || 'Traveller'}</p>
                   {passenger.externalOrganisation && <p className="text-ink-500 text-xs">{passenger.externalOrganisation}</p>}
+                  {passenger.travellerRole && passenger.travellerRole !== 'passenger' && (
+                    <p className="text-ink-500 text-xs capitalize">{passenger.travellerRole.replaceAll('_', ' ')}</p>
+                  )}
+                  {passenger.reasonForTravel && (
+                    <p className="text-ink-700 mt-1 text-xs">Travel reason: {passenger.reasonForTravel}</p>
+                  )}
                 </div>
-                <Badge variant={passenger.status === 'confirmed' ? 'success' : 'pending'} size="sm">{passenger.status}</Badge>
+                <Badge variant={passenger.status === 'confirmed' ? 'success' : 'pending'} size="sm">
+                  {passenger.status}
+                </Badge>
               </div>
             ))}
           </CardContent>
@@ -383,7 +585,10 @@ export default async function ExternalRequestDetailPage({ params }: PageProps) {
             {activities.map((activity) => (
               <div key={activity.id} className="border-border border-b pb-3 last:border-0 last:pb-0">
                 <p className="text-ink-950 text-sm font-semibold">{activity.title}</p>
-                <p className="text-ink-500 mt-1 text-xs">{formatDateTime(activity.startDate)} → {formatDateTime(activity.endDate)}{activity.venue ? ` · ${activity.venue}` : ''}</p>
+                <p className="text-ink-500 mt-1 text-xs">
+                  {formatDateTime(activity.startDate)} → {formatDateTime(activity.endDate)}
+                  {activity.venue ? ` · ${activity.venue}` : ''}
+                </p>
               </div>
             ))}
           </CardContent>
@@ -392,7 +597,11 @@ export default async function ExternalRequestDetailPage({ params }: PageProps) {
 
       {routes.length > 0 && (
         <Card>
-          <CardHeader><CardTitle className="flex items-center gap-2"><MapPin className="h-4 w-4" /> Routes</CardTitle></CardHeader>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <MapPin className="h-4 w-4" /> Routes
+            </CardTitle>
+          </CardHeader>
           <CardContent className="space-y-3">
             {routes.map((route) => (
               <div key={route.id} className="border-border rounded-[8px] border p-3">
@@ -401,7 +610,11 @@ export default async function ExternalRequestDetailPage({ params }: PageProps) {
                   <ArrowRight className="text-ink-400 h-3.5 w-3.5" />
                   <span className="text-ink-950">{route.destinationName || 'Destination'}</span>
                 </div>
-                <p className="text-ink-500 mt-1 text-xs">{route.totalKilometres > 0 ? `${route.totalKilometres.toLocaleString()} km` : 'Distance pending verification'}</p>
+                <p className="text-ink-500 mt-1 text-xs">
+                  {route.totalKilometres > 0
+                    ? `${route.totalKilometres.toLocaleString()} km`
+                    : 'Distance pending verification'}
+                </p>
               </div>
             ))}
           </CardContent>
