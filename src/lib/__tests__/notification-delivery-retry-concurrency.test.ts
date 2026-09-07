@@ -28,6 +28,21 @@ describe('notification delivery retry concurrency contract', () => {
     expect(retryRoute).toContain("{ error: 'Delivery not found' }");
   });
 
+  it('re-proves active tenant membership before resolving or sending to a recipient', () => {
+    const membershipIndex = retryRoute.indexOf('const [activeMembership] = await db');
+    const employeeIndex = retryRoute.indexOf('const [employee] = await db', membershipIndex);
+    const resendIndex = retryRoute.indexOf('const resend = new Resend(resendApiKey)');
+
+    expect(retryRoute).toContain("import { tenantMemberships } from '@/db/schema/tenants'");
+    expect(membershipIndex).toBeGreaterThan(-1);
+    expect(retryRoute).toContain('eq(tenantMemberships.tenantId, session.tenantId)');
+    expect(retryRoute).toContain('eq(tenantMemberships.userId, delivery.notification.recipientUserId)');
+    expect(retryRoute).toContain("eq(tenantMemberships.status, 'active')");
+    expect(employeeIndex).toBeGreaterThan(membershipIndex);
+    expect(resendIndex).toBeGreaterThan(employeeIndex);
+    expect(retryRoute).toContain('Notification recipient is no longer an active tenant member');
+  });
+
   it('reserves a pending attempt before crossing the external email boundary', () => {
     const reservationIndex = retryRoute.indexOf('.insert(notificationDeliveries)');
     const resendIndex = retryRoute.indexOf('const resend = new Resend(resendApiKey)');
