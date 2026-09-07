@@ -21,6 +21,8 @@ import { Permissions } from '@/lib/permissions';
 import { recordAuditEvent } from '@/lib/audit-event';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const RETRY_PENDING_RECLAIM_MS = 15 * 60 * 1000;
+const RESEND_IDEMPOTENCY_SAFE_WINDOW_MS = 23 * 60 * 60 * 1000;
 
 function escapeHtml(value: string) {
   return value
@@ -34,6 +36,12 @@ function escapeHtml(value: string) {
 function summariseDeliveryError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
   return message.slice(0, 500);
+}
+
+function deliveryErrorName(error: unknown) {
+  if (!error || typeof error !== 'object' || !('name' in error)) return null;
+  const name = (error as { name?: unknown }).name;
+  return typeof name === 'string' ? name : null;
 }
 
 export async function POST(
@@ -157,15 +165,16 @@ export async function POST(
       );
     }
 
-    // Only the latest failed attempt may be retried. Reserve the next attempt
-    // before calling the external provider. A partial unique index allows only
-    // one pending reservation per notification/channel, so concurrent retries
-    // cannot both cross the outbound-email boundary.
+    // The next attempt is reserved before the external provider call. If a
+    // process dies after reservation, a later request may safely reuse that
+    // reservation once it is stale because the provider call uses a stable
+    // idempotency key derived from the reservation id.
     const [latestDelivery] = await db
       .select({
         id: notificationDeliveries.id,
         attempt: notificationDeliveries.attempt,
         status: notificationDeliveries.status,
+        createdAt: notificationDeliveries.createdAt,
       })
       .from(notificationDeliveries)
       .where(
@@ -177,27 +186,69 @@ export async function POST(
       .orderBy(desc(notificationDeliveries.attempt), desc(notificationDeliveries.createdAt))
       .limit(1);
 
-    if (!latestDelivery || latestDelivery.id !== delivery.id || latestDelivery.status !== 'failed') {
+    let reservedAttempt: typeof notificationDeliveries.$inferSelect | undefined;
+
+    if (latestDelivery?.id === delivery.id && latestDelivery.status === 'failed') {
+      const [created] = await db
+        .insert(notificationDeliveries)
+        .values({
+          notificationId: delivery.notificationId,
+          channel: 'email',
+          attempt: latestDelivery.attempt + 1,
+          status: 'pending',
+        })
+        .onConflictDoNothing()
+        .returning();
+      reservedAttempt = created;
+
+      if (!reservedAttempt) {
+        return NextResponse.json(
+          { error: 'A retry is already in progress for this delivery. Refresh delivery history.' },
+          { status: 409 },
+        );
+      }
+    } else if (
+      latestDelivery?.status === 'pending' &&
+      latestDelivery.attempt === delivery.attempt + 1
+    ) {
+      const pendingAgeMs = Date.now() - latestDelivery.createdAt.getTime();
+      if (pendingAgeMs < RETRY_PENDING_RECLAIM_MS) {
+        return NextResponse.json(
+          { error: 'A retry is already in progress for this delivery. Refresh delivery history.' },
+          { status: 409 },
+        );
+      }
+      if (pendingAgeMs >= RESEND_IDEMPOTENCY_SAFE_WINDOW_MS) {
+        return NextResponse.json(
+          {
+            error:
+              'This retry has unresolved delivery evidence outside the safe provider recovery window. Review delivery history before retrying.',
+          },
+          { status: 409 },
+        );
+      }
+      const [existingPending] = await db
+        .select()
+        .from(notificationDeliveries)
+        .where(
+          and(
+            eq(notificationDeliveries.id, latestDelivery.id),
+            eq(notificationDeliveries.notificationId, delivery.notificationId),
+            eq(notificationDeliveries.channel, delivery.channel),
+            eq(notificationDeliveries.status, 'pending'),
+          ),
+        )
+        .limit(1);
+      reservedAttempt = existingPending;
+      if (!reservedAttempt) {
+        return NextResponse.json(
+          { error: 'Retry delivery evidence changed. Refresh delivery history.' },
+          { status: 409 },
+        );
+      }
+    } else {
       return NextResponse.json(
         { error: 'This delivery is no longer the latest failed attempt. Refresh delivery history.' },
-        { status: 409 },
-      );
-    }
-
-    const [reservedAttempt] = await db
-      .insert(notificationDeliveries)
-      .values({
-        notificationId: delivery.notificationId,
-        channel: 'email',
-        attempt: latestDelivery.attempt + 1,
-        status: 'pending',
-      })
-      .onConflictDoNothing()
-      .returning();
-
-    if (!reservedAttempt) {
-      return NextResponse.json(
-        { error: 'A retry is already in progress for this delivery. Refresh delivery history.' },
         { status: 409 },
       );
     }
@@ -211,31 +262,40 @@ export async function POST(
     let providerId: string | null = null;
 
     try {
-      const result = await resend.emails.send({
-        from: process.env.EMAIL_FROM || 'noreply@grnfleet.gov.na',
-        to: recipientEmail,
-        subject: delivery.notification.title,
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <h2 style="color: #1F2937; border-bottom: 2px solid #E5E7EB; padding-bottom: 8px;">
-              ${safeTitle}
-            </h2>
-            <p style="color: #374151; font-size: 15px; line-height: 1.6;">
-              ${safeBody}
-            </p>
-            <p style="color: #6B7280; font-size: 13px;">
-              This is a retry attempt for a failed notification delivery.
-            </p>
-            <hr style="border: none; border-top: 1px solid #E5E7EB; margin: 16px 0;" />
-            <p style="color: #9CA3AF; font-size: 12px;">
-              This is an automated message from the Government Fleet Management System.
-            </p>
-          </div>
-        `,
-      });
+      const result = await resend.emails.send(
+        {
+          from: process.env.EMAIL_FROM || 'noreply@grnfleet.gov.na',
+          to: recipientEmail,
+          subject: delivery.notification.title,
+          html: `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+              <h2 style="color: #1F2937; border-bottom: 2px solid #E5E7EB; padding-bottom: 8px;">
+                ${safeTitle}
+              </h2>
+              <p style="color: #374151; font-size: 15px; line-height: 1.6;">
+                ${safeBody}
+              </p>
+              <p style="color: #6B7280; font-size: 13px;">
+                This is a retry attempt for a failed notification delivery.
+              </p>
+              <hr style="border: none; border-top: 1px solid #E5E7EB; margin: 16px 0;" />
+              <p style="color: #9CA3AF; font-size: 12px;">
+                This is an automated message from the Government Fleet Management System.
+              </p>
+            </div>
+          `,
+        },
+        { idempotencyKey: `notification-delivery/${reservedAttempt.id}` },
+      );
 
       if (result.error) {
-        throw new Error(result.error.message || 'Email provider rejected the retry');
+        if (deliveryErrorName(result.error) === 'concurrent_idempotent_requests') {
+          return NextResponse.json(
+            { error: 'The delivery provider is still processing this retry. Refresh delivery history.' },
+            { status: 409 },
+          );
+        }
+        throw result.error;
       }
 
       providerId = result.data?.id ?? null;
