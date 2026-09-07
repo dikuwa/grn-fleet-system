@@ -11,7 +11,7 @@ import { getDb } from '@/db';
 import { user } from '@/db/schema/better-auth';
 import { notificationDeliveries, notifications } from '@/db/schema/notifications';
 import { employees } from '@/db/schema/people';
-import { eq, and } from 'drizzle-orm';
+import { eq, and, desc } from 'drizzle-orm';
 import {
   requireAnyPermission,
   requireDashboardAction,
@@ -19,6 +19,8 @@ import {
 } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { recordAuditEvent } from '@/lib/audit-event';
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function escapeHtml(value: string) {
   return value
@@ -60,6 +62,10 @@ export async function POST(
       Permissions.DRIVER_MANAGE,
     ]);
     if (permCheck instanceof NextResponse) return permCheck;
+
+    if (!UUID_PATTERN.test(id)) {
+      return NextResponse.json({ error: 'Delivery not found' }, { status: 404 });
+    }
 
     const db = getDb();
 
@@ -151,6 +157,51 @@ export async function POST(
       );
     }
 
+    // Only the latest failed attempt may be retried. Reserve the next attempt
+    // before calling the external provider. A partial unique index allows only
+    // one pending reservation per notification/channel, so concurrent retries
+    // cannot both cross the outbound-email boundary.
+    const [latestDelivery] = await db
+      .select({
+        id: notificationDeliveries.id,
+        attempt: notificationDeliveries.attempt,
+        status: notificationDeliveries.status,
+      })
+      .from(notificationDeliveries)
+      .where(
+        and(
+          eq(notificationDeliveries.notificationId, delivery.notificationId),
+          eq(notificationDeliveries.channel, delivery.channel),
+        ),
+      )
+      .orderBy(desc(notificationDeliveries.attempt), desc(notificationDeliveries.createdAt))
+      .limit(1);
+
+    if (!latestDelivery || latestDelivery.id !== delivery.id || latestDelivery.status !== 'failed') {
+      return NextResponse.json(
+        { error: 'This delivery is no longer the latest failed attempt. Refresh delivery history.' },
+        { status: 409 },
+      );
+    }
+
+    const [reservedAttempt] = await db
+      .insert(notificationDeliveries)
+      .values({
+        notificationId: delivery.notificationId,
+        channel: 'email',
+        attempt: latestDelivery.attempt + 1,
+        status: 'pending',
+      })
+      .onConflictDoNothing()
+      .returning();
+
+    if (!reservedAttempt) {
+      return NextResponse.json(
+        { error: 'A retry is already in progress for this delivery. Refresh delivery history.' },
+        { status: 409 },
+      );
+    }
+
     const resend = new Resend(resendApiKey);
     const safeTitle = escapeHtml(delivery.notification.title);
     const safeBody = escapeHtml(delivery.notification.body || delivery.notification.title).replaceAll('\n', '<br />');
@@ -195,16 +246,26 @@ export async function POST(
     }
 
     const [newRecord] = await db
-      .insert(notificationDeliveries)
-      .values({
-        notificationId: delivery.notificationId,
-        channel: 'email',
-        attempt: delivery.attempt + 1,
+      .update(notificationDeliveries)
+      .set({
         status: retryStatus,
         providerId,
-        errorSummary: retryErrorSummary,
+        errorSummary: retryErrorSummary || null,
       })
+      .where(
+        and(
+          eq(notificationDeliveries.id, reservedAttempt.id),
+          eq(notificationDeliveries.status, 'pending'),
+        ),
+      )
       .returning();
+
+    if (!newRecord) {
+      return NextResponse.json(
+        { error: 'Retry delivery evidence changed while the provider request was in progress' },
+        { status: 409 },
+      );
+    }
 
     await recordAuditEvent({
       tenantId: session.tenantId,
