@@ -24,12 +24,12 @@ describe('maintenance vehicle UUID guard', () => {
     expect(dbIndex).toBeGreaterThan(guardIndex);
   });
 
-  it('uses the existing privacy-safe maintenance-scope 404 response', () => {
+  it('uses the privacy-safe tenant maintenance 404 response', () => {
     const guardIndex = source.indexOf('if (!UUID_PATTERN.test(vehicleId))');
     const dbIndex = source.indexOf('const db = getDb();', guardIndex);
     const guardBlock = source.slice(guardIndex, dbIndex);
 
-    expect(guardBlock).toContain('Vehicle is not available in your current maintenance scope');
+    expect(guardBlock).toContain('Vehicle is not available for maintenance in your tenant');
     expect(guardBlock).toContain('{ status: 404 }');
   });
 });
