@@ -43,23 +43,26 @@ describe('notification delivery retry concurrency contract', () => {
     expect(retryRoute).toContain('Notification recipient is no longer an active tenant member');
   });
 
-  it('reserves a pending attempt before crossing the external email boundary', () => {
+  it('persists an immutable predecessor claim before crossing the external email boundary', () => {
     const reservationIndex = retryRoute.indexOf('.insert(notificationDeliveries)');
     const resendIndex = retryRoute.indexOf('const resend = new Resend(resendApiKey)');
 
     expect(reservationIndex).toBeGreaterThan(-1);
     expect(resendIndex).toBeGreaterThan(reservationIndex);
+    expect(retryRoute).toContain('retryOfDeliveryId: delivery.id');
     expect(retryRoute).toContain("status: 'pending'");
     expect(retryRoute).toContain('.onConflictDoNothing()');
-    expect(retryRoute).toContain('A retry is already in progress for this delivery. Refresh delivery history.');
+    expect(retryRoute).toContain('A retry has already been claimed for this delivery. Refresh delivery history.');
   });
 
-  it('recovers stale pending reservations only inside the safe provider idempotency window', () => {
+  it('recovers only the pending retry child of the requested failed delivery', () => {
     expect(retryRoute).toContain('createdAt: notificationDeliveries.createdAt');
+    expect(retryRoute).toContain('retryOfDeliveryId: notificationDeliveries.retryOfDeliveryId');
     expect(retryRoute).toContain('const RETRY_PENDING_RECLAIM_MS = 15 * 60 * 1000');
     expect(retryRoute).toContain('const RESEND_IDEMPOTENCY_SAFE_WINDOW_MS = 23 * 60 * 60 * 1000');
     expect(retryRoute).toContain("latestDelivery?.status === 'pending'");
     expect(retryRoute).toContain('latestDelivery.attempt === delivery.attempt + 1');
+    expect(retryRoute).toContain('latestDelivery.retryOfDeliveryId === delivery.id');
     expect(retryRoute).toContain('pendingAgeMs < RETRY_PENDING_RECLAIM_MS');
     expect(retryRoute).toContain('pendingAgeMs >= RESEND_IDEMPOTENCY_SAFE_WINDOW_MS');
     expect(retryRoute).toContain('reservedAttempt = existingPending');
@@ -82,19 +85,25 @@ describe('notification delivery retry concurrency contract', () => {
     expect(finalizationIndex).toBeGreaterThan(concurrentIndex);
   });
 
-  it('finalizes the reserved attempt instead of inserting a second post-send row', () => {
+  it('finalizes only the reserved retry child', () => {
     const providerIndex = retryRoute.indexOf('const result = await resend.emails.send');
     const finalizationIndex = retryRoute.indexOf('.update(notificationDeliveries)', providerIndex);
 
     expect(providerIndex).toBeGreaterThan(-1);
     expect(finalizationIndex).toBeGreaterThan(providerIndex);
     expect(retryRoute).toContain('eq(notificationDeliveries.id, reservedAttempt.id)');
+    expect(retryRoute).toContain('eq(notificationDeliveries.retryOfDeliveryId, delivery.id)');
     expect(retryRoute).toContain("eq(notificationDeliveries.status, 'pending')");
   });
 
-  it('enforces one in-flight retry per notification and channel in schema and migration', () => {
+  it('enforces immutable retry-child and in-flight uniqueness in schema and migration', () => {
+    expect(notificationSchema).toContain("retryOfDeliveryId: uuid('retry_of_delivery_id')");
+    expect(notificationSchema).toContain('notification_deliveries_retry_predecessor_idx');
     expect(notificationSchema).toContain('notification_deliveries_one_pending_per_channel_idx');
-    expect(notificationSchema).toContain(".where(sql`${table.status} = 'pending'`)");
+    expect(migration).toContain('ADD COLUMN IF NOT EXISTS "retry_of_delivery_id" uuid');
+    expect(migration).toContain('CREATE UNIQUE INDEX IF NOT EXISTS "notification_deliveries_retry_predecessor_idx"');
+    expect(migration).toContain('ON "notification_deliveries" ("retry_of_delivery_id")');
+    expect(migration).toContain('WHERE "retry_of_delivery_id" IS NOT NULL');
     expect(migration).toContain('CREATE UNIQUE INDEX IF NOT EXISTS "notification_deliveries_one_pending_per_channel_idx"');
     expect(migration).toContain('("notification_id", "channel")');
     expect(migration).toContain("WHERE \"status\" = 'pending'");
