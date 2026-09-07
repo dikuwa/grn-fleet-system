@@ -18,6 +18,8 @@ import { sendNotificationSms, isSmsEnabled } from '@/lib/sms';
 import { canAccessDashboardPath, SystemRoles } from '@/lib/dashboard-access';
 import { employees } from '@/db/schema/people';
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
@@ -450,6 +452,10 @@ export async function DELETE(request: NextRequest) {
     const { searchParams } = new URL(request.url);
     const notificationId = searchParams.get('id');
 
+    if (notificationId && !UUID_PATTERN.test(notificationId)) {
+      return NextResponse.json({ error: 'Notification not found' }, { status: 404 });
+    }
+
     const db = getDb();
     const workspaceContext = await getSessionWorkspace(session);
     const { roleNames, activeWorkspace } = workspaceContext;
@@ -588,9 +594,16 @@ export async function PATCH(request: NextRequest) {
     const userId = session.user.id;
     const tenantId = session.tenantId;
 
-    const db = getDb();
     const body = await request.json();
     const { notificationId, action } = body;
+    if (
+      notificationId &&
+      (typeof notificationId !== 'string' || !UUID_PATTERN.test(notificationId))
+    ) {
+      return NextResponse.json({ error: 'Notification not found' }, { status: 404 });
+    }
+
+    const db = getDb();
     const workspaceContext = await getSessionWorkspace(session);
     const { roleNames, activeWorkspace } = workspaceContext;
     const isPlatformAdministrator = roleNames.includes(SystemRoles.PLATFORM_ADMIN);
