@@ -11,7 +11,8 @@ import { getDb } from '@/db';
 import { user } from '@/db/schema/better-auth';
 import { notificationDeliveries, notifications } from '@/db/schema/notifications';
 import { employees } from '@/db/schema/people';
-import { eq, and } from 'drizzle-orm';
+import { tenantMemberships } from '@/db/schema/tenants';
+import { eq, and, desc } from 'drizzle-orm';
 import {
   requireAnyPermission,
   requireDashboardAction,
@@ -19,6 +20,10 @@ import {
 } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
 import { recordAuditEvent } from '@/lib/audit-event';
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const RETRY_PENDING_RECLAIM_MS = 15 * 60 * 1000;
+const RESEND_IDEMPOTENCY_SAFE_WINDOW_MS = 23 * 60 * 60 * 1000;
 
 function escapeHtml(value: string) {
   return value
@@ -32,6 +37,12 @@ function escapeHtml(value: string) {
 function summariseDeliveryError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
   return message.slice(0, 500);
+}
+
+function deliveryErrorName(error: unknown) {
+  if (!error || typeof error !== 'object' || !('name' in error)) return null;
+  const name = (error as { name?: unknown }).name;
+  return typeof name === 'string' ? name : null;
 }
 
 export async function POST(
@@ -60,6 +71,10 @@ export async function POST(
       Permissions.DRIVER_MANAGE,
     ]);
     if (permCheck instanceof NextResponse) return permCheck;
+
+    if (!UUID_PATTERN.test(id)) {
+      return NextResponse.json({ error: 'Delivery not found' }, { status: 404 });
+    }
 
     const db = getDb();
 
@@ -118,6 +133,24 @@ export async function POST(
 
     let recipientEmail: string | null = null;
     if (delivery.notification.recipientUserId) {
+      const [activeMembership] = await db
+        .select({ id: tenantMemberships.id })
+        .from(tenantMemberships)
+        .where(
+          and(
+            eq(tenantMemberships.tenantId, session.tenantId),
+            eq(tenantMemberships.userId, delivery.notification.recipientUserId),
+            eq(tenantMemberships.status, 'active'),
+          ),
+        )
+        .limit(1);
+      if (!activeMembership) {
+        return NextResponse.json(
+          { error: 'Notification recipient is no longer an active tenant member' },
+          { status: 409 },
+        );
+      }
+
       const [employee] = await db
         .select({ email: employees.email })
         .from(employees)
@@ -130,10 +163,9 @@ export async function POST(
         .limit(1);
       recipientEmail = employee?.email?.trim() || null;
 
-      // Not every tenant login account has a Staff record (for example some
-      // administrative/service accounts). The notification itself is already
-      // tenant-scoped above, so it is safe to fall back to the Better Auth
-      // account email for the same recipient user id.
+      // Some active tenant login accounts do not have a Staff record. The
+      // active membership check above keeps the auth-account fallback scoped to
+      // a recipient who still belongs to this tenant.
       if (!recipientEmail) {
         const [recipientUser] = await db
           .select({ email: user.email })
@@ -151,6 +183,98 @@ export async function POST(
       );
     }
 
+    // The next attempt is reserved before the external provider call. Its
+    // retryOfDeliveryId is an immutable predecessor claim: even after this row
+    // leaves pending state, no delayed concurrent request can create a second
+    // retry child for the same failed delivery.
+    const [latestDelivery] = await db
+      .select({
+        id: notificationDeliveries.id,
+        attempt: notificationDeliveries.attempt,
+        retryOfDeliveryId: notificationDeliveries.retryOfDeliveryId,
+        status: notificationDeliveries.status,
+        createdAt: notificationDeliveries.createdAt,
+      })
+      .from(notificationDeliveries)
+      .where(
+        and(
+          eq(notificationDeliveries.notificationId, delivery.notificationId),
+          eq(notificationDeliveries.channel, delivery.channel),
+        ),
+      )
+      .orderBy(desc(notificationDeliveries.attempt), desc(notificationDeliveries.createdAt))
+      .limit(1);
+
+    let reservedAttempt: typeof notificationDeliveries.$inferSelect | undefined;
+
+    if (latestDelivery?.id === delivery.id && latestDelivery.status === 'failed') {
+      const [created] = await db
+        .insert(notificationDeliveries)
+        .values({
+          notificationId: delivery.notificationId,
+          channel: 'email',
+          attempt: latestDelivery.attempt + 1,
+          retryOfDeliveryId: delivery.id,
+          status: 'pending',
+        })
+        .onConflictDoNothing()
+        .returning();
+      reservedAttempt = created;
+
+      if (!reservedAttempt) {
+        return NextResponse.json(
+          { error: 'A retry has already been claimed for this delivery. Refresh delivery history.' },
+          { status: 409 },
+        );
+      }
+    } else if (
+      latestDelivery?.status === 'pending' &&
+      latestDelivery.attempt === delivery.attempt + 1 &&
+      latestDelivery.retryOfDeliveryId === delivery.id
+    ) {
+      const pendingAgeMs = Date.now() - latestDelivery.createdAt.getTime();
+      if (pendingAgeMs < RETRY_PENDING_RECLAIM_MS) {
+        return NextResponse.json(
+          { error: 'A retry is already in progress for this delivery. Refresh delivery history.' },
+          { status: 409 },
+        );
+      }
+      if (pendingAgeMs >= RESEND_IDEMPOTENCY_SAFE_WINDOW_MS) {
+        return NextResponse.json(
+          {
+            error:
+              'This retry has unresolved delivery evidence outside the safe provider recovery window. Review delivery history before retrying.',
+          },
+          { status: 409 },
+        );
+      }
+      const [existingPending] = await db
+        .select()
+        .from(notificationDeliveries)
+        .where(
+          and(
+            eq(notificationDeliveries.id, latestDelivery.id),
+            eq(notificationDeliveries.retryOfDeliveryId, delivery.id),
+            eq(notificationDeliveries.notificationId, delivery.notificationId),
+            eq(notificationDeliveries.channel, delivery.channel),
+            eq(notificationDeliveries.status, 'pending'),
+          ),
+        )
+        .limit(1);
+      reservedAttempt = existingPending;
+      if (!reservedAttempt) {
+        return NextResponse.json(
+          { error: 'Retry delivery evidence changed. Refresh delivery history.' },
+          { status: 409 },
+        );
+      }
+    } else {
+      return NextResponse.json(
+        { error: 'This delivery is no longer the retryable failed attempt. Refresh delivery history.' },
+        { status: 409 },
+      );
+    }
+
     const resend = new Resend(resendApiKey);
     const safeTitle = escapeHtml(delivery.notification.title);
     const safeBody = escapeHtml(delivery.notification.body || delivery.notification.title).replaceAll('\n', '<br />');
@@ -160,31 +284,40 @@ export async function POST(
     let providerId: string | null = null;
 
     try {
-      const result = await resend.emails.send({
-        from: process.env.EMAIL_FROM || 'noreply@grnfleet.gov.na',
-        to: recipientEmail,
-        subject: delivery.notification.title,
-        html: `
-          <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
-            <h2 style="color: #1F2937; border-bottom: 2px solid #E5E7EB; padding-bottom: 8px;">
-              ${safeTitle}
-            </h2>
-            <p style="color: #374151; font-size: 15px; line-height: 1.6;">
-              ${safeBody}
-            </p>
-            <p style="color: #6B7280; font-size: 13px;">
-              This is a retry attempt for a failed notification delivery.
-            </p>
-            <hr style="border: none; border-top: 1px solid #E5E7EB; margin: 16px 0;" />
-            <p style="color: #9CA3AF; font-size: 12px;">
-              This is an automated message from the Government Fleet Management System.
-            </p>
-          </div>
-        `,
-      });
+      const result = await resend.emails.send(
+        {
+          from: process.env.EMAIL_FROM || 'noreply@grnfleet.gov.na',
+          to: recipientEmail,
+          subject: delivery.notification.title,
+          html: `
+            <div style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto;">
+              <h2 style="color: #1F2937; border-bottom: 2px solid #E5E7EB; padding-bottom: 8px;">
+                ${safeTitle}
+              </h2>
+              <p style="color: #374151; font-size: 15px; line-height: 1.6;">
+                ${safeBody}
+              </p>
+              <p style="color: #6B7280; font-size: 13px;">
+                This is a retry attempt for a failed notification delivery.
+              </p>
+              <hr style="border: none; border-top: 1px solid #E5E7EB; margin: 16px 0;" />
+              <p style="color: #9CA3AF; font-size: 12px;">
+                This is an automated message from the Government Fleet Management System.
+              </p>
+            </div>
+          `,
+        },
+        { idempotencyKey: `notification-delivery/${reservedAttempt.id}` },
+      );
 
       if (result.error) {
-        throw new Error(result.error.message || 'Email provider rejected the retry');
+        if (deliveryErrorName(result.error) === 'concurrent_idempotent_requests') {
+          return NextResponse.json(
+            { error: 'The delivery provider is still processing this retry. Refresh delivery history.' },
+            { status: 409 },
+          );
+        }
+        throw result.error;
       }
 
       providerId = result.data?.id ?? null;
@@ -195,16 +328,27 @@ export async function POST(
     }
 
     const [newRecord] = await db
-      .insert(notificationDeliveries)
-      .values({
-        notificationId: delivery.notificationId,
-        channel: 'email',
-        attempt: delivery.attempt + 1,
+      .update(notificationDeliveries)
+      .set({
         status: retryStatus,
         providerId,
-        errorSummary: retryErrorSummary,
+        errorSummary: retryErrorSummary || null,
       })
+      .where(
+        and(
+          eq(notificationDeliveries.id, reservedAttempt.id),
+          eq(notificationDeliveries.retryOfDeliveryId, delivery.id),
+          eq(notificationDeliveries.status, 'pending'),
+        ),
+      )
       .returning();
+
+    if (!newRecord) {
+      return NextResponse.json(
+        { error: 'Retry delivery evidence changed while the provider request was in progress' },
+        { status: 409 },
+      );
+    }
 
     await recordAuditEvent({
       tenantId: session.tenantId,
