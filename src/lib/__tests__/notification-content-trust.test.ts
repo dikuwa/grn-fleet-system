@@ -17,8 +17,10 @@ describe('notification outbound content trust boundary', () => {
     expect(postRoute).not.toContain('      tenantName,\n');
     expect(postRoute).toContain(".select({ name: tenants.name })");
     expect(postRoute).toContain('.where(eq(tenants.id, tenantId))');
+    expect(postRoute).toContain('senderName: tenantBranding.senderName');
+    expect(postRoute).toContain('.where(eq(tenantBranding.tenantId, tenantId))');
     expect(postRoute).toContain(
-      "const resolvedTenantName = tenantRecord.name.trim() || 'GovFleet Namibia';",
+      "brandingRecord?.senderName?.trim() || tenantRecord.name.trim() || 'GovFleet Namibia'",
     );
     expect(postRoute).toContain('tenantName: resolvedTenantName');
     expect(postRoute).toContain('resolvedTenantName,\n      );');
