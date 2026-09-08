@@ -22,14 +22,18 @@ describe('notification POST metadata validation', () => {
   });
 
   it('accepts only registered workspace identifiers before persistence', () => {
-    const workspaceIndex = postRoute.indexOf('const notificationWorkspace = body.workspace || null;');
+    const workspaceIndex = postRoute.indexOf('const notificationWorkspace =');
     const guardIndex = postRoute.indexOf("{ error: 'Invalid notification workspace' }");
 
     expect(route).toContain("import { isWorkspaceId } from '@/lib/workspaces';");
     expect(workspaceIndex).toBeGreaterThan(-1);
     expect(postRoute.slice(workspaceIndex, guardIndex)).toContain(
+      "body.workspace === undefined || body.workspace === null || body.workspace === ''",
+    );
+    expect(postRoute.slice(workspaceIndex, guardIndex)).toContain(
       '!isWorkspaceId(notificationWorkspace)',
     );
+    expect(postRoute).not.toContain('const notificationWorkspace = body.workspace || null;');
     expect(guardIndex).toBeLessThan(insertIndex);
     expect(postRoute).toContain('workspace: notificationWorkspace');
   });
