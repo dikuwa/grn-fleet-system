@@ -93,7 +93,7 @@ export async function notifyRequestCancelled(input: {
       db
         .insert(notifications)
         .values(notificationRows)
-        .onConflictDoNothing({ target: notifications.dedupeKey }),
+        .onConflictDoNothing({ target: [notifications.tenantId, notifications.dedupeKey] }),
     );
   }
 
