@@ -564,8 +564,9 @@ export async function DELETE(request: NextRequest) {
           .onConflictDoNothing();
       }
     } else {
-      // Clear every dismissible personal notification. The only items retained
-      // are unresolved mandatory actions, matching the single-item guard above.
+      // Clear every dismissible personal notification visible in the active
+      // workspace. The only visible items retained are unresolved mandatory
+      // actions, matching the single-item guard above.
       await db
         .update(notifications)
         .set({ status: 'dismissed', dismissedAt: new Date() })
@@ -574,6 +575,7 @@ export async function DELETE(request: NextRequest) {
             eq(notifications.tenantId, tenantId),
             eq(notifications.audience, 'user'),
             eq(notifications.recipientUserId, userId),
+            or(isNull(notifications.workspace), eq(notifications.workspace, activeWorkspace)),
             or(eq(notifications.mandatory, false), ne(notifications.status, 'action_required'))!,
           ),
         );
