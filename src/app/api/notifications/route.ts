@@ -575,6 +575,8 @@ export async function DELETE(request: NextRequest) {
             eq(notifications.tenantId, tenantId),
             eq(notifications.audience, 'user'),
             eq(notifications.recipientUserId, userId),
+            ne(notifications.status, 'archived'),
+            ne(notifications.status, 'dismissed'),
             or(isNull(notifications.workspace), eq(notifications.workspace, activeWorkspace)),
             or(eq(notifications.mandatory, false), ne(notifications.status, 'action_required'))!,
           ),
@@ -726,6 +728,8 @@ export async function PATCH(request: NextRequest) {
               eq(notifications.tenantId, tenantId),
               eq(notifications.isRead, false),
               ne(notifications.status, 'action_required'),
+              ne(notifications.status, 'archived'),
+              ne(notifications.status, 'dismissed'),
               or(isNull(notifications.workspace), eq(notifications.workspace, activeWorkspace)),
             ),
           );
