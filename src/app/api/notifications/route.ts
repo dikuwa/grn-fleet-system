@@ -18,10 +18,12 @@ import { sendNotificationEmail } from '@/lib/email';
 import { sendNotificationSms, isSmsEnabled } from '@/lib/sms';
 import { canAccessDashboardPath, SystemRoles } from '@/lib/dashboard-access';
 import { employees } from '@/db/schema/people';
+import { isWorkspaceId } from '@/lib/workspaces';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DEFAULT_NOTIFICATION_LIMIT = 50;
 const MAX_NOTIFICATION_LIMIT = 200;
+const NOTIFICATION_PRIORITIES = new Set(['low', 'normal', 'high', 'emergency']);
 
 type NotificationActionTarget = {
   stored: string | null;
@@ -313,6 +315,37 @@ export async function POST(request: NextRequest) {
       );
     }
 
+    const normalizedPriority = priority || 'normal';
+    if (
+      typeof normalizedPriority !== 'string' ||
+      !NOTIFICATION_PRIORITIES.has(normalizedPriority)
+    ) {
+      return NextResponse.json({ error: 'Invalid notification priority' }, { status: 400 });
+    }
+
+    const notificationWorkspace = body.workspace || null;
+    if (notificationWorkspace !== null && !isWorkspaceId(notificationWorkspace)) {
+      return NextResponse.json({ error: 'Invalid notification workspace' }, { status: 400 });
+    }
+
+    if (
+      entityId !== undefined &&
+      entityId !== null &&
+      entityId !== '' &&
+      (typeof entityId !== 'string' || !UUID_PATTERN.test(entityId))
+    ) {
+      return NextResponse.json({ error: 'Invalid notification entity ID' }, { status: 400 });
+    }
+
+    let eventVersion = 1;
+    if (body.eventVersion !== undefined && body.eventVersion !== null && body.eventVersion !== '') {
+      const parsedEventVersion = Number(body.eventVersion);
+      if (!Number.isSafeInteger(parsedEventVersion) || parsedEventVersion < 1) {
+        return NextResponse.json({ error: 'Invalid notification event version' }, { status: 400 });
+      }
+      eventVersion = parsedEventVersion;
+    }
+
     const actionTarget = normalizeNotificationActionUrl(actionUrl);
     if (!actionTarget) {
       return NextResponse.json(
@@ -412,12 +445,12 @@ export async function POST(request: NextRequest) {
         entityType: entityType || null,
         entityId: entityId || null,
         actionUrl: actionTarget.stored,
-        priority: priority || 'normal',
+        priority: normalizedPriority,
         requiredRole: requiredRole || null,
         eventType: body.eventType || type,
-        workspace: body.workspace || null,
+        workspace: notificationWorkspace,
         workflowStage: body.workflowStage || null,
-        eventVersion: Number(body.eventVersion) || 1,
+        eventVersion,
         dedupeKey: body.dedupeKey || null,
         status: type === 'action_required' ? 'action_required' : 'unread',
         mandatory: Boolean(body.mandatory || type === 'action_required'),
@@ -453,7 +486,7 @@ export async function POST(request: NextRequest) {
       prefs?.emailNotifications !== false && // default true
       Boolean(resolvedRecipientEmail);
 
-    const isHighPriority = priority === 'high' || priority === 'emergency';
+    const isHighPriority = normalizedPriority === 'high' || normalizedPriority === 'emergency';
 
     const deliveryRecords: Array<typeof notificationDeliveries.$inferSelect> = [];
 
