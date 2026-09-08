@@ -28,24 +28,18 @@ const notificationRoute = readFileSync(
 );
 
 describe('notification dedupe tenant scope', () => {
-  it('enforces dedupe uniqueness within a tenant rather than globally', () => {
+  it('prepares tenant-local uniqueness while retaining the legacy rollout boundary', () => {
+    expect(schema).toContain("uniqueIndex('notifications_dedupe_key_idx').on(table.dedupeKey)");
     expect(schema).toContain("uniqueIndex('notifications_tenant_dedupe_key_idx')");
     expect(schema).toContain('table.tenantId,');
     expect(schema).toContain('table.dedupeKey,');
-    expect(schema).not.toContain("uniqueIndex('notifications_dedupe_key_idx').on(table.dedupeKey)");
   });
 
-  it('replaces the legacy index under a write lock', () => {
-    const lockIndex = migration.indexOf('LOCK TABLE notifications');
-    const dropIndex = migration.indexOf('DROP INDEX IF EXISTS notifications_dedupe_key_idx');
-    const createIndex = migration.indexOf('CREATE UNIQUE INDEX IF NOT EXISTS');
-
-    expect(lockIndex).toBeGreaterThan(-1);
-    expect(migration).toContain('IN SHARE ROW EXCLUSIVE MODE');
-    expect(dropIndex).toBeGreaterThan(lockIndex);
-    expect(createIndex).toBeGreaterThan(dropIndex);
+  it('creates the tenant-scoped index without dropping the legacy index during stage one', () => {
+    expect(migration).toContain('CREATE UNIQUE INDEX IF NOT EXISTS');
     expect(migration).toContain('notifications_tenant_dedupe_key_idx');
     expect(migration).toContain('ON notifications (tenant_id, dedupe_key)');
+    expect(migration).not.toContain('DROP INDEX IF EXISTS notifications_dedupe_key_idx');
   });
 
   it('keeps canonical dedupe tokens tenant-local at the database boundary', () => {
@@ -61,12 +55,13 @@ describe('notification dedupe tenant scope', () => {
     expect(notificationService).toContain('.onConflictDoNothing()');
   });
 
-  it('targets the composite key where cancellation uses an explicit conflict target', () => {
-    expect(requestLifecycle).toContain(
-      '.onConflictDoNothing({ target: [notifications.tenantId, notifications.dedupeKey] })',
-    );
+  it('removes the rollout-sensitive explicit cancellation conflict target', () => {
+    expect(requestLifecycle).toContain('.onConflictDoNothing()');
     expect(requestLifecycle).not.toContain(
       '.onConflictDoNothing({ target: notifications.dedupeKey })',
+    );
+    expect(requestLifecycle).not.toContain(
+      '.onConflictDoNothing({ target: [notifications.tenantId, notifications.dedupeKey] })',
     );
   });
 
@@ -82,7 +77,7 @@ describe('notification dedupe tenant scope', () => {
     expect(readyPath).not.toContain('.where(eq(notifications.dedupeKey, dedupeKey))');
   });
 
-  it('protects caller-supplied API dedupe tokens with tenant-scoped uniqueness', () => {
+  it('keeps caller-supplied API dedupe inserts conflict-target agnostic for staged rollout', () => {
     const postIndex = notificationRoute.indexOf('export async function POST');
     const deleteIndex = notificationRoute.indexOf('export async function DELETE');
     const postRoute = notificationRoute.slice(postIndex, deleteIndex);
