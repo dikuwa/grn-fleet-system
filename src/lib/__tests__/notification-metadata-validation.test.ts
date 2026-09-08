@@ -54,15 +54,19 @@ describe('notification POST metadata validation', () => {
     );
   });
 
-  it('requires event versions to be positive safe integers while preserving the default', () => {
+  it('requires event versions to fit the positive PostgreSQL integer range', () => {
     const versionIndex = postRoute.indexOf('let eventVersion = 1;');
     const guardIndex = postRoute.indexOf("{ error: 'Invalid notification event version' }");
 
+    expect(route).toContain('const POSTGRES_INTEGER_MAX = 2_147_483_647;');
     expect(versionIndex).toBeGreaterThan(-1);
     expect(postRoute.slice(versionIndex, guardIndex)).toContain(
       'Number.isSafeInteger(parsedEventVersion)',
     );
     expect(postRoute.slice(versionIndex, guardIndex)).toContain('parsedEventVersion < 1');
+    expect(postRoute.slice(versionIndex, guardIndex)).toContain(
+      'parsedEventVersion > POSTGRES_INTEGER_MAX',
+    );
     expect(guardIndex).toBeLessThan(insertIndex);
     expect(postRoute).toContain('eventVersion,');
     expect(postRoute).not.toContain('eventVersion: Number(body.eventVersion) || 1');
