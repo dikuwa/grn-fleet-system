@@ -193,7 +193,12 @@ export async function notifyResetRequesterReady(input: {
           dismissedAt: null,
           archivedAt: null,
         })
-        .where(eq(notifications.dedupeKey, dedupeKey))
+        .where(
+          and(
+            eq(notifications.tenantId, input.tenantId),
+            eq(notifications.dedupeKey, dedupeKey),
+          ),
+        )
         .returning({ id: notifications.id });
   if (readyNotification) {
     await Promise.all([
