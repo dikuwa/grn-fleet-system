@@ -132,7 +132,9 @@ describe('reset notification delivery contract', () => {
     expect(notifications).toContain('mandatory: true');
     expect(notifications).toContain('WorkspaceIds.TENANT_ADMIN');
     expect(notifications).toContain('.onConflictDoNothing()');
-    expect(notifications).toContain('.where(eq(notifications.dedupeKey, dedupeKey))');
+    expect(notifications).toContain('eq(notifications.tenantId, input.tenantId)');
+    expect(notifications).toContain('eq(notifications.dedupeKey, dedupeKey)');
+    expect(notifications).not.toContain('.where(eq(notifications.dedupeKey, dedupeKey))');
     expect(notifications).toContain('resolvedAt: null');
 
     const backupRoute = source('src/app/api/platform/reset/[id]/backup/route.ts');
