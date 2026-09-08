@@ -121,21 +121,30 @@ export const notificationDeliveries = pgTable(
 /**
  * Notification preferences (tenant/user configurable)
  */
-export const notificationPreferences = pgTable('notification_preferences', {
-  id: uuid('id').primaryKey().defaultRandom(),
-  tenantId: uuid('tenant_id')
-    .notNull()
-    .references(() => tenants.id, { onDelete: 'cascade' }),
-  userId: text('user_id').notNull(),
-  emailNotifications: boolean('email_notifications').notNull().default(true),
-  inAppNotifications: boolean('in_app_notifications').notNull().default(true),
-  quietHoursStart: text('quiet_hours_start'), // HH:mm format
-  quietHoursEnd: text('quiet_hours_end'),
-  emergencyBypassQuietHours: boolean('emergency_bypass_quiet_hours').notNull().default(true),
-  preferences: jsonb('preferences').$type<Record<string, unknown>>().default({}),
-  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
-  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
-});
+export const notificationPreferences = pgTable(
+  'notification_preferences',
+  {
+    id: uuid('id').primaryKey().defaultRandom(),
+    tenantId: uuid('tenant_id')
+      .notNull()
+      .references(() => tenants.id, { onDelete: 'cascade' }),
+    userId: text('user_id').notNull(),
+    emailNotifications: boolean('email_notifications').notNull().default(true),
+    inAppNotifications: boolean('in_app_notifications').notNull().default(true),
+    quietHoursStart: text('quiet_hours_start'), // HH:mm format
+    quietHoursEnd: text('quiet_hours_end'),
+    emergencyBypassQuietHours: boolean('emergency_bypass_quiet_hours').notNull().default(true),
+    preferences: jsonb('preferences').$type<Record<string, unknown>>().default({}),
+    createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => ({
+    tenantUserUnique: uniqueIndex('notification_preferences_tenant_user_idx').on(
+      table.tenantId,
+      table.userId,
+    ),
+  }),
+);
 
 /**
  * Import batches
