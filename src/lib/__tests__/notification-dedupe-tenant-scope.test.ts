@@ -6,6 +6,10 @@ const schema = readFileSync(
   resolve(process.cwd(), 'src/db/schema/notifications.ts'),
   'utf8',
 );
+const migration = readFileSync(
+  resolve(process.cwd(), 'src/db/migrations/0119_notification_dedupe_tenant_scope.sql'),
+  'utf8',
+);
 const notificationService = readFileSync(
   resolve(process.cwd(), 'src/lib/notification-service.ts'),
   'utf8',
@@ -23,26 +27,30 @@ const notificationRoute = readFileSync(
   'utf8',
 );
 
-describe('notification dedupe tenant-scope rollout preparation', () => {
-  it('leaves the production database uniqueness model unchanged during compatibility stage', () => {
-    expect(schema).toContain("uniqueIndex('notifications_dedupe_key_idx').on(table.dedupeKey)");
-    expect(schema).not.toContain("uniqueIndex('notifications_tenant_dedupe_key_idx')");
+describe('notification dedupe tenant-scope migration', () => {
+  it('models dedupe uniqueness by tenant and key', () => {
+    expect(schema).toContain("uniqueIndex('notifications_tenant_dedupe_key_idx')");
+    expect(schema).toContain('table.tenantId,');
+    expect(schema).toContain('table.dedupeKey,');
+    expect(schema).not.toContain("uniqueIndex('notifications_dedupe_key_idx').on(table.dedupeKey)");
   });
 
-  it('keeps canonical dedupe tokens tenant-local in application semantics', () => {
-    const builderIndex = notificationService.indexOf('export function buildNotificationDedupeKey');
-    const builderEndIndex = notificationService.indexOf('\n}\n', builderIndex);
-    const builder = notificationService.slice(builderIndex, builderEndIndex + 3);
+  it('replaces the legacy global index under a write lock', () => {
+    const lockIndex = migration.indexOf('LOCK TABLE notifications');
+    const dropIndex = migration.indexOf('DROP INDEX IF EXISTS notifications_dedupe_key_idx');
+    const createIndex = migration.indexOf('CREATE UNIQUE INDEX IF NOT EXISTS');
 
-    expect(builderIndex).toBeGreaterThan(-1);
-    expect(builderEndIndex).toBeGreaterThan(builderIndex);
-    expect(builder).toContain('input.recipientUserId');
-    expect(builder).not.toContain('tenantId');
-    expect(notificationService).toContain('tenantId: input.tenantId');
+    expect(lockIndex).toBeGreaterThan(-1);
+    expect(migration).toContain('IN SHARE ROW EXCLUSIVE MODE');
+    expect(dropIndex).toBeGreaterThan(lockIndex);
+    expect(createIndex).toBeGreaterThan(dropIndex);
+    expect(migration).toContain('notifications_tenant_dedupe_key_idx');
+    expect(migration).toContain('ON notifications (tenant_id, dedupe_key)');
+    expect(migration).toContain('WHERE dedupe_key IS NOT NULL');
+  });
+
+  it('requires the compatibility writers to remain conflict-target agnostic', () => {
     expect(notificationService).toContain('.onConflictDoNothing()');
-  });
-
-  it('removes the rollout-sensitive explicit cancellation conflict target', () => {
     expect(requestLifecycle).toContain('.onConflictDoNothing()');
     expect(requestLifecycle).not.toContain(
       '.onConflictDoNothing({ target: notifications.dedupeKey })',
@@ -50,9 +58,14 @@ describe('notification dedupe tenant-scope rollout preparation', () => {
     expect(requestLifecycle).not.toContain(
       '.onConflictDoNothing({ target: [notifications.tenantId, notifications.dedupeKey] })',
     );
+
+    const postIndex = notificationRoute.indexOf('export async function POST');
+    const deleteIndex = notificationRoute.indexOf('export async function DELETE');
+    const postRoute = notificationRoute.slice(postIndex, deleteIndex);
+    expect(postRoute).toContain('.onConflictDoNothing()');
   });
 
-  it('scopes reset ready fallback updates to the tenant as well as the dedupe key', () => {
+  it('keeps reset-ready fallback updates tenant-scoped after global uniqueness is removed', () => {
     const readyIndex = resetNotifications.indexOf('export async function notifyResetRequesterReady');
     const resolveIndex = resetNotifications.indexOf('export async function resolveTenantResetReadyNotification');
     const readyPath = resetNotifications.slice(readyIndex, resolveIndex);
@@ -64,13 +77,8 @@ describe('notification dedupe tenant-scope rollout preparation', () => {
     expect(readyPath).not.toContain('.where(eq(notifications.dedupeKey, dedupeKey))');
   });
 
-  it('keeps caller-supplied API dedupe inserts conflict-target agnostic for the future index swap', () => {
-    const postIndex = notificationRoute.indexOf('export async function POST');
-    const deleteIndex = notificationRoute.indexOf('export async function DELETE');
-    const postRoute = notificationRoute.slice(postIndex, deleteIndex);
-
-    expect(postRoute).toContain('dedupeKey: body.dedupeKey || null');
-    expect(postRoute).toContain('tenantId,');
-    expect(postRoute).toContain('.onConflictDoNothing()');
+  it('allows identical logical dedupe keys to be isolated by tenant at the database boundary', () => {
+    expect(migration).not.toContain('ON notifications (dedupe_key)');
+    expect(migration).toContain('ON notifications (tenant_id, dedupe_key)');
   });
 });
