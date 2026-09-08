@@ -24,6 +24,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
 const DEFAULT_NOTIFICATION_LIMIT = 50;
 const MAX_NOTIFICATION_LIMIT = 200;
 const NOTIFICATION_PRIORITIES = new Set(['low', 'normal', 'high', 'emergency']);
+const POSTGRES_INTEGER_MAX = 2_147_483_647;
 
 type NotificationActionTarget = {
   stored: string | null;
@@ -341,7 +342,11 @@ export async function POST(request: NextRequest) {
     let eventVersion = 1;
     if (body.eventVersion !== undefined && body.eventVersion !== null && body.eventVersion !== '') {
       const parsedEventVersion = Number(body.eventVersion);
-      if (!Number.isSafeInteger(parsedEventVersion) || parsedEventVersion < 1) {
+      if (
+        !Number.isSafeInteger(parsedEventVersion) ||
+        parsedEventVersion < 1 ||
+        parsedEventVersion > POSTGRES_INTEGER_MAX
+      ) {
         return NextResponse.json({ error: 'Invalid notification event version' }, { status: 400 });
       }
       eventVersion = parsedEventVersion;
