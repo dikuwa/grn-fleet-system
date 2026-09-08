@@ -221,6 +221,8 @@ export async function POST(request: NextRequest) {
     const permission = await requirePermission(session, Permissions.TENANT_MANAGE);
     if (permission instanceof NextResponse) return permission;
     const body = await request.json();
+    const emailDeliveryRequested = Boolean(body.recipientEmail);
+    const smsDeliveryRequested = Boolean(body.recipientPhone);
     const {
       tenantId: requestedTenantId,
       recipientUserId,
@@ -380,6 +382,7 @@ export async function POST(request: NextRequest) {
 
     const shouldSendEmail =
       audience === 'user' &&
+      emailDeliveryRequested &&
       prefs?.emailNotifications !== false && // default true
       Boolean(resolvedRecipientEmail);
 
@@ -422,11 +425,13 @@ export async function POST(request: NextRequest) {
           errorSummary:
             audience !== 'user'
               ? 'Shared activity events are in-app only'
-              : prefs?.emailNotifications === false
-                ? 'Email notifications disabled by user preference'
-                : resolvedRecipientEmail
-                  ? null
-                  : 'No email address available',
+              : !emailDeliveryRequested
+                ? 'Email delivery not requested'
+                : prefs?.emailNotifications === false
+                  ? 'Email notifications disabled by user preference'
+                  : resolvedRecipientEmail
+                    ? null
+                    : 'No email address available',
         })
         .returning();
       deliveryRecords.push(record);
@@ -437,6 +442,7 @@ export async function POST(request: NextRequest) {
     const shouldSendSms =
       audience === 'user' &&
       smsEnabled &&
+      smsDeliveryRequested &&
       (isHighPriority || body.forceSms) &&
       Boolean(resolvedRecipientPhone);
 
@@ -463,6 +469,7 @@ export async function POST(request: NextRequest) {
     } else if (
       audience === 'user' &&
       smsEnabled &&
+      smsDeliveryRequested &&
       (isHighPriority || body.forceSms) &&
       !resolvedRecipientPhone
     ) {
@@ -475,6 +482,18 @@ export async function POST(request: NextRequest) {
           attempt: 1,
           status: 'skipped',
           errorSummary: 'No phone number available for SMS delivery',
+        })
+        .returning();
+      deliveryRecords.push(record);
+    } else if (smsEnabled && !smsDeliveryRequested) {
+      const [record] = await db
+        .insert(notificationDeliveries)
+        .values({
+          notificationId: notification.id,
+          channel: 'sms',
+          attempt: 1,
+          status: 'skipped',
+          errorSummary: 'SMS delivery not requested',
         })
         .returning();
       deliveryRecords.push(record);
