@@ -325,7 +325,10 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Invalid notification priority' }, { status: 400 });
     }
 
-    const notificationWorkspace = body.workspace || null;
+    const notificationWorkspace =
+      body.workspace === undefined || body.workspace === null || body.workspace === ''
+        ? null
+        : body.workspace;
     if (notificationWorkspace !== null && !isWorkspaceId(notificationWorkspace)) {
       return NextResponse.json({ error: 'Invalid notification workspace' }, { status: 400 });
     }
