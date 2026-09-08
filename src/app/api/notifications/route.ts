@@ -315,7 +315,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    const normalizedPriority = priority || 'normal';
+    const priorityValue = priority || 'normal';
+    const normalizedPriority = priorityValue === 'urgent' ? 'emergency' : priorityValue;
     if (
       typeof normalizedPriority !== 'string' ||
       !NOTIFICATION_PRIORITIES.has(normalizedPriority)
