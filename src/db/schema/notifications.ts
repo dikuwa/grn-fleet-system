@@ -47,16 +47,7 @@ export const notifications = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
-    // Compatibility index retained for the first deployment stage so the
-    // previously deployed app can continue to infer ON CONFLICT (dedupe_key)
-    // while all current writers move away from that explicit target.
     notificationDedupeUnique: uniqueIndex('notifications_dedupe_key_idx').on(table.dedupeKey),
-    // Pre-create the tenant-local uniqueness boundary. A follow-up deployment
-    // removes the legacy global index only after the compatibility code is live.
-    notificationTenantDedupeUnique: uniqueIndex('notifications_tenant_dedupe_key_idx').on(
-      table.tenantId,
-      table.dedupeKey,
-    ),
   }),
 );
 
