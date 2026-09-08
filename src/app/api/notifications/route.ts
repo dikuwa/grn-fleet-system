@@ -13,7 +13,7 @@ import { requireRequestAuth } from '@/lib/auth-helpers';
 import { requirePermission } from '@/lib/auth-helpers';
 import { getSessionRoleNames, getSessionWorkspace } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { tenantMemberships, tenants } from '@/db/schema/tenants';
+import { tenantBranding, tenantMemberships, tenants } from '@/db/schema/tenants';
 import { sendNotificationEmail } from '@/lib/email';
 import { sendNotificationSms, isSmsEnabled } from '@/lib/sms';
 import { canAccessDashboardPath, SystemRoles } from '@/lib/dashboard-access';
@@ -329,7 +329,14 @@ export async function POST(request: NextRequest) {
     if (!tenantRecord) {
       return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
     }
-    const resolvedTenantName = tenantRecord.name.trim() || 'GovFleet Namibia';
+    const [brandingRecord] = await db
+      .select({ senderName: tenantBranding.senderName })
+      .from(tenantBranding)
+      .where(eq(tenantBranding.tenantId, tenantId))
+      .orderBy(desc(tenantBranding.updatedAt))
+      .limit(1);
+    const resolvedTenantName =
+      brandingRecord?.senderName?.trim() || tenantRecord.name.trim() || 'GovFleet Namibia';
 
     let resolvedRecipientEmail: string | null = null;
     let resolvedRecipientPhone: string | null = null;
