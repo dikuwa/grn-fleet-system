@@ -6,10 +6,6 @@ const schema = readFileSync(
   resolve(process.cwd(), 'src/db/schema/notifications.ts'),
   'utf8',
 );
-const migration = readFileSync(
-  resolve(process.cwd(), 'src/db/migrations/0119_notification_dedupe_tenant_scope.sql'),
-  'utf8',
-);
 const notificationService = readFileSync(
   resolve(process.cwd(), 'src/lib/notification-service.ts'),
   'utf8',
@@ -27,22 +23,13 @@ const notificationRoute = readFileSync(
   'utf8',
 );
 
-describe('notification dedupe tenant scope', () => {
-  it('prepares tenant-local uniqueness while retaining the legacy rollout boundary', () => {
+describe('notification dedupe tenant-scope rollout preparation', () => {
+  it('leaves the production database uniqueness model unchanged during compatibility stage', () => {
     expect(schema).toContain("uniqueIndex('notifications_dedupe_key_idx').on(table.dedupeKey)");
-    expect(schema).toContain("uniqueIndex('notifications_tenant_dedupe_key_idx')");
-    expect(schema).toContain('table.tenantId,');
-    expect(schema).toContain('table.dedupeKey,');
+    expect(schema).not.toContain("uniqueIndex('notifications_tenant_dedupe_key_idx')");
   });
 
-  it('creates the tenant-scoped index without dropping the legacy index during stage one', () => {
-    expect(migration).toContain('CREATE UNIQUE INDEX IF NOT EXISTS');
-    expect(migration).toContain('notifications_tenant_dedupe_key_idx');
-    expect(migration).toContain('ON notifications (tenant_id, dedupe_key)');
-    expect(migration).not.toContain('DROP INDEX IF EXISTS notifications_dedupe_key_idx');
-  });
-
-  it('keeps canonical dedupe tokens tenant-local at the database boundary', () => {
+  it('keeps canonical dedupe tokens tenant-local in application semantics', () => {
     const builderIndex = notificationService.indexOf('export function buildNotificationDedupeKey');
     const builderEndIndex = notificationService.indexOf('\n}\n', builderIndex);
     const builder = notificationService.slice(builderIndex, builderEndIndex + 3);
@@ -77,7 +64,7 @@ describe('notification dedupe tenant scope', () => {
     expect(readyPath).not.toContain('.where(eq(notifications.dedupeKey, dedupeKey))');
   });
 
-  it('keeps caller-supplied API dedupe inserts conflict-target agnostic for staged rollout', () => {
+  it('keeps caller-supplied API dedupe inserts conflict-target agnostic for the future index swap', () => {
     const postIndex = notificationRoute.indexOf('export async function POST');
     const deleteIndex = notificationRoute.indexOf('export async function DELETE');
     const postRoute = notificationRoute.slice(postIndex, deleteIndex);
