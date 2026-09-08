@@ -47,10 +47,9 @@ export const notifications = pgTable(
     createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   },
   (table) => ({
-    notificationDedupeUnique: uniqueIndex('notifications_tenant_dedupe_key_idx').on(
-      table.tenantId,
-      table.dedupeKey,
-    ),
+    notificationDedupeUnique: uniqueIndex('notifications_tenant_dedupe_key_idx')
+      .on(table.tenantId, table.dedupeKey)
+      .where(sql`${table.dedupeKey} is not null`),
   }),
 );
 
