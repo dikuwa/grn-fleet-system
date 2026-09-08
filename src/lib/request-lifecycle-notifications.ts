@@ -89,12 +89,7 @@ export async function notifyRequestCancelled(input: {
 
   const jobs: Promise<unknown>[] = [];
   if (notificationRows.length) {
-    jobs.push(
-      db
-        .insert(notifications)
-        .values(notificationRows)
-        .onConflictDoNothing({ target: notifications.dedupeKey }),
-    );
+    jobs.push(db.insert(notifications).values(notificationRows).onConflictDoNothing());
   }
 
   jobs.push(
