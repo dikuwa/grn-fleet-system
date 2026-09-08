@@ -68,27 +68,35 @@ describe('notification API mutation and list boundaries', () => {
     expect(route).toContain('.limit(MAX_NOTIFICATION_LIMIT)');
   });
 
-  it('protects mandatory shared action notifications from single and bulk dismissal', () => {
+  it('protects only unresolved mandatory actions from single and bulk dismissal', () => {
     const deleteIndex = route.indexOf('export async function DELETE');
     const itemSelectIndex = route.indexOf('mandatory: notifications.mandatory', deleteIndex);
     const mandatoryGuardIndex = route.indexOf(
       "if (item.mandatory && item.status === 'action_required')",
       deleteIndex,
     );
-    const sharedBulkIndex = route.indexOf('// Dismiss only visible informational shared notifications', deleteIndex);
+    const bulkLifecycleIndex = route.indexOf(
+      "or(eq(notifications.mandatory, false), ne(notifications.status, 'action_required'))!",
+      mandatoryGuardIndex,
+    );
 
     expect(itemSelectIndex).toBeGreaterThan(deleteIndex);
     expect(mandatoryGuardIndex).toBeGreaterThan(itemSelectIndex);
-    expect(route.slice(mandatoryGuardIndex, sharedBulkIndex)).toContain(
+    expect(route.slice(mandatoryGuardIndex, bulkLifecycleIndex)).toContain(
       'Required action notifications cannot be dismissed until resolved',
     );
-    expect(route.slice(sharedBulkIndex)).toContain('eq(notifications.mandatory, false)');
-    expect(route.slice(sharedBulkIndex)).toContain("ne(notifications.status, 'action_required')");
+    expect(bulkLifecycleIndex).toBeGreaterThan(mandatoryGuardIndex);
+    expect(
+      route.match(
+        /or\(eq\(notifications\.mandatory, false\), ne\(notifications\.status, 'action_required'\)\)!/g,
+      )?.length,
+    ).toBe(2);
+    expect(route).toContain('// Apply the same lifecycle rule to visible shared notifications.');
   });
 
   it('keeps bulk shared dismiss and mark-all-read inside current visibility scope', () => {
     const deleteIndex = route.indexOf('export async function DELETE');
-    const sharedBulkIndex = route.indexOf('// Dismiss only visible informational shared notifications', deleteIndex);
+    const sharedBulkIndex = route.indexOf('// Apply the same lifecycle rule to visible shared notifications', deleteIndex);
     const patchIndex = route.indexOf('export async function PATCH');
     const sharedReadIndex = route.indexOf('const shared = await db', patchIndex);
 
