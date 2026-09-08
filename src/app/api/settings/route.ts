@@ -268,39 +268,46 @@ export async function POST(request: NextRequest) {
     }
 
     if (prefs) {
-      const prefUpdate: Record<string, unknown> = { updatedAt: new Date() };
-      if (prefs.emailNotifications !== undefined)
-        prefUpdate.emailNotifications = prefs.emailNotifications;
-      if (prefs.inAppNotifications !== undefined)
-        prefUpdate.inAppNotifications = prefs.inAppNotifications;
-      if (prefs.quietHoursStart !== undefined) prefUpdate.quietHoursStart = prefs.quietHoursStart;
-      if (prefs.quietHoursEnd !== undefined) prefUpdate.quietHoursEnd = prefs.quietHoursEnd;
-      if (prefs.emergencyBypassQuietHours !== undefined)
-        prefUpdate.emergencyBypassQuietHours = prefs.emergencyBypassQuietHours;
+      const now = new Date();
+      const prefValues = {
+        tenantId: session.tenantId,
+        userId: session.user.id,
+        ...(prefs.emailNotifications !== undefined
+          ? { emailNotifications: prefs.emailNotifications }
+          : {}),
+        ...(prefs.inAppNotifications !== undefined
+          ? { inAppNotifications: prefs.inAppNotifications }
+          : {}),
+        ...(prefs.quietHoursStart !== undefined ? { quietHoursStart: prefs.quietHoursStart } : {}),
+        ...(prefs.quietHoursEnd !== undefined ? { quietHoursEnd: prefs.quietHoursEnd } : {}),
+        ...(prefs.emergencyBypassQuietHours !== undefined
+          ? { emergencyBypassQuietHours: prefs.emergencyBypassQuietHours }
+          : {}),
+        updatedAt: now,
+      };
 
-      const [existingPrefs] = await db
-        .select()
-        .from(notificationPreferences)
-        .where(
-          and(
-            eq(notificationPreferences.tenantId, session.tenantId),
-            eq(notificationPreferences.userId, session.user.id),
-          ),
-        )
-        .limit(1);
-
-      if (existingPrefs) {
-        await db
-          .update(notificationPreferences)
-          .set(prefUpdate)
-          .where(eq(notificationPreferences.id, existingPrefs.id));
-      } else {
-        await db.insert(notificationPreferences).values({
-          tenantId: session.tenantId,
-          userId: session.user.id,
-          ...prefUpdate,
-        } as typeof notificationPreferences.$inferInsert);
-      }
+      await db
+        .insert(notificationPreferences)
+        .values(prefValues as typeof notificationPreferences.$inferInsert)
+        .onConflictDoUpdate({
+          target: [notificationPreferences.tenantId, notificationPreferences.userId],
+          set: {
+            ...(prefs.emailNotifications !== undefined
+              ? { emailNotifications: prefs.emailNotifications }
+              : {}),
+            ...(prefs.inAppNotifications !== undefined
+              ? { inAppNotifications: prefs.inAppNotifications }
+              : {}),
+            ...(prefs.quietHoursStart !== undefined
+              ? { quietHoursStart: prefs.quietHoursStart }
+              : {}),
+            ...(prefs.quietHoursEnd !== undefined ? { quietHoursEnd: prefs.quietHoursEnd } : {}),
+            ...(prefs.emergencyBypassQuietHours !== undefined
+              ? { emergencyBypassQuietHours: prefs.emergencyBypassQuietHours }
+              : {}),
+            updatedAt: now,
+          },
+        });
     }
 
     await recordAuditEvent({
