@@ -7,6 +7,7 @@ import {
   notificationReads,
   notificationDismissals,
 } from '@/db/schema/notifications';
+import { user } from '@/db/schema/better-auth';
 import { eq, and, desc, or, ne, inArray, isNull } from 'drizzle-orm';
 import { requireRequestAuth } from '@/lib/auth-helpers';
 import { requirePermission } from '@/lib/auth-helpers';
@@ -220,11 +221,11 @@ export async function POST(request: NextRequest) {
     const permission = await requirePermission(session, Permissions.TENANT_MANAGE);
     if (permission instanceof NextResponse) return permission;
     const body = await request.json();
+    const emailDeliveryRequested = Boolean(body.recipientEmail);
+    const smsDeliveryRequested = Boolean(body.recipientPhone);
     const {
       tenantId: requestedTenantId,
       recipientUserId,
-      recipientEmail,
-      recipientName,
       type,
       title,
       body: notificationBody,
@@ -269,6 +270,11 @@ export async function POST(request: NextRequest) {
         { status: 400 },
       );
     }
+
+    let resolvedRecipientEmail: string | null = null;
+    let resolvedRecipientPhone: string | null = null;
+    let resolvedRecipientName: string | null = null;
+
     if (audience === 'user') {
       const [recipientMembership] = await db
         .select({ id: tenantMemberships.id })
@@ -286,6 +292,43 @@ export async function POST(request: NextRequest) {
           { error: 'Recipient is not an active tenant member' },
           { status: 404 },
         );
+
+      const [recipientEmployee] = await db
+        .select({
+          email: employees.email,
+          phone: employees.phone,
+          preferredName: employees.preferredName,
+          firstName: employees.firstName,
+          lastName: employees.lastName,
+        })
+        .from(employees)
+        .where(
+          and(
+            eq(employees.tenantId, tenantId),
+            eq(employees.userId, recipientUserId),
+            isNull(employees.archivedAt),
+          ),
+        )
+        .limit(1);
+
+      const [recipientAccount] = await db
+        .select({ email: user.email, name: user.name })
+        .from(user)
+        .where(eq(user.id, recipientUserId))
+        .limit(1);
+
+      const employeeName = recipientEmployee
+        ? recipientEmployee.preferredName?.trim() ||
+          `${recipientEmployee.firstName} ${recipientEmployee.lastName}`.trim()
+        : null;
+      resolvedRecipientEmail =
+        recipientEmployee?.email?.trim() || recipientAccount?.email?.trim() || null;
+      resolvedRecipientPhone = recipientEmployee?.phone?.trim() || null;
+      resolvedRecipientName =
+        employeeName ||
+        recipientAccount?.name?.trim() ||
+        resolvedRecipientEmail ||
+        'Recipient';
     }
 
     // 1. Create in-app notification
@@ -339,22 +382,23 @@ export async function POST(request: NextRequest) {
 
     const shouldSendEmail =
       audience === 'user' &&
+      emailDeliveryRequested &&
       prefs?.emailNotifications !== false && // default true
-      recipientEmail;
+      Boolean(resolvedRecipientEmail);
 
     const isHighPriority = priority === 'high' || priority === 'emergency';
 
     const deliveryRecords: Array<typeof notificationDeliveries.$inferSelect> = [];
 
     // Email delivery
-    if (shouldSendEmail) {
+    if (shouldSendEmail && resolvedRecipientEmail) {
       const emailResult = await sendNotificationEmail({
-        to: recipientEmail,
+        to: resolvedRecipientEmail,
         type,
         title,
         body: notificationBody || title,
         actionUrl,
-        recipientName: recipientName || recipientEmail,
+        recipientName: resolvedRecipientName || resolvedRecipientEmail,
         tenantName,
       });
 
@@ -381,25 +425,30 @@ export async function POST(request: NextRequest) {
           errorSummary:
             audience !== 'user'
               ? 'Shared activity events are in-app only'
-              : prefs?.emailNotifications === false
-                ? 'Email notifications disabled by user preference'
-                : recipientEmail
-                  ? null
-                  : 'No email address available',
+              : !emailDeliveryRequested
+                ? 'Email delivery not requested'
+                : prefs?.emailNotifications === false
+                  ? 'Email notifications disabled by user preference'
+                  : resolvedRecipientEmail
+                    ? null
+                    : 'No email address available',
         })
         .returning();
       deliveryRecords.push(record);
     }
 
     // SMS delivery — only for high-priority notifications or if explicitly configured
-    const recipientPhone = body.recipientPhone;
     const smsEnabled = isSmsEnabled();
     const shouldSendSms =
-      audience === 'user' && smsEnabled && (isHighPriority || body.forceSms) && recipientPhone;
+      audience === 'user' &&
+      smsEnabled &&
+      smsDeliveryRequested &&
+      (isHighPriority || body.forceSms) &&
+      Boolean(resolvedRecipientPhone);
 
-    if (shouldSendSms) {
+    if (shouldSendSms && resolvedRecipientPhone) {
       const smsResult = await sendNotificationSms(
-        recipientPhone,
+        resolvedRecipientPhone,
         title,
         notificationBody || title,
         tenantName,
@@ -417,8 +466,14 @@ export async function POST(request: NextRequest) {
         })
         .returning();
       deliveryRecords.push(record);
-    } else if (smsEnabled && !recipientPhone) {
-      // Record skipped — no phone number
+    } else if (
+      audience === 'user' &&
+      smsEnabled &&
+      smsDeliveryRequested &&
+      (isHighPriority || body.forceSms) &&
+      !resolvedRecipientPhone
+    ) {
+      // Record skipped — no authoritative tenant-scoped phone number
       const [record] = await db
         .insert(notificationDeliveries)
         .values({
@@ -427,6 +482,18 @@ export async function POST(request: NextRequest) {
           attempt: 1,
           status: 'skipped',
           errorSummary: 'No phone number available for SMS delivery',
+        })
+        .returning();
+      deliveryRecords.push(record);
+    } else if (smsEnabled && !smsDeliveryRequested) {
+      const [record] = await db
+        .insert(notificationDeliveries)
+        .values({
+          notificationId: notification.id,
+          channel: 'sms',
+          attempt: 1,
+          status: 'skipped',
+          errorSummary: 'SMS delivery not requested',
         })
         .returning();
       deliveryRecords.push(record);
