@@ -564,8 +564,8 @@ export async function DELETE(request: NextRequest) {
           .onConflictDoNothing();
       }
     } else {
-      // Clear only eligible informational notifications. Mandatory action
-      // notifications remain visible until the linked action is resolved.
+      // Clear every dismissible personal notification. The only items retained
+      // are unresolved mandatory actions, matching the single-item guard above.
       await db
         .update(notifications)
         .set({ status: 'dismissed', dismissedAt: new Date() })
@@ -574,11 +574,10 @@ export async function DELETE(request: NextRequest) {
             eq(notifications.tenantId, tenantId),
             eq(notifications.audience, 'user'),
             eq(notifications.recipientUserId, userId),
-            eq(notifications.mandatory, false),
-            ne(notifications.status, 'action_required'),
+            or(eq(notifications.mandatory, false), ne(notifications.status, 'action_required'))!,
           ),
         );
-      // Dismiss only visible informational shared notifications for this user.
+      // Apply the same lifecycle rule to visible shared notifications.
       const sharedItems = await db
         .select({ id: notifications.id })
         .from(notifications)
@@ -586,8 +585,7 @@ export async function DELETE(request: NextRequest) {
           and(
             userScopedCondition,
             ne(notifications.audience, 'user'),
-            eq(notifications.mandatory, false),
-            ne(notifications.status, 'action_required'),
+            or(eq(notifications.mandatory, false), ne(notifications.status, 'action_required'))!,
           ),
         );
       if (sharedItems.length) {
