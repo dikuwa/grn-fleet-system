@@ -30,8 +30,8 @@ const notificationRoute = readFileSync(
 describe('notification dedupe tenant-scope migration', () => {
   it('models dedupe uniqueness by tenant and key', () => {
     expect(schema).toContain("uniqueIndex('notifications_tenant_dedupe_key_idx')");
-    expect(schema).toContain('table.tenantId,');
-    expect(schema).toContain('table.dedupeKey,');
+    expect(schema).toContain('.on(table.tenantId, table.dedupeKey)');
+    expect(schema).toContain('.where(sql`${table.dedupeKey} is not null`)');
     expect(schema).not.toContain("uniqueIndex('notifications_dedupe_key_idx').on(table.dedupeKey)");
   });
 
