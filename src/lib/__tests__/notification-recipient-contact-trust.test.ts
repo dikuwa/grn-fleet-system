@@ -21,6 +21,41 @@ describe('notification recipient contact trust boundary', () => {
     expect(postRoute).not.toContain('sendNotificationSms(\n        recipientPhone,');
   });
 
+  it('preserves request-body email presence only as the legacy delivery-intent signal', () => {
+    const postIndex = route.indexOf('export async function POST');
+    const intentIndex = route.indexOf(
+      'const emailDeliveryRequested = Boolean(body.recipientEmail);',
+      postIndex,
+    );
+    const shouldSendIndex = route.indexOf('const shouldSendEmail =', intentIndex);
+    const emailSendIndex = route.indexOf('to: resolvedRecipientEmail', shouldSendIndex);
+
+    expect(intentIndex).toBeGreaterThan(postIndex);
+    expect(route.slice(shouldSendIndex, emailSendIndex)).toContain('emailDeliveryRequested');
+    expect(emailSendIndex).toBeGreaterThan(shouldSendIndex);
+    expect(route.slice(shouldSendIndex, emailSendIndex)).not.toContain('to: body.recipientEmail');
+  });
+
+  it('preserves request-body phone presence only as the legacy SMS-intent signal', () => {
+    const postIndex = route.indexOf('export async function POST');
+    const intentIndex = route.indexOf(
+      'const smsDeliveryRequested = Boolean(body.recipientPhone);',
+      postIndex,
+    );
+    const shouldSendIndex = route.indexOf('const shouldSendSms =', intentIndex);
+    const smsSendIndex = route.indexOf(
+      'sendNotificationSms(\n        resolvedRecipientPhone,',
+      shouldSendIndex,
+    );
+
+    expect(intentIndex).toBeGreaterThan(postIndex);
+    expect(route.slice(shouldSendIndex, smsSendIndex)).toContain('smsDeliveryRequested');
+    expect(route.slice(shouldSendIndex, smsSendIndex)).toContain(
+      '(isHighPriority || body.forceSms)',
+    );
+    expect(smsSendIndex).toBeGreaterThan(shouldSendIndex);
+  });
+
   it('proves active tenant membership before resolving external contacts', () => {
     const postIndex = route.indexOf('export async function POST');
     const membershipIndex = route.indexOf('eq(tenantMemberships.status, \'active\')', postIndex);
