@@ -94,14 +94,30 @@ describe('notification API mutation and list boundaries', () => {
     expect(route).toContain('// Apply the same lifecycle rule to visible shared notifications.');
   });
 
-  it('keeps bulk shared dismiss and mark-all-read inside current visibility scope', () => {
+  it('keeps personal and shared bulk dismiss inside the active workspace', () => {
     const deleteIndex = route.indexOf('export async function DELETE');
-    const sharedBulkIndex = route.indexOf('// Apply the same lifecycle rule to visible shared notifications', deleteIndex);
+    const personalBulkIndex = route.indexOf(
+      '// Clear every dismissible personal notification visible in the active',
+      deleteIndex,
+    );
+    const sharedBulkIndex = route.indexOf(
+      '// Apply the same lifecycle rule to visible shared notifications',
+      personalBulkIndex,
+    );
+    const patchIndex = route.indexOf('export async function PATCH');
+    const workspacePredicate =
+      'or(isNull(notifications.workspace), eq(notifications.workspace, activeWorkspace))';
+
+    expect(personalBulkIndex).toBeGreaterThan(deleteIndex);
+    expect(sharedBulkIndex).toBeGreaterThan(personalBulkIndex);
+    expect(route.slice(personalBulkIndex, sharedBulkIndex)).toContain(workspacePredicate);
+    expect(route.slice(sharedBulkIndex, patchIndex)).toContain('userScopedCondition');
+  });
+
+  it('keeps shared mark-all-read inside current visibility scope', () => {
     const patchIndex = route.indexOf('export async function PATCH');
     const sharedReadIndex = route.indexOf('const shared = await db', patchIndex);
 
-    expect(sharedBulkIndex).toBeGreaterThan(deleteIndex);
-    expect(route.slice(sharedBulkIndex, patchIndex)).toContain('userScopedCondition');
     expect(sharedReadIndex).toBeGreaterThan(patchIndex);
     expect(route.slice(sharedReadIndex)).toContain("ne(notifications.status, 'archived')");
     expect(route.slice(sharedReadIndex)).toContain("ne(notifications.status, 'dismissed')");
