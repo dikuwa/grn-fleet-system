@@ -823,32 +823,24 @@ export async function PATCH(request: NextRequest) {
 
     if (action === 'update_preferences') {
       const { quietHoursStart, quietHoursEnd, emailNotifications, inAppNotifications } = body;
-      const updated = await db
-        .update(notificationPreferences)
-        .set({
-          quietHoursStart: quietHoursStart || null,
-          quietHoursEnd: quietHoursEnd || null,
-          emailNotifications: emailNotifications ?? true,
-          inAppNotifications: inAppNotifications ?? true,
-          updatedAt: new Date(),
-        })
-        .where(
-          and(
-            eq(notificationPreferences.userId, userId),
-            eq(notificationPreferences.tenantId, tenantId),
-          ),
-        )
-        .returning({ id: notificationPreferences.id });
-      if (updated.length === 0) {
-        await db.insert(notificationPreferences).values({
+      const preferenceValues = {
+        quietHoursStart: quietHoursStart || null,
+        quietHoursEnd: quietHoursEnd || null,
+        emailNotifications: emailNotifications ?? true,
+        inAppNotifications: inAppNotifications ?? true,
+        updatedAt: new Date(),
+      };
+      await db
+        .insert(notificationPreferences)
+        .values({
           tenantId,
           userId,
-          quietHoursStart: quietHoursStart || null,
-          quietHoursEnd: quietHoursEnd || null,
-          emailNotifications: emailNotifications ?? true,
-          inAppNotifications: inAppNotifications ?? true,
+          ...preferenceValues,
+        })
+        .onConflictDoUpdate({
+          target: [notificationPreferences.tenantId, notificationPreferences.userId],
+          set: preferenceValues,
         });
-      }
     }
 
     return NextResponse.json({ success: true });
