@@ -18,6 +18,10 @@ const requestLifecycle = readFileSync(
   resolve(process.cwd(), 'src/lib/request-lifecycle-notifications.ts'),
   'utf8',
 );
+const resetNotifications = readFileSync(
+  resolve(process.cwd(), 'src/lib/platform/reset-notifications.ts'),
+  'utf8',
+);
 const notificationRoute = readFileSync(
   resolve(process.cwd(), 'src/app/api/notifications/route.ts'),
   'utf8',
@@ -64,6 +68,18 @@ describe('notification dedupe tenant scope', () => {
     expect(requestLifecycle).not.toContain(
       '.onConflictDoNothing({ target: notifications.dedupeKey })',
     );
+  });
+
+  it('scopes reset ready fallback updates to the tenant as well as the dedupe key', () => {
+    const readyIndex = resetNotifications.indexOf('export async function notifyResetRequesterReady');
+    const resolveIndex = resetNotifications.indexOf('export async function resolveTenantResetReadyNotification');
+    const readyPath = resetNotifications.slice(readyIndex, resolveIndex);
+
+    expect(readyIndex).toBeGreaterThan(-1);
+    expect(resolveIndex).toBeGreaterThan(readyIndex);
+    expect(readyPath).toContain('eq(notifications.tenantId, input.tenantId)');
+    expect(readyPath).toContain('eq(notifications.dedupeKey, dedupeKey)');
+    expect(readyPath).not.toContain('.where(eq(notifications.dedupeKey, dedupeKey))');
   });
 
   it('protects caller-supplied API dedupe tokens with tenant-scoped uniqueness', () => {
