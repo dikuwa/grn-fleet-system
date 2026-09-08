@@ -46,10 +46,11 @@ describe('notification dedupe tenant scope', () => {
 
   it('keeps canonical dedupe tokens tenant-local at the database boundary', () => {
     const builderIndex = notificationService.indexOf('export function buildNotificationDedupeKey');
-    const scopedCreateIndex = notificationService.indexOf('export async function createScopedNotifications');
-    const builder = notificationService.slice(builderIndex, scopedCreateIndex);
+    const builderEndIndex = notificationService.indexOf('\n}\n', builderIndex);
+    const builder = notificationService.slice(builderIndex, builderEndIndex + 3);
 
     expect(builderIndex).toBeGreaterThan(-1);
+    expect(builderEndIndex).toBeGreaterThan(builderIndex);
     expect(builder).toContain('input.recipientUserId');
     expect(builder).not.toContain('tenantId');
     expect(notificationService).toContain('tenantId: input.tenantId');
