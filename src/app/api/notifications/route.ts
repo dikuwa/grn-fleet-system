@@ -13,7 +13,7 @@ import { requireRequestAuth } from '@/lib/auth-helpers';
 import { requirePermission } from '@/lib/auth-helpers';
 import { getSessionRoleNames, getSessionWorkspace } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import { tenantMemberships } from '@/db/schema/tenants';
+import { tenantMemberships, tenants } from '@/db/schema/tenants';
 import { sendNotificationEmail } from '@/lib/email';
 import { sendNotificationSms, isSmsEnabled } from '@/lib/sms';
 import { canAccessDashboardPath, SystemRoles } from '@/lib/dashboard-access';
@@ -22,6 +22,49 @@ import { employees } from '@/db/schema/people';
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DEFAULT_NOTIFICATION_LIMIT = 50;
 const MAX_NOTIFICATION_LIMIT = 200;
+
+type NotificationActionTarget = {
+  stored: string | null;
+  delivery: string | undefined;
+};
+
+function normalizeNotificationActionUrl(value: unknown): NotificationActionTarget | null {
+  if (value === undefined || value === null || value === '') {
+    return { stored: null, delivery: undefined };
+  }
+  if (typeof value !== 'string') return null;
+
+  const trimmed = value.trim();
+  if (!trimmed || /[\u0000-\u001f\u007f\\]/.test(trimmed)) return null;
+
+  try {
+    const configuredAppUrl = process.env.NEXT_PUBLIC_APP_URL?.trim();
+    const appBase = configuredAppUrl ? new URL(configuredAppUrl) : null;
+    let candidate: URL;
+
+    if (trimmed.startsWith('/')) {
+      if (trimmed.startsWith('//')) return null;
+      candidate = new URL(trimmed, appBase ?? new URL('https://govfleet.invalid'));
+    } else {
+      if (!appBase) return null;
+      candidate = new URL(trimmed);
+      if (candidate.origin !== appBase.origin) return null;
+    }
+
+    if (appBase && candidate.origin !== appBase.origin) return null;
+    if (candidate.pathname !== '/dashboard' && !candidate.pathname.startsWith('/dashboard/')) {
+      return null;
+    }
+
+    const stored = `${candidate.pathname}${candidate.search}${candidate.hash}`;
+    return {
+      stored,
+      delivery: appBase ? new URL(stored, appBase).toString() : stored,
+    };
+  } catch {
+    return null;
+  }
+}
 
 export async function GET(request: NextRequest) {
   try {
@@ -233,7 +276,6 @@ export async function POST(request: NextRequest) {
       entityId,
       actionUrl,
       priority = 'normal',
-      tenantName,
       audience = 'user',
       audienceTarget,
       requiredRole,
@@ -270,6 +312,24 @@ export async function POST(request: NextRequest) {
         { status: 400 },
       );
     }
+
+    const actionTarget = normalizeNotificationActionUrl(actionUrl);
+    if (!actionTarget) {
+      return NextResponse.json(
+        { error: 'Notification action URL must point to this application dashboard' },
+        { status: 400 },
+      );
+    }
+
+    const [tenantRecord] = await db
+      .select({ name: tenants.name })
+      .from(tenants)
+      .where(eq(tenants.id, tenantId))
+      .limit(1);
+    if (!tenantRecord) {
+      return NextResponse.json({ error: 'Tenant not found' }, { status: 404 });
+    }
+    const resolvedTenantName = tenantRecord.name.trim() || 'GovFleet Namibia';
 
     let resolvedRecipientEmail: string | null = null;
     let resolvedRecipientPhone: string | null = null;
@@ -344,7 +404,7 @@ export async function POST(request: NextRequest) {
         body: notificationBody || null,
         entityType: entityType || null,
         entityId: entityId || null,
-        actionUrl: actionUrl || null,
+        actionUrl: actionTarget.stored,
         priority: priority || 'normal',
         requiredRole: requiredRole || null,
         eventType: body.eventType || type,
@@ -397,9 +457,9 @@ export async function POST(request: NextRequest) {
         type,
         title,
         body: notificationBody || title,
-        actionUrl,
+        actionUrl: actionTarget.delivery,
         recipientName: resolvedRecipientName || resolvedRecipientEmail,
-        tenantName,
+        tenantName: resolvedTenantName,
       });
 
       const [record] = await db
@@ -451,7 +511,7 @@ export async function POST(request: NextRequest) {
         resolvedRecipientPhone,
         title,
         notificationBody || title,
-        tenantName,
+        resolvedTenantName,
       );
 
       const [record] = await db
