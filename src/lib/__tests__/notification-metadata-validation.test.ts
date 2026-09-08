@@ -34,13 +34,16 @@ describe('notification POST metadata validation', () => {
     expect(postRoute).toContain('workspace: notificationWorkspace');
   });
 
-  it('restricts priority to the supported notification priority vocabulary', () => {
+  it('restricts priority while preserving the urgent compatibility alias', () => {
     const guardIndex = postRoute.indexOf("{ error: 'Invalid notification priority' }");
 
     expect(route).toContain(
       "const NOTIFICATION_PRIORITIES = new Set(['low', 'normal', 'high', 'emergency']);",
     );
-    expect(postRoute).toContain("const normalizedPriority = priority || 'normal';");
+    expect(postRoute).toContain("const priorityValue = priority || 'normal';");
+    expect(postRoute).toContain(
+      "const normalizedPriority = priorityValue === 'urgent' ? 'emergency' : priorityValue;",
+    );
     expect(postRoute.slice(0, guardIndex)).toContain(
       '!NOTIFICATION_PRIORITIES.has(normalizedPriority)',
     );
