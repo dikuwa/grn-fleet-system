@@ -1,3 +1,7 @@
+-- Prevent concurrent preference writers from recreating duplicates while this
+-- migration ranks, removes, and constrains existing rows.
+LOCK TABLE notification_preferences IN SHARE ROW EXCLUSIVE MODE;
+
 -- Keep exactly one preference row per tenant/user before enforcing the invariant.
 -- Prefer the most recently updated row, with stable created_at/id tie-breakers.
 WITH ranked_preferences AS (
