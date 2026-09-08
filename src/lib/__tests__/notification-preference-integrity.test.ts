@@ -6,8 +6,12 @@ const schema = readFileSync(
   resolve(process.cwd(), 'src/db/schema/notifications.ts'),
   'utf8',
 );
-const route = readFileSync(
+const notificationRoute = readFileSync(
   resolve(process.cwd(), 'src/app/api/notifications/route.ts'),
+  'utf8',
+);
+const settingsRoute = readFileSync(
+  resolve(process.cwd(), 'src/app/api/settings/route.ts'),
   'utf8',
 );
 const migration = readFileSync(
@@ -24,12 +28,15 @@ describe('notification preference integrity', () => {
     expect(migration).toContain('ON notification_preferences (tenant_id, user_id)');
   });
 
-  it('deduplicates deterministically before adding the unique index', () => {
+  it('locks writers before deterministic deduplication and unique-index creation', () => {
+    const lockIndex = migration.indexOf('LOCK TABLE notification_preferences');
     const rankIndex = migration.indexOf('ROW_NUMBER() OVER');
     const deleteIndex = migration.indexOf('DELETE FROM notification_preferences');
     const indexIndex = migration.indexOf('CREATE UNIQUE INDEX');
 
-    expect(rankIndex).toBeGreaterThan(-1);
+    expect(lockIndex).toBeGreaterThan(-1);
+    expect(migration).toContain('IN SHARE ROW EXCLUSIVE MODE');
+    expect(rankIndex).toBeGreaterThan(lockIndex);
     expect(migration).toContain('PARTITION BY tenant_id, user_id');
     expect(migration).toContain('ORDER BY updated_at DESC, created_at DESC, id DESC');
     expect(deleteIndex).toBeGreaterThan(rankIndex);
@@ -37,10 +44,13 @@ describe('notification preference integrity', () => {
     expect(migration).toContain('ranked.row_rank > 1');
   });
 
-  it('uses one atomic insert-on-conflict update for preference writes', () => {
-    const preferenceIndex = route.indexOf("if (action === 'update_preferences')");
-    const returnIndex = route.indexOf('return NextResponse.json({ success: true });', preferenceIndex);
-    const preferenceBlock = route.slice(preferenceIndex, returnIndex);
+  it('uses one atomic insert-on-conflict update in the notifications preference writer', () => {
+    const preferenceIndex = notificationRoute.indexOf("if (action === 'update_preferences')");
+    const returnIndex = notificationRoute.indexOf(
+      'return NextResponse.json({ success: true });',
+      preferenceIndex,
+    );
+    const preferenceBlock = notificationRoute.slice(preferenceIndex, returnIndex);
 
     expect(preferenceIndex).toBeGreaterThan(-1);
     expect(preferenceBlock).toContain('.insert(notificationPreferences)');
@@ -52,10 +62,28 @@ describe('notification preference integrity', () => {
     expect(preferenceBlock).not.toContain('if (updated.length === 0)');
   });
 
-  it('preserves existing preference defaults during the atomic upsert', () => {
-    const preferenceIndex = route.indexOf("if (action === 'update_preferences')");
-    const returnIndex = route.indexOf('return NextResponse.json({ success: true });', preferenceIndex);
-    const preferenceBlock = route.slice(preferenceIndex, returnIndex);
+  it('uses the same atomic upsert in tenant settings preference saves', () => {
+    const prefsIndex = settingsRoute.indexOf('if (prefs) {');
+    const auditIndex = settingsRoute.indexOf('await recordAuditEvent', prefsIndex);
+    const preferenceBlock = settingsRoute.slice(prefsIndex, auditIndex);
+
+    expect(prefsIndex).toBeGreaterThan(-1);
+    expect(preferenceBlock).toContain('.insert(notificationPreferences)');
+    expect(preferenceBlock).toContain('.onConflictDoUpdate({');
+    expect(preferenceBlock).toContain(
+      'target: [notificationPreferences.tenantId, notificationPreferences.userId]',
+    );
+    expect(preferenceBlock).not.toContain('const [existingPrefs] = await db');
+    expect(preferenceBlock).not.toContain('.update(notificationPreferences)');
+  });
+
+  it('preserves existing notification-route preference defaults during the atomic upsert', () => {
+    const preferenceIndex = notificationRoute.indexOf("if (action === 'update_preferences')");
+    const returnIndex = notificationRoute.indexOf(
+      'return NextResponse.json({ success: true });',
+      preferenceIndex,
+    );
+    const preferenceBlock = notificationRoute.slice(preferenceIndex, returnIndex);
 
     expect(preferenceBlock).toContain('quietHoursStart: quietHoursStart || null');
     expect(preferenceBlock).toContain('quietHoursEnd: quietHoursEnd || null');
