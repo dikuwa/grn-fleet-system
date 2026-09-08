@@ -344,7 +344,13 @@ export async function POST(request: NextRequest) {
 
     let eventVersion = 1;
     if (body.eventVersion !== undefined && body.eventVersion !== null && body.eventVersion !== '') {
-      const parsedEventVersion = Number(body.eventVersion);
+      const rawEventVersion = body.eventVersion;
+      const isNumericString = typeof rawEventVersion === 'string' && /^\d+$/.test(rawEventVersion);
+      if (typeof rawEventVersion !== 'number' && !isNumericString) {
+        return NextResponse.json({ error: 'Invalid notification event version' }, { status: 400 });
+      }
+      const parsedEventVersion =
+        typeof rawEventVersion === 'number' ? rawEventVersion : Number(rawEventVersion);
       if (
         !Number.isSafeInteger(parsedEventVersion) ||
         parsedEventVersion < 1 ||
