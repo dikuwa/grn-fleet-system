@@ -94,7 +94,7 @@ describe('notification API mutation and list boundaries', () => {
     expect(route).toContain('// Apply the same lifecycle rule to visible shared notifications.');
   });
 
-  it('keeps personal and shared bulk dismiss inside the active workspace', () => {
+  it('keeps personal and shared bulk dismiss inside current visibility scope', () => {
     const deleteIndex = route.indexOf('export async function DELETE');
     const personalBulkIndex = route.indexOf(
       '// Clear every dismissible personal notification visible in the active',
@@ -105,24 +105,33 @@ describe('notification API mutation and list boundaries', () => {
       personalBulkIndex,
     );
     const patchIndex = route.indexOf('export async function PATCH');
+    const personalBulk = route.slice(personalBulkIndex, sharedBulkIndex);
     const workspacePredicate =
       'or(isNull(notifications.workspace), eq(notifications.workspace, activeWorkspace))';
 
     expect(personalBulkIndex).toBeGreaterThan(deleteIndex);
     expect(sharedBulkIndex).toBeGreaterThan(personalBulkIndex);
-    expect(route.slice(personalBulkIndex, sharedBulkIndex)).toContain(workspacePredicate);
+    expect(personalBulk).toContain(workspacePredicate);
+    expect(personalBulk).toContain("ne(notifications.status, 'archived')");
+    expect(personalBulk).toContain("ne(notifications.status, 'dismissed')");
     expect(route.slice(sharedBulkIndex, patchIndex)).toContain('userScopedCondition');
   });
 
-  it('keeps shared mark-all-read inside current visibility scope', () => {
+  it('keeps personal and shared mark-all-read inside current visibility scope', () => {
     const patchIndex = route.indexOf('export async function PATCH');
-    const sharedReadIndex = route.indexOf('const shared = await db', patchIndex);
+    const personalReadIndex = route.indexOf('// Mark all personal notifications as read.', patchIndex);
+    const sharedReadIndex = route.indexOf('const shared = await db', personalReadIndex);
+    const personalRead = route.slice(personalReadIndex, sharedReadIndex);
+    const workspacePredicate =
+      'or(isNull(notifications.workspace), eq(notifications.workspace, activeWorkspace))';
 
-    expect(sharedReadIndex).toBeGreaterThan(patchIndex);
+    expect(personalReadIndex).toBeGreaterThan(patchIndex);
+    expect(sharedReadIndex).toBeGreaterThan(personalReadIndex);
+    expect(personalRead).toContain("ne(notifications.status, 'archived')");
+    expect(personalRead).toContain("ne(notifications.status, 'dismissed')");
+    expect(personalRead).toContain(workspacePredicate);
     expect(route.slice(sharedReadIndex)).toContain("ne(notifications.status, 'archived')");
     expect(route.slice(sharedReadIndex)).toContain("ne(notifications.status, 'dismissed')");
-    expect(route.slice(sharedReadIndex)).toContain(
-      'or(isNull(notifications.workspace), eq(notifications.workspace, activeWorkspace))',
-    );
+    expect(route.slice(sharedReadIndex)).toContain(workspacePredicate);
   });
 });
