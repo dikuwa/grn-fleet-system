@@ -18,6 +18,10 @@ import { sendNotificationSms, isSmsEnabled } from '@/lib/sms';
 import { canAccessDashboardPath, SystemRoles } from '@/lib/dashboard-access';
 import { employees } from '@/db/schema/people';
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const DEFAULT_NOTIFICATION_LIMIT = 50;
+const MAX_NOTIFICATION_LIMIT = 200;
+
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
@@ -31,7 +35,15 @@ export async function GET(request: NextRequest) {
 
     const type = searchParams.get('type');
     const unreadOnly = searchParams.get('unreadOnly') === 'true';
-    const limit = parseInt(searchParams.get('limit') || '50', 10);
+    const rawLimit = searchParams.get('limit');
+    if (rawLimit !== null && !/^\d+$/.test(rawLimit)) {
+      return NextResponse.json({ error: 'Invalid notification limit' }, { status: 400 });
+    }
+    const parsedLimit = rawLimit === null ? DEFAULT_NOTIFICATION_LIMIT : Number(rawLimit);
+    if (!Number.isSafeInteger(parsedLimit) || parsedLimit < 1) {
+      return NextResponse.json({ error: 'Invalid notification limit' }, { status: 400 });
+    }
+    const limit = Math.min(parsedLimit, MAX_NOTIFICATION_LIMIT);
 
     const db = getDb();
 
@@ -107,7 +119,7 @@ export async function GET(request: NextRequest) {
       .from(notifications)
       .where(whereClause)
       .orderBy(desc(notifications.createdAt))
-      .limit(Math.max(limit, 200));
+      .limit(MAX_NOTIFICATION_LIMIT);
     const sharedIds = visibleItems
       .filter((item) => item.audience !== 'user')
       .map((item) => item.id);
@@ -124,18 +136,18 @@ export async function GET(request: NextRequest) {
       : [];
     const readIds = new Set(readRows.map((row) => row.notificationId));
     // Fetch dismissed notification IDs for this user
-    const dismissedRows = await db
-      .select({ notificationId: notificationDismissals.notificationId })
-      .from(notificationDismissals)
-      .where(
-        and(
-          eq(notificationDismissals.userId, userId),
-          inArray(
-            notificationDismissals.notificationId,
-            visibleItems.map((i) => i.id),
-          ),
-        ),
-      );
+    const visibleIds = visibleItems.map((i) => i.id);
+    const dismissedRows = visibleIds.length
+      ? await db
+          .select({ notificationId: notificationDismissals.notificationId })
+          .from(notificationDismissals)
+          .where(
+            and(
+              eq(notificationDismissals.userId, userId),
+              inArray(notificationDismissals.notificationId, visibleIds),
+            ),
+          )
+      : [];
     const dismissedIds = new Set(dismissedRows.map((row) => row.notificationId));
 
     // Filter out dismissed notifications
@@ -448,7 +460,12 @@ export async function DELETE(request: NextRequest) {
     const userId = session.user.id;
     const tenantId = session.tenantId;
     const { searchParams } = new URL(request.url);
+    const hasNotificationId = searchParams.has('id');
     const notificationId = searchParams.get('id');
+
+    if (hasNotificationId && (!notificationId || !UUID_PATTERN.test(notificationId))) {
+      return NextResponse.json({ error: 'Notification not found' }, { status: 404 });
+    }
 
     const db = getDb();
     const workspaceContext = await getSessionWorkspace(session);
@@ -506,41 +523,50 @@ export async function DELETE(request: NextRequest) {
       or(isNull(notifications.workspace), eq(notifications.workspace, activeWorkspace)),
     );
 
-    if (notificationId) {
+    if (hasNotificationId) {
+      const validNotificationId = notificationId!;
       // Look up notification — must be in this user's audience
       const [item] = await db
-        .select({ id: notifications.id, audience: notifications.audience })
+        .select({
+          id: notifications.id,
+          audience: notifications.audience,
+          mandatory: notifications.mandatory,
+          status: notifications.status,
+        })
         .from(notifications)
-        .where(and(eq(notifications.id, notificationId), userScopedCondition))
+        .where(and(eq(notifications.id, validNotificationId), userScopedCondition))
         .limit(1);
       if (!item) return NextResponse.json({ error: 'Notification not found' }, { status: 404 });
 
+      if (item.mandatory && item.status === 'action_required') {
+        return NextResponse.json(
+          { error: 'Required action notifications cannot be dismissed until resolved' },
+          { status: 409 },
+        );
+      }
+
       if (item.audience === 'user') {
-        const [personal] = await db
-          .select({ mandatory: notifications.mandatory, status: notifications.status })
-          .from(notifications)
-          .where(eq(notifications.id, notificationId))
-          .limit(1);
-        if (personal?.mandatory && personal.status === 'action_required') {
-          return NextResponse.json(
-            { error: 'Required action notifications cannot be dismissed until resolved' },
-            { status: 409 },
-          );
-        }
         await db
           .update(notifications)
           .set({ status: 'dismissed', dismissedAt: new Date() })
-          .where(eq(notifications.id, notificationId));
+          .where(
+            and(
+              eq(notifications.id, validNotificationId),
+              eq(notifications.tenantId, tenantId),
+              eq(notifications.recipientUserId, userId),
+            ),
+          );
       } else {
         // Shared audience: dismiss for this user only
         await db
           .insert(notificationDismissals)
-          .values({ notificationId, userId })
+          .values({ notificationId: validNotificationId, userId })
           .onConflictDoNothing();
       }
     } else {
-      // Clear only eligible informational notifications. Mandatory action
-      // notifications remain visible until the linked action is resolved.
+      // Clear every dismissible personal notification visible in the active
+      // workspace. The only visible items retained are unresolved mandatory
+      // actions, matching the single-item guard above.
       await db
         .update(notifications)
         .set({ status: 'dismissed', dismissedAt: new Date() })
@@ -549,19 +575,21 @@ export async function DELETE(request: NextRequest) {
             eq(notifications.tenantId, tenantId),
             eq(notifications.audience, 'user'),
             eq(notifications.recipientUserId, userId),
-            eq(notifications.mandatory, false),
-            ne(notifications.status, 'action_required'),
+            ne(notifications.status, 'archived'),
+            ne(notifications.status, 'dismissed'),
+            or(isNull(notifications.workspace), eq(notifications.workspace, activeWorkspace)),
+            or(eq(notifications.mandatory, false), ne(notifications.status, 'action_required'))!,
           ),
         );
-      // Dismiss only the shared notifications this user can see
+      // Apply the same lifecycle rule to visible shared notifications.
       const sharedItems = await db
         .select({ id: notifications.id })
         .from(notifications)
         .where(
           and(
-            eq(notifications.tenantId, tenantId),
+            userScopedCondition,
             ne(notifications.audience, 'user'),
-            sharedAudienceCondition,
+            or(eq(notifications.mandatory, false), ne(notifications.status, 'action_required'))!,
           ),
         );
       if (sharedItems.length) {
@@ -588,9 +616,18 @@ export async function PATCH(request: NextRequest) {
     const userId = session.user.id;
     const tenantId = session.tenantId;
 
-    const db = getDb();
     const body = await request.json();
     const { notificationId, action } = body;
+    const hasNotificationId = Object.prototype.hasOwnProperty.call(body, 'notificationId');
+    if (
+      action === 'mark_read' &&
+      hasNotificationId &&
+      (typeof notificationId !== 'string' || !UUID_PATTERN.test(notificationId))
+    ) {
+      return NextResponse.json({ error: 'Notification not found' }, { status: 404 });
+    }
+
+    const db = getDb();
     const workspaceContext = await getSessionWorkspace(session);
     const { roleNames, activeWorkspace } = workspaceContext;
     const isPlatformAdministrator = roleNames.includes(SystemRoles.PLATFORM_ADMIN);
@@ -635,7 +672,8 @@ export async function PATCH(request: NextRequest) {
         );
 
     if (action === 'mark_read') {
-      if (notificationId) {
+      if (hasNotificationId) {
+        const validNotificationId = notificationId as string;
         const [item] = await db
           .select({
             id: notifications.id,
@@ -645,7 +683,7 @@ export async function PATCH(request: NextRequest) {
           .from(notifications)
           .where(
             and(
-              eq(notifications.id, notificationId),
+              eq(notifications.id, validNotificationId),
               eq(notifications.tenantId, tenantId),
               ne(notifications.status, 'archived'),
               ne(notifications.status, 'dismissed'),
@@ -668,7 +706,7 @@ export async function PATCH(request: NextRequest) {
             })
             .where(
               and(
-                eq(notifications.id, notificationId),
+                eq(notifications.id, validNotificationId),
                 eq(notifications.recipientUserId, userId),
                 eq(notifications.tenantId, tenantId),
               ),
@@ -690,13 +728,23 @@ export async function PATCH(request: NextRequest) {
               eq(notifications.tenantId, tenantId),
               eq(notifications.isRead, false),
               ne(notifications.status, 'action_required'),
+              ne(notifications.status, 'archived'),
+              ne(notifications.status, 'dismissed'),
               or(isNull(notifications.workspace), eq(notifications.workspace, activeWorkspace)),
             ),
           );
         const shared = await db
           .select({ id: notifications.id })
           .from(notifications)
-          .where(and(eq(notifications.tenantId, tenantId), sharedAudienceCondition));
+          .where(
+            and(
+              eq(notifications.tenantId, tenantId),
+              sharedAudienceCondition,
+              ne(notifications.status, 'archived'),
+              ne(notifications.status, 'dismissed'),
+              or(isNull(notifications.workspace), eq(notifications.workspace, activeWorkspace)),
+            ),
+          );
         if (shared.length) {
           await db
             .insert(notificationReads)
