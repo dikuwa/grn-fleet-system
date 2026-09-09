@@ -361,6 +361,14 @@ export async function POST(request: NextRequest) {
       eventVersion = parsedEventVersion;
     }
 
+    let publicDedupeKey: string | null = null;
+    if (body.dedupeKey !== undefined && body.dedupeKey !== null && body.dedupeKey !== '') {
+      if (typeof body.dedupeKey !== 'string') {
+        return NextResponse.json({ error: 'Invalid notification dedupe key' }, { status: 400 });
+      }
+      publicDedupeKey = `api:${tenantId}:${body.dedupeKey}`;
+    }
+
     const actionTarget = normalizeNotificationActionUrl(actionUrl);
     if (!actionTarget) {
       return NextResponse.json(
@@ -466,7 +474,7 @@ export async function POST(request: NextRequest) {
         workspace: notificationWorkspace,
         workflowStage: body.workflowStage || null,
         eventVersion,
-        dedupeKey: body.dedupeKey || null,
+        dedupeKey: publicDedupeKey,
         status: type === 'action_required' ? 'action_required' : 'unread',
         mandatory: Boolean(body.mandatory || type === 'action_required'),
       })
