@@ -182,6 +182,7 @@ export async function GET(request: NextRequest) {
           )
       : [];
     const readIds = new Set(readRows.map((row) => row.notificationId));
+    // Fetch dismissed notification IDs for this user
     const visibleIds = visibleItems.map((i) => i.id);
     const dismissedRows = visibleIds.length
       ? await db
@@ -196,6 +197,7 @@ export async function GET(request: NextRequest) {
       : [];
     const dismissedIds = new Set(dismissedRows.map((row) => row.notificationId));
 
+    // Filter out dismissed notifications
     const undismissedItems = visibleItems.filter((item) => !dismissedIds.has(item.id));
 
     const normalized = undismissedItems.map((item) => {
@@ -252,6 +254,11 @@ export async function GET(request: NextRequest) {
   }
 }
 
+/**
+ * POST /api/notifications
+ *
+ * Create a notification and deliver via configured channels (in-app + email).
+ */
 export async function POST(request: NextRequest) {
   try {
     const auth = await requireRequestAuth(request);
@@ -279,7 +286,9 @@ export async function POST(request: NextRequest) {
 
     if ((audience === 'user' && !recipientUserId) || !type || !title) {
       return NextResponse.json(
-        { error: 'Missing required fields: tenantId, recipientUserId, type, title' },
+        {
+          error: 'Missing required fields: tenantId, recipientUserId, type, title',
+        },
         { status: 400 },
       );
     }
@@ -299,6 +308,12 @@ export async function POST(request: NextRequest) {
           { status: 403 },
         );
       }
+    }
+    if (['role', 'department', 'office'].includes(audience) && !audienceTarget) {
+      return NextResponse.json(
+        { error: 'The selected audience requires a target' },
+        { status: 400 },
+      );
     }
 
     const priorityValue = priority === null || priority === '' ? 'normal' : priority;
@@ -425,9 +440,13 @@ export async function POST(request: NextRequest) {
         recipientEmployee?.email?.trim() || recipientAccount?.email?.trim() || null;
       resolvedRecipientPhone = recipientEmployee?.phone?.trim() || null;
       resolvedRecipientName =
-        employeeName || recipientAccount?.name?.trim() || resolvedRecipientEmail || 'Recipient';
+        employeeName ||
+        recipientAccount?.name?.trim() ||
+        resolvedRecipientEmail ||
+        'Recipient';
     }
 
+    // 1. Create in-app notification
     const [notification] = await db
       .insert(notifications)
       .values({
@@ -461,6 +480,7 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    // 2. Check delivery preferences and send email + SMS if configured
     const [prefs] =
       audience === 'user'
         ? await db
@@ -478,12 +498,14 @@ export async function POST(request: NextRequest) {
     const shouldSendEmail =
       audience === 'user' &&
       emailDeliveryRequested &&
-      prefs?.emailNotifications !== false &&
+      prefs?.emailNotifications !== false && // default true
       Boolean(resolvedRecipientEmail);
 
     const isHighPriority = normalizedPriority === 'high' || normalizedPriority === 'emergency';
+
     const deliveryRecords: Array<typeof notificationDeliveries.$inferSelect> = [];
 
+    // Email delivery
     if (shouldSendEmail && resolvedRecipientEmail) {
       const emailResult = await sendNotificationEmail({
         to: resolvedRecipientEmail,
@@ -494,6 +516,7 @@ export async function POST(request: NextRequest) {
         recipientName: resolvedRecipientName || resolvedRecipientEmail,
         tenantName: resolvedTenantName,
       });
+
       const [record] = await db
         .insert(notificationDeliveries)
         .values({
@@ -529,6 +552,7 @@ export async function POST(request: NextRequest) {
       deliveryRecords.push(record);
     }
 
+    // SMS delivery — only for high-priority notifications or if explicitly configured
     const smsEnabled = isSmsEnabled();
     const shouldSendSms =
       audience === 'user' &&
@@ -544,6 +568,7 @@ export async function POST(request: NextRequest) {
         notificationBody || title,
         resolvedTenantName,
       );
+
       const [record] = await db
         .insert(notificationDeliveries)
         .values({
@@ -563,6 +588,7 @@ export async function POST(request: NextRequest) {
       (isHighPriority || body.forceSms) &&
       !resolvedRecipientPhone
     ) {
+      // Record skipped — no authoritative tenant-scoped phone number
       const [record] = await db
         .insert(notificationDeliveries)
         .values({
@@ -590,7 +616,10 @@ export async function POST(request: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      data: { notification, deliveries: deliveryRecords },
+      data: {
+        notification,
+        deliveries: deliveryRecords,
+      },
     });
   } catch (error) {
     console.error('Notification creation failed:', error);
@@ -598,6 +627,13 @@ export async function POST(request: NextRequest) {
   }
 }
 
+/**
+ * DELETE /api/notifications
+ *
+ * Delete or dismiss notifications for the authenticated user.
+ * - With ?id=uuid: delete that specific notification (user-scoped) or dismiss it (shared)
+ * - Without id: clear all notifications this user is eligible to see
+ */
 export async function DELETE(request: NextRequest) {
   try {
     const auth = await requireRequestAuth(request);
@@ -618,10 +654,14 @@ export async function DELETE(request: NextRequest) {
     const { roleNames, activeWorkspace } = workspaceContext;
     const isPlatformAdministrator = roleNames.includes(SystemRoles.PLATFORM_ADMIN);
     const [employee] = await db
-      .select({ departmentId: employees.departmentId, officeId: employees.officeId })
+      .select({
+        departmentId: employees.departmentId,
+        officeId: employees.officeId,
+      })
       .from(employees)
       .where(and(eq(employees.tenantId, tenantId), eq(employees.userId, userId)))
       .limit(1);
+    // Same audience scoping as GET — only notifications this user can see
     const sharedAudienceCondition = isPlatformAdministrator
       ? or(
           eq(notifications.audience, 'platform'),
@@ -667,6 +707,7 @@ export async function DELETE(request: NextRequest) {
 
     if (hasNotificationId) {
       const validNotificationId = notificationId!;
+      // Look up notification — must be in this user's audience
       const [item] = await db
         .select({
           id: notifications.id,
@@ -698,12 +739,16 @@ export async function DELETE(request: NextRequest) {
             ),
           );
       } else {
+        // Shared audience: dismiss for this user only
         await db
           .insert(notificationDismissals)
           .values({ notificationId: validNotificationId, userId })
           .onConflictDoNothing();
       }
     } else {
+      // Clear every dismissible personal notification visible in the active
+      // workspace. The only visible items retained are unresolved mandatory
+      // actions, matching the single-item guard above.
       await db
         .update(notifications)
         .set({ status: 'dismissed', dismissedAt: new Date() })
@@ -718,6 +763,7 @@ export async function DELETE(request: NextRequest) {
             or(eq(notifications.mandatory, false), ne(notifications.status, 'action_required'))!,
           ),
         );
+      // Apply the same lifecycle rule to visible shared notifications.
       const sharedItems = await db
         .select({ id: notifications.id })
         .from(notifications)
@@ -745,6 +791,7 @@ export async function DELETE(request: NextRequest) {
 
 export async function PATCH(request: NextRequest) {
   try {
+    // Require auth — only allow updating your own notifications
     const auth = await requireRequestAuth(request);
     if (!auth.ok) return auth.error;
     const { session } = auth;
@@ -767,7 +814,10 @@ export async function PATCH(request: NextRequest) {
     const { roleNames, activeWorkspace } = workspaceContext;
     const isPlatformAdministrator = roleNames.includes(SystemRoles.PLATFORM_ADMIN);
     const [employee] = await db
-      .select({ departmentId: employees.departmentId, officeId: employees.officeId })
+      .select({
+        departmentId: employees.departmentId,
+        officeId: employees.officeId,
+      })
       .from(employees)
       .where(and(eq(employees.tenantId, tenantId), eq(employees.userId, userId)))
       .limit(1);
@@ -807,7 +857,11 @@ export async function PATCH(request: NextRequest) {
       if (hasNotificationId) {
         const validNotificationId = notificationId as string;
         const [item] = await db
-          .select({ id: notifications.id, audience: notifications.audience, status: notifications.status })
+          .select({
+            id: notifications.id,
+            audience: notifications.audience,
+            status: notifications.status,
+          })
           .from(notifications)
           .where(
             and(
@@ -846,6 +900,7 @@ export async function PATCH(request: NextRequest) {
             .onConflictDoNothing();
         }
       } else if (userId && tenantId) {
+        // Mark all personal notifications as read.
         await db
           .update(notifications)
           .set({ isRead: true, readAt: new Date(), status: 'read' })
@@ -892,7 +947,11 @@ export async function PATCH(request: NextRequest) {
       };
       await db
         .insert(notificationPreferences)
-        .values({ tenantId, userId, ...preferenceValues })
+        .values({
+          tenantId,
+          userId,
+          ...preferenceValues,
+        })
         .onConflictDoUpdate({
           target: [notificationPreferences.tenantId, notificationPreferences.userId],
           set: preferenceValues,
