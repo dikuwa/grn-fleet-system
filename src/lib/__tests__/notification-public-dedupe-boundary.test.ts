@@ -10,6 +10,13 @@ const notificationService = readFileSync(
   resolve(process.cwd(), 'src/lib/notification-service.ts'),
   'utf8',
 );
+const quarantineMigration = readFileSync(
+  resolve(
+    process.cwd(),
+    'src/db/migrations/0119_notification_dedupe_legacy_quarantine.sql',
+  ),
+  'utf8',
+);
 
 const postIndex = route.indexOf('export async function POST');
 const deleteIndex = route.indexOf('export async function DELETE');
@@ -25,7 +32,22 @@ describe('notification public dedupe boundary', () => {
     expect(postRoute).not.toContain('api:${tenantId}');
   });
 
-  it('keeps internal workflow dedupe generation unchanged', () => {
+  it('quarantines historical non-null dedupe keys under a write-blocking lock', () => {
+    expect(quarantineMigration).toContain(
+      'LOCK TABLE notifications IN SHARE ROW EXCLUSIVE MODE;',
+    );
+    expect(quarantineMigration).toContain(
+      "SET dedupe_key = 'legacy-quarantine:v1:' || dedupe_key",
+    );
+    expect(quarantineMigration).toContain('WHERE dedupe_key IS NOT NULL');
+    expect(quarantineMigration).toContain(
+      "dedupe_key NOT LIKE 'legacy-quarantine:v1:%'",
+    );
+    expect(quarantineMigration).not.toContain('DELETE FROM notifications');
+    expect(quarantineMigration).not.toContain('DROP INDEX');
+  });
+
+  it('keeps internal workflow dedupe generation unchanged and outside the quarantine namespace', () => {
     const builderStart = notificationService.indexOf('export function buildNotificationDedupeKey');
     const builderEnd = notificationService.indexOf('export async function createScopedNotifications');
     const builder = notificationService.slice(builderStart, builderEnd);
@@ -34,5 +56,6 @@ describe('notification public dedupe boundary', () => {
     expect(builderEnd).toBeGreaterThan(builderStart);
     expect(builder).toContain('input.recipientUserId');
     expect(builder).not.toContain('api:');
+    expect(builder).not.toContain('legacy-quarantine:v1:');
   });
 });
