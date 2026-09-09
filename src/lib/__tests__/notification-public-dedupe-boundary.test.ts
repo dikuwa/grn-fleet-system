@@ -33,5 +33,6 @@ describe('notification public dedupe boundary', () => {
     expect(builderStart).toBeGreaterThan(-1);
     expect(builderEnd).toBeGreaterThan(builderStart);
     expect(builder).toContain('input.recipientUserId');
+    expect(builder).not.toContain('api:');
   });
 });
