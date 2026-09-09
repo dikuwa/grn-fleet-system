@@ -16,16 +16,16 @@ const deleteIndex = route.indexOf('export async function DELETE');
 const postRoute = route.slice(postIndex, deleteIndex);
 
 describe('notification public dedupe boundary', () => {
-  it('namespaces caller-supplied dedupe keys by API and authenticated tenant', () => {
-    expect(postRoute).toContain('let publicDedupeKey: string | null = null;');
-    expect(postRoute).toContain("typeof body.dedupeKey !== 'string'");
-    expect(postRoute).toContain("{ error: 'Invalid notification dedupe key' }");
-    expect(postRoute).toContain('publicDedupeKey = `api:${tenantId}:${body.dedupeKey}`;');
-    expect(postRoute).toContain('dedupeKey: publicDedupeKey');
-    expect(postRoute).not.toContain('dedupeKey: body.dedupeKey || null');
+  it('never persists caller-supplied dedupe keys from the public API', () => {
+    expect(postIndex).toBeGreaterThan(-1);
+    expect(deleteIndex).toBeGreaterThan(postIndex);
+    expect(postRoute).toContain('dedupeKey: null');
+    expect(postRoute).not.toContain('dedupeKey: body.dedupeKey');
+    expect(postRoute).not.toContain('publicDedupeKey');
+    expect(postRoute).not.toContain('api:${tenantId}');
   });
 
-  it('keeps internal workflow dedupe generation outside the public API namespace', () => {
+  it('keeps internal workflow dedupe generation unchanged', () => {
     const builderStart = notificationService.indexOf('export function buildNotificationDedupeKey');
     const builderEnd = notificationService.indexOf('export async function createScopedNotifications');
     const builder = notificationService.slice(builderStart, builderEnd);
@@ -33,6 +33,5 @@ describe('notification public dedupe boundary', () => {
     expect(builderStart).toBeGreaterThan(-1);
     expect(builderEnd).toBeGreaterThan(builderStart);
     expect(builder).toContain('input.recipientUserId');
-    expect(builder).not.toContain('api:');
   });
 });
