@@ -6,6 +6,7 @@ import { requireDashboardAction, requirePermission, requireRequestAuth } from '@
 import { Permissions } from '@/lib/permissions';
 import { recordAuditEvent } from '@/lib/audit-event';
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const VEHICLE_DOCUMENT_VERIFY_CONFLICT = 'vehicle_document_verify_conflict';
 
 export async function PATCH(
@@ -22,6 +23,13 @@ export async function PATCH(
     if (permissionCheck instanceof NextResponse) return permissionCheck;
 
     const { id, documentId } = await params;
+    if (!UUID_PATTERN.test(id)) {
+      return NextResponse.json({ error: 'Vehicle ID is invalid' }, { status: 400 });
+    }
+    if (!UUID_PATTERN.test(documentId)) {
+      return NextResponse.json({ error: 'Vehicle document ID is invalid' }, { status: 400 });
+    }
+
     const body = await request.json().catch(() => ({}));
     const expectedUpdatedAt = String(body.expectedUpdatedAt || '').trim();
     const parsedExpectedUpdatedAt = new Date(expectedUpdatedAt);
