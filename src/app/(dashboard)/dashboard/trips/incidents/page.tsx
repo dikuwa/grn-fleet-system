@@ -19,6 +19,9 @@ import { getServerSession } from '@/lib/session';
 import { formatDateTime } from '@/lib/utils';
 import { notFound } from 'next/navigation';
 
+type IncidentRestrictionSeverity =
+  Parameters<typeof incidentRequiresVehicleRestriction>[0]['severity'];
+
 const MVA_CODES = [
   'accident',
   'accident_collision',
@@ -118,7 +121,7 @@ export default async function MvaWorkspacePage({ searchParams }: { searchParams:
   const clearanceCount = rows.filter((row) =>
     row.technicalClearanceStatus !== 'cleared' &&
     incidentRequiresVehicleRestriction({
-      severity: row.severity,
+      severity: row.severity as IncidentRestrictionSeverity,
       vehicleDamage: row.vehicleDamage,
       vehicleSafe: row.vehicleSafe,
     }),
