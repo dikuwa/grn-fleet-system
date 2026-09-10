@@ -177,7 +177,7 @@ export function IncidentReviewActions({
 
   return (
     <div className="space-y-4">
-      {canInvestigate && (
+      {canInvestigate && initial.investigationClosedAt == null && (
         <Card>
           <CardHeader><CardTitle>Investigation & police follow-up</CardTitle></CardHeader>
           <CardContent className="space-y-4">
