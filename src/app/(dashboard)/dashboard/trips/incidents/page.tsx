@@ -14,6 +14,7 @@ import { getSessionPermissions, getSessionRoleNames } from '@/lib/auth-helpers';
 import { resolveDashboardAccess } from '@/lib/dashboard-access';
 import { Permissions } from '@/lib/permissions';
 import { vehicleScopeCondition } from '@/lib/record-scope';
+import { incidentRequiresVehicleRestriction } from '@/lib/incidents/incident-safety';
 import { getServerSession } from '@/lib/session';
 import { formatDateTime } from '@/lib/utils';
 import { notFound } from 'next/navigation';
@@ -87,6 +88,8 @@ export default async function MvaWorkspacePage({ searchParams }: { searchParams:
       insuranceNotified: tripIncidents.insuranceNotified,
       policeReportFiled: tripIncidents.policeReportFiled,
       detailsRequired: tripIncidents.detailsRequired,
+      vehicleDamage: tripIncidents.vehicleDamage,
+      vehicleSafe: tripIncidents.vehicleSafe,
       tripId: tripIncidents.tripId,
       tripStatus: trips.status,
       vehicleId: vehicles.id,
@@ -112,7 +115,14 @@ export default async function MvaWorkspacePage({ searchParams }: { searchParams:
 
   const openCount = rows.filter((row) => row.investigationStatus !== 'closed').length;
   const seriousCount = rows.filter((row) => ['serious', 'critical'].includes(row.severity)).length;
-  const clearanceCount = rows.filter((row) => row.technicalClearanceStatus !== 'cleared' && row.vehicleStatus === 'maintenance').length;
+  const clearanceCount = rows.filter((row) =>
+    row.technicalClearanceStatus !== 'cleared' &&
+    incidentRequiresVehicleRestriction({
+      severity: row.severity,
+      vehicleDamage: row.vehicleDamage,
+      vehicleSafe: row.vehicleSafe,
+    }),
+  ).length;
 
   return (
     <div className="space-y-6">
