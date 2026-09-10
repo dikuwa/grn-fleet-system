@@ -9,6 +9,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { getDb } from '@/db';
 import { tripIncidents, trips } from '@/db/schema/trips';
 import {
+  getSessionPermissions,
   getSessionRoleNames,
   requireRequestAuth,
   requirePermission,
@@ -20,7 +21,7 @@ import { getIncidentCategory } from '@/lib/incidents/categories';
 import { canAcceptLateOfflineIncident } from '@/lib/incidents/offline-incident-window';
 import { getDatabaseErrorDetails } from '@/lib/database-error-details';
 import { eq, and, desc, type SQL } from 'drizzle-orm';
-import { tripScopeCondition } from '@/lib/record-scope';
+import { tripScopeCondition, vehicleScopeCondition } from '@/lib/record-scope';
 
 const POSTGRES_INT_MAX = 2_147_483_647;
 const UUID_PATTERN =
@@ -68,12 +69,40 @@ export async function GET(req: NextRequest) {
     const { session } = auth;
 
     const access = await resolveIncidentAccess(session);
-    if (access.readDenied) return access.readDenied;
+    const [permissions, roleNames] = await Promise.all([
+      getSessionPermissions(session),
+      getSessionRoleNames(session),
+    ]);
 
-    const roleNames = await getSessionRoleNames(session);
-    const tripAccess = resolveDashboardAccess('/dashboard/trips', roleNames);
-    if (!tripAccess.allowed || !tripAccess.actions.includes('view')) {
-      return NextResponse.json({ error: 'Incident access is not available in this workspace' }, { status: 403 });
+    const incidentRouteAccess = resolveDashboardAccess('/dashboard/trips/incidents', roleNames);
+    const tripsRouteAccess = resolveDashboardAccess('/dashboard/trips', roleNames);
+    const canReadIncidentWorkspace = [
+      Permissions.TRIP_INCIDENT_MANAGE,
+      Permissions.INCIDENT_INVESTIGATE,
+      Permissions.INCIDENT_CLOSE_INVESTIGATION,
+      Permissions.INCIDENT_INSURANCE_UPDATE,
+      Permissions.INCIDENT_TECHNICAL_CLEARANCE,
+      Permissions.MAINTENANCE_MANAGE,
+      Permissions.AUDIT_READ,
+    ].some((permission) => permissions.includes(permission));
+
+    const useIncidentWorkspace =
+      incidentRouteAccess.allowed &&
+      incidentRouteAccess.actions.includes('view') &&
+      Boolean(incidentRouteAccess.recordScope) &&
+      canReadIncidentWorkspace;
+    const useTripsWorkspace =
+      !useIncidentWorkspace &&
+      tripsRouteAccess.allowed &&
+      tripsRouteAccess.actions.includes('view') &&
+      Boolean(tripsRouteAccess.recordScope) &&
+      (access.canReport || access.canManage || access.canView);
+
+    if (!useIncidentWorkspace && !useTripsWorkspace) {
+      return access.readDenied ?? NextResponse.json(
+        { error: 'Incident access is not available in this workspace' },
+        { status: 403 },
+      );
     }
 
     const { searchParams } = new URL(req.url);
@@ -83,14 +112,22 @@ export async function GET(req: NextRequest) {
     }
     const db = getDb();
 
+    const scopeCondition = useIncidentWorkspace
+      ? vehicleScopeCondition({
+          tenantId: session.tenantId,
+          userId: session.user.id,
+          recordScope: incidentRouteAccess.recordScope!,
+        })
+      : tripScopeCondition({
+          tenantId: session.tenantId,
+          userId: session.user.id,
+          recordScope: tripsRouteAccess.recordScope!,
+        });
+
     const conditions: SQL[] = [
       eq(tripIncidents.tenantId, session.tenantId),
       eq(trips.tenantId, session.tenantId),
-      tripScopeCondition({
-        tenantId: session.tenantId,
-        userId: session.user.id,
-        recordScope: tripAccess.recordScope ?? 'assigned',
-      }),
+      scopeCondition,
     ];
     if (tripId) conditions.push(eq(tripIncidents.tripId, tripId));
 
