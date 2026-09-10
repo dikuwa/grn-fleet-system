@@ -45,7 +45,7 @@ const CONFIRMATION_COPY: Record<
   close_investigation: {
     title: 'Close investigation?',
     description:
-      'This is a final investigation decision. Investigation notes are required, and vehicle-safety incidents must already have technical clearance.',
+      'This is a final investigation decision. Pending investigation and police follow-up edits will be saved first. Investigation notes are required, and vehicle-safety incidents must already have technical clearance.',
     confirmLabel: 'Close investigation',
   },
 };
@@ -115,6 +115,24 @@ export function IncidentReviewActions({
   async function closeInvestigation() {
     setWorking('close_investigation');
     try {
+      // The close action lives beside editable investigation/police fields. Persist
+      // those pending edits first so final closure cannot silently discard evidence
+      // that the reviewer changed immediately before confirming the decision.
+      if (canInvestigate) {
+        const saveResponse = await fetch(`/api/incidents/${incidentId}/review`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'investigation_update', ...form }),
+        });
+        const saveJson = await saveResponse.json().catch(() => ({}));
+        if (!saveResponse.ok) {
+          throw new Error(
+            saveJson.error ||
+              'The investigation changed while the pending review edits were being saved. Refresh before closing it.',
+          );
+        }
+      }
+
       const response = await fetch(`/api/incidents/${incidentId}/investigation`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
