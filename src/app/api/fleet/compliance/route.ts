@@ -85,21 +85,29 @@ export async function GET(req: NextRequest) {
         return bTime - aTime;
       };
 
-      // Licence expiry.
-      if (v.licenceExpiryDate) {
-        const expiry = new Date(v.licenceExpiryDate);
+      // Licence: prefer the newest verified licence-disc evidence when present.
+      // The legacy profile expiry remains a fallback for fleet records that
+      // pre-date the vehicle-document verification workflow.
+      const verifiedLicenceDocs = docItems
+        .filter((d) => d.documentType === 'licence_disc' && d.isVerified)
+        .sort(newestDocumentFirst);
+      const currentLicence = verifiedLicenceDocs[0] ?? null;
+      const licenceExpiryDate = currentLicence?.expiryDate ?? v.licenceExpiryDate;
+
+      if (licenceExpiryDate) {
+        const expiry = new Date(licenceExpiryDate);
         const days = Math.ceil((expiry.getTime() - today.getTime()) / (1000 * 60 * 60 * 24));
         items.push({
           type: 'licence',
-          name: 'Vehicle Licence',
-          expiryDate: v.licenceExpiryDate,
+          name: currentLicence?.documentName ?? 'Vehicle Licence',
+          expiryDate: licenceExpiryDate,
           status: days < 0 ? 'expired' : days <= 30 ? 'expiring_soon' : 'valid',
           daysRemaining: days,
         });
       } else {
         items.push({
           type: 'licence',
-          name: 'Vehicle Licence',
+          name: currentLicence?.documentName ?? 'Vehicle Licence',
           expiryDate: null,
           status: 'unknown',
           daysRemaining: null,
