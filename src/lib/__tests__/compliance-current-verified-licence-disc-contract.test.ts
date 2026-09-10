@@ -13,7 +13,7 @@ describe('current verified licence-disc compliance contract', () => {
     expect(routeSource).toContain('.sort(newestDocumentFirst)');
     expect(routeSource).toContain('const currentLicence = verifiedLicenceDocs[0] ?? null;');
     expect(routeSource).toContain(
-      'const licenceExpiryDate = currentLicence?.expiryDate ?? v.licenceExpiryDate;',
+      'const licenceExpiryDate = currentLicence ? currentLicence.expiryDate : v.licenceExpiryDate;',
     );
   });
 
@@ -22,16 +22,26 @@ describe('current verified licence-disc compliance contract', () => {
     expect(routeSource).not.toContain("d.documentType === 'licence_disc' && !d.isVerified");
   });
 
-  it('retains the legacy licence expiry only as fallback', () => {
+  it('uses legacy licence expiry only when no verified licence disc exists', () => {
     const verifiedSelection = routeSource.indexOf('const currentLicence = verifiedLicenceDocs[0] ?? null;');
     const fallback = routeSource.indexOf(
-      'const licenceExpiryDate = currentLicence?.expiryDate ?? v.licenceExpiryDate;',
+      'const licenceExpiryDate = currentLicence ? currentLicence.expiryDate : v.licenceExpiryDate;',
     );
     const complianceBranch = routeSource.indexOf('if (licenceExpiryDate)');
 
     expect(verifiedSelection).toBeGreaterThan(-1);
     expect(fallback).toBeGreaterThan(verifiedSelection);
     expect(complianceBranch).toBeGreaterThan(fallback);
+    expect(routeSource).not.toContain(
+      'const licenceExpiryDate = currentLicence?.expiryDate ?? v.licenceExpiryDate;',
+    );
+  });
+
+  it('keeps a verified licence disc without expiry authoritative as unknown rather than reviving legacy expiry', () => {
+    expect(routeSource).toContain(
+      'const licenceExpiryDate = currentLicence ? currentLicence.expiryDate : v.licenceExpiryDate;',
+    );
+    expect(routeSource).toContain("status: 'unknown'");
   });
 
   it('keeps document evidence tenant-scoped through the tenant vehicle subquery', () => {
