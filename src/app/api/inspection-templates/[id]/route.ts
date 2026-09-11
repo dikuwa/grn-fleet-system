@@ -12,6 +12,9 @@ import {
   loadInspectionTemplate,
 } from '@/lib/inspection-template-service';
 
+const UUID_PATTERN =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 async function requireTemplateManager(
   request: NextRequest,
   action: 'view' | 'update' | 'delete',
@@ -29,6 +32,12 @@ async function requireTemplateManager(
   return auth;
 }
 
+function malformedTemplateIdResponse(id: string) {
+  return UUID_PATTERN.test(id)
+    ? null
+    : NextResponse.json({ error: 'Template not found' }, { status: 404 });
+}
+
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> },
@@ -37,6 +46,8 @@ export async function GET(
     const auth = await requireTemplateManager(request, 'view');
     if (!auth.ok) return auth.error;
     const { id } = await params;
+    const malformedId = malformedTemplateIdResponse(id);
+    if (malformedId) return malformedId;
     const template = await loadInspectionTemplate(auth.session.tenantId, id);
     if (!template) return NextResponse.json({ error: 'Template not found' }, { status: 404 });
     return NextResponse.json(
@@ -61,6 +72,8 @@ export async function PUT(
     const auth = await requireTemplateManager(request, 'update');
     if (!auth.ok) return auth.error;
     const { id } = await params;
+    const malformedId = malformedTemplateIdResponse(id);
+    if (malformedId) return malformedId;
     const existing = await loadInspectionTemplate(auth.session.tenantId, id);
     if (!existing) return NextResponse.json({ error: 'Template not found' }, { status: 404 });
 
@@ -91,6 +104,8 @@ export async function DELETE(
     const auth = await requireTemplateManager(request, 'delete');
     if (!auth.ok) return auth.error;
     const { id } = await params;
+    const malformedId = malformedTemplateIdResponse(id);
+    if (malformedId) return malformedId;
     await deleteUnusedInspectionTemplate({
       tenantId: auth.session.tenantId,
       userId: auth.session.user.id,
