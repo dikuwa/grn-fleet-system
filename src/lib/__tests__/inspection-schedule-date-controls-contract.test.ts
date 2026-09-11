@@ -16,22 +16,43 @@ describe('inspection schedule and date controls', () => {
     expect(schedule).toContain('eq(transportRequests.tenantId, tenantId)');
     expect(schedule).toContain('eq(vehicles.tenantId, tenantId)');
     expect(schedule).toContain('eq(trips.tenantId, tenantId)');
+    expect(schedule).toContain('eq(tripAuthorities.tenantId, tenantId)');
     expect(schedule).toContain('eq(vehicleInspections.tenantId, tenantId)');
     expect(schedule).toContain('overallPass: vehicleInspections.overallPass');
-    expect(schedule).toContain("row.type === 'departure' && row.overallPass !== true");
-    expect(schedule).toContain("satisfied.has(`${row.tripId}:departure`)");
-    expect(schedule).toContain("satisfied.has(`${row.tripId}:return`)");
-    expect(schedule).not.toContain('vehicleInspections.createdAt');
+    expect(schedule).toContain('vehicleId: vehicleInspections.vehicleId');
+    expect(schedule).toContain('createdAt: vehicleInspections.createdAt');
   });
 
-  it('keeps failed departure work pending for lifecycle-required re-inspection', () => {
+  it('keeps failed, replaced-vehicle and pre-amendment departure work pending until a fresh current-vehicle pass', () => {
     const schedule = source('src/lib/inspection-schedule.ts');
     const service = source('src/lib/inspection-service.ts');
+    const amendmentAcceptance = source('src/app/api/trips/[id]/amendment-acceptance/route.ts');
+    const releaseGate = source('src/lib/trip-release-gate.ts');
 
     expect(service).toContain(".set({ status: 'awaiting_pre_trip_inspection', updatedAt: now })");
     expect(service).toContain('if (overallPass)');
     expect(service).toContain(".set({ status: 'ready_for_departure'");
-    expect(schedule).toContain("if (row.type === 'departure' && row.overallPass !== true) return [];");
+    expect(amendmentAcceptance).toContain("status = 'awaiting_pre_trip_inspection'");
+    expect(amendmentAcceptance).toContain('accepted_at = ${nowIso}::timestamptz');
+
+    expect(schedule).toContain('authorityAcceptedAt: tripAuthorities.acceptedAt');
+    expect(schedule).toContain('const inspectionsByTripVehicle = new Map');
+    expect(schedule).toContain('`${row.tripId}:${row.vehicleId}`');
+    expect(schedule).toContain("inspection.type === 'departure'");
+    expect(schedule).toContain('inspection.overallPass === true');
+    expect(schedule).toContain('inspection.createdAt >= row.authorityAcceptedAt');
+
+    expect(releaseGate).toContain('eq(vehicleInspections.vehicleId, trip.vehicleId)');
+    expect(releaseGate).toContain("eq(vehicleInspections.type, 'departure')");
+    expect(releaseGate).toContain('departureInspection.overallPass === true');
+  });
+
+  it('treats a performed return inspection for the current vehicle as schedule-complete', () => {
+    const schedule = source('src/lib/inspection-schedule.ts');
+
+    expect(schedule).toContain("inspection.type === 'return'");
+    expect(schedule).toContain('const returnSatisfied = currentVehicleInspections.some');
+    expect(schedule).toContain('if (!row.tripId || !returnSatisfied)');
   });
 
   it('surfaces the derived schedule only for the tenant-manage inspection surface', () => {
