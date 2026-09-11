@@ -14,6 +14,7 @@ import { transportRequests } from '@/db/schema/requests';
 import { vehicles } from '@/db/schema/fleet';
 import { requireDashboardAction, requirePermission, requireRequestAuth } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
+import { findPendingAuthorityAmendmentAcceptance } from '@/lib/trip-amendment-acceptance';
 
 const VALID_TYPES = ['departure', 'return'] as const;
 type InspectionType = (typeof VALID_TYPES)[number];
@@ -41,9 +42,9 @@ export async function GET(request: NextRequest) {
     const type = requestedType as InspectionType;
     const db = getDb();
 
-    // Legacy data may contain more than one active template. Until the template
-    // management invariant is repaired, both form context and POST validation
-    // deterministically use the newest active version.
+    // Legacy data may contain more than one active template. Both form context
+    // and POST validation deterministically use the newest active version while
+    // the database uniqueness invariant prevents new duplicate active rows.
     const [activeTemplate] = await db.select({
       id: inspectionTemplates.id,
       name: inspectionTemplates.name,
@@ -94,7 +95,9 @@ export async function GET(request: NextRequest) {
         vehicleId: trips.vehicleId,
         requestReference: transportRequests.reference,
         requestStatus: transportRequests.status,
+        authorityId: tripAuthorities.id,
         authorityStatus: tripAuthorities.status,
+        authorityAcceptedAt: tripAuthorities.acceptedAt,
         authorityNumber: tripAuthorities.authorityNumber,
         driverEmployeeId: vehicleAllocations.driverEmployeeId,
         driverName: sql<string | null>`(
@@ -175,30 +178,44 @@ export async function GET(request: NextRequest) {
       acceptedExternalRows.map((row) => [row.tripId, { issueId: row.issueId, driverName: row.driverName }]),
     );
 
-    const eligibleTrips = tripRows
-      .filter((trip) => {
-        const external = acceptedExternalByTrip.get(trip.id);
-        const hasValidDriver = Boolean(trip.driverEmployeeId || external);
-        if (!hasValidDriver) return false;
-        if (type === 'departure') {
-          return (
-            ['authorised', 'ready_for_issue', 'approved', 'approved_emergency'].includes(trip.requestStatus) &&
-            ['driver_accepted', 'awaiting_pre_trip_inspection'].includes(trip.authorityStatus)
-          );
-        }
+    const driverEligibleTrips = tripRows.filter((trip) => {
+      const external = acceptedExternalByTrip.get(trip.id);
+      const hasValidDriver = Boolean(trip.driverEmployeeId || external);
+      if (!hasValidDriver) return false;
+      if (type === 'departure') {
         return (
-          ['returned', 'awaiting_arrival_inspection'].includes(trip.authorityStatus) &&
-          (trip.driverEmployeeId ? true : Boolean(external?.issueId))
+          ['authorised', 'ready_for_issue', 'approved', 'approved_emergency'].includes(trip.requestStatus) &&
+          ['driver_accepted', 'awaiting_pre_trip_inspection'].includes(trip.authorityStatus)
         );
-      })
-      .map((trip) => ({
-        ...trip,
-        scheduledAt: type === 'departure' ? trip.departureAt : trip.returnAt,
-        driverKind: trip.driverEmployeeId ? ('internal' as const) : ('external' as const),
-        driverName: trip.driverEmployeeId
-          ? trip.driverName
-          : acceptedExternalByTrip.get(trip.id)?.driverName || null,
-      }));
+      }
+      return (
+        ['returned', 'awaiting_arrival_inspection'].includes(trip.authorityStatus) &&
+        (trip.driverEmployeeId ? true : Boolean(external?.issueId))
+      );
+    });
+
+    // Keep form discovery aligned with POST validation. A material authority
+    // amendment approved after driver acceptance invalidates that acceptance,
+    // so the trip must not be offered for departure inspection until the driver
+    // acknowledges the revised authority.
+    const lifecycleEligibleTrips = type === 'departure'
+      ? (await Promise.all(driverEligibleTrips.map(async (trip) => {
+          const pendingAmendment = await findPendingAuthorityAmendmentAcceptance({
+            authorityId: trip.authorityId,
+            acceptedAt: trip.authorityAcceptedAt,
+          });
+          return pendingAmendment ? null : trip;
+        }))).filter((trip): trip is (typeof tripRows)[number] => trip !== null)
+      : driverEligibleTrips;
+
+    const eligibleTrips = lifecycleEligibleTrips.map((trip) => ({
+      ...trip,
+      scheduledAt: type === 'departure' ? trip.departureAt : trip.returnAt,
+      driverKind: trip.driverEmployeeId ? ('internal' as const) : ('external' as const),
+      driverName: trip.driverEmployeeId
+        ? trip.driverName
+        : acceptedExternalByTrip.get(trip.id)?.driverName || null,
+    }));
 
     const vehicleMap = new Map<string, {
       id: string;
