@@ -5,6 +5,8 @@ import { requireDashboardAction, requireRequestAuth, requirePermission } from '@
 import { Permissions } from '@/lib/permissions';
 import { eq, and, sql } from 'drizzle-orm';
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
  * POST /api/fleet/[id]/decommission
  *
@@ -26,8 +28,12 @@ export async function POST(
     const permCheck = await requirePermission(session, Permissions.VEHICLE_MANAGE);
     if (permCheck instanceof NextResponse) return permCheck;
 
-    const db = getDb();
     const { id } = await params;
+    if (!UUID_PATTERN.test(id)) {
+      return NextResponse.json({ error: 'Vehicle ID is invalid' }, { status: 400 });
+    }
+
+    const db = getDb();
 
     // Verify vehicle exists and belongs to this tenant.
     const [vehicle] = await db

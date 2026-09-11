@@ -12,6 +12,8 @@ import { resolveDashboardAccess } from '@/lib/dashboard-access';
 import { Permissions } from '@/lib/permissions';
 import { vehicleScopeCondition } from '@/lib/record-scope';
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 export async function GET(request: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   try {
     const auth = await requireRequestAuth(request);
@@ -24,6 +26,10 @@ export async function GET(request: NextRequest, { params }: { params: Promise<{ 
     if (permission instanceof NextResponse) return permission;
 
     const { id } = await params;
+    if (!UUID_PATTERN.test(id)) {
+      return NextResponse.json({ error: 'Vehicle ID is invalid' }, { status: 400 });
+    }
+
     const roleNames = await getSessionRoleNames(session);
     const access = resolveDashboardAccess('/dashboard/fleet', roleNames);
     const db = getDb();
