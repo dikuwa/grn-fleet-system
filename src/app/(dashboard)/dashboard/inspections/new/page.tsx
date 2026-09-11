@@ -38,6 +38,7 @@ type ContextTrip = {
   destinationName: string | null;
   departureAt: string;
   returnAt: string;
+  scheduledAt: string;
 };
 
 type ContextVehicle = {
@@ -375,7 +376,7 @@ export default function NewInspectionPage() {
                 <div><p className="text-ink-400 text-[11px] font-semibold uppercase tracking-wide">Trip</p><p className="text-ink-950 mt-1 text-sm font-semibold">{selectedTrip.authorityNumber || selectedTrip.requestReference}</p></div>
                 <div className="min-w-0 sm:col-span-2"><p className="text-ink-400 text-[11px] font-semibold uppercase tracking-wide">Route</p><p className="text-ink-950 mt-1 break-words text-sm">{[selectedTrip.originName, selectedTrip.destinationName].filter(Boolean).join(' → ') || 'Not recorded'}</p></div>
                 <div><p className="text-ink-400 text-[11px] font-semibold uppercase tracking-wide">Vehicle</p><p className="text-ink-950 mt-1 text-sm">{selectedTrip.make} {selectedTrip.model} · {selectedTrip.licenceNumber}</p></div>
-                <div><p className="text-ink-400 text-[11px] font-semibold uppercase tracking-wide">Driver / schedule</p><p className="text-ink-950 mt-1 text-sm">{selectedTrip.driverName || (selectedTrip.driverKind === 'external' ? 'External driver' : 'Not recorded')}</p><p className="text-ink-500 mt-0.5 text-xs tabular-nums">{new Date(selectedTrip.departureAt).toLocaleString('en-NA', { dateStyle: 'medium', timeStyle: 'short' })}</p></div>
+                <div><p className="text-ink-400 text-[11px] font-semibold uppercase tracking-wide">Driver / {type} due</p><p className="text-ink-950 mt-1 text-sm">{selectedTrip.driverName || (selectedTrip.driverKind === 'external' ? 'External driver' : 'Not recorded')}</p><p className="text-ink-500 mt-0.5 text-xs tabular-nums">{new Date(selectedTrip.scheduledAt).toLocaleString('en-NA', { dateStyle: 'medium', timeStyle: 'short' })}</p></div>
               </CardContent>
             </Card>
           )}

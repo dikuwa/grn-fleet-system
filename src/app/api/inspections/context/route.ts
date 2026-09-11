@@ -148,7 +148,7 @@ export async function GET(request: NextRequest) {
           inArray(trips.status, lifecycleStatuses),
           vehicleSafetyGuard,
         ))
-        .orderBy(trips.createdAt),
+        .orderBy(asc(type === 'departure' ? vehicleAllocations.startAt : vehicleAllocations.endAt)),
       db
         .select({
           tripId: externalDriverAssignments.tripId,
@@ -193,6 +193,7 @@ export async function GET(request: NextRequest) {
       })
       .map((trip) => ({
         ...trip,
+        scheduledAt: type === 'departure' ? trip.departureAt : trip.returnAt,
         driverKind: trip.driverEmployeeId ? ('internal' as const) : ('external' as const),
         driverName: trip.driverEmployeeId
           ? trip.driverName
