@@ -86,13 +86,13 @@ export async function GET(req: NextRequest) {
       };
 
       // Licence: prefer the newest verified licence-disc evidence when present.
-      // The legacy profile expiry remains a fallback for fleet records that
-      // pre-date the vehicle-document verification workflow.
+      // The legacy profile expiry remains a fallback only when no verified
+      // licence-disc record exists yet.
       const verifiedLicenceDocs = docItems
         .filter((d) => d.documentType === 'licence_disc' && d.isVerified)
         .sort(newestDocumentFirst);
       const currentLicence = verifiedLicenceDocs[0] ?? null;
-      const licenceExpiryDate = currentLicence?.expiryDate ?? v.licenceExpiryDate;
+      const licenceExpiryDate = currentLicence ? currentLicence.expiryDate : v.licenceExpiryDate;
 
       if (licenceExpiryDate) {
         const expiry = new Date(licenceExpiryDate);
