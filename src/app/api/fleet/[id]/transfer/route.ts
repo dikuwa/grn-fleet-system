@@ -6,6 +6,8 @@ import { requireDashboardAction, requireRequestAuth, requirePermission } from '@
 import { Permissions } from '@/lib/permissions';
 import { eq, and, sql } from 'drizzle-orm';
 
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /**
  * POST /api/fleet/[id]/transfer
  *
@@ -27,8 +29,12 @@ export async function POST(
     const permCheck = await requirePermission(session, Permissions.VEHICLE_MANAGE);
     if (permCheck instanceof NextResponse) return permCheck;
 
-    const db = getDb();
     const { id } = await params;
+    if (!UUID_PATTERN.test(id)) {
+      return NextResponse.json({ error: 'Vehicle ID is invalid' }, { status: 400 });
+    }
+
+    const db = getDb();
 
     const [vehicle] = await db
       .select({
@@ -49,6 +55,9 @@ export async function POST(
     const targetOfficeId = String(body.officeId || '').trim();
     if (!targetOfficeId) {
       return NextResponse.json({ error: 'Target office ID is required' }, { status: 400 });
+    }
+    if (!UUID_PATTERN.test(targetOfficeId)) {
+      return NextResponse.json({ error: 'Target office not found in your tenant' }, { status: 404 });
     }
 
     // Verify target office exists and belongs to this tenant.
