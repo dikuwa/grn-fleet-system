@@ -10,6 +10,7 @@ export type InspectionScheduleEvent = {
   tripId: string | null;
   type: 'departure' | 'return';
   dueAt: string;
+  isOverdue: boolean;
   allocationState: string;
   requestReference: string | null;
   vehicleId: string;
@@ -28,6 +29,7 @@ export async function getPendingInspectionSchedule(
   limit = 100,
 ): Promise<InspectionScheduleEvent[]> {
   const db = getDb();
+  const now = Date.now();
 
   const allocationRows = await db
     .select({
@@ -89,6 +91,7 @@ export async function getPendingInspectionSchedule(
           tripId: row.tripId ?? null,
           type: 'departure',
           dueAt: row.startAt.toISOString(),
+          isOverdue: row.startAt.getTime() < now,
           allocationState: row.allocationState,
           requestReference: row.requestReference,
           vehicleId: row.vehicleId,
@@ -104,6 +107,7 @@ export async function getPendingInspectionSchedule(
           tripId: row.tripId ?? null,
           type: 'return',
           dueAt: row.endAt.toISOString(),
+          isOverdue: row.endAt.getTime() < now,
           allocationState: row.allocationState,
           requestReference: row.requestReference,
           vehicleId: row.vehicleId,
