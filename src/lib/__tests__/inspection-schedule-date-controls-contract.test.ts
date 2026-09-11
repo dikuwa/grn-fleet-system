@@ -17,9 +17,21 @@ describe('inspection schedule and date controls', () => {
     expect(schedule).toContain('eq(vehicles.tenantId, tenantId)');
     expect(schedule).toContain('eq(trips.tenantId, tenantId)');
     expect(schedule).toContain('eq(vehicleInspections.tenantId, tenantId)');
-    expect(schedule).toContain("completed.has(`${row.tripId}:departure`)");
-    expect(schedule).toContain("completed.has(`${row.tripId}:return`)");
+    expect(schedule).toContain('overallPass: vehicleInspections.overallPass');
+    expect(schedule).toContain("row.type === 'departure' && row.overallPass !== true");
+    expect(schedule).toContain("satisfied.has(`${row.tripId}:departure`)");
+    expect(schedule).toContain("satisfied.has(`${row.tripId}:return`)");
     expect(schedule).not.toContain('vehicleInspections.createdAt');
+  });
+
+  it('keeps failed departure work pending for lifecycle-required re-inspection', () => {
+    const schedule = source('src/lib/inspection-schedule.ts');
+    const service = source('src/lib/inspection-service.ts');
+
+    expect(service).toContain(".set({ status: 'awaiting_pre_trip_inspection', updatedAt: now })");
+    expect(service).toContain('if (overallPass)');
+    expect(service).toContain(".set({ status: 'ready_for_departure'");
+    expect(schedule).toContain("if (row.type === 'departure' && row.overallPass !== true) return [];");
   });
 
   it('surfaces the derived schedule only for the tenant-manage inspection surface', () => {
