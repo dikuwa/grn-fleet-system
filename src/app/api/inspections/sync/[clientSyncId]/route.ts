@@ -11,6 +11,14 @@ import { Permissions } from '@/lib/permissions';
 
 const MAX_SYNC_ID_LENGTH = 128;
 
+function normalizeSyncId(value: string) {
+  try {
+    return decodeURIComponent(value || '').trim();
+  } catch {
+    return null;
+  }
+}
+
 /**
  * GET /api/inspections/sync/[clientSyncId]
  *
@@ -38,7 +46,7 @@ export async function GET(
     if (permissionCheck instanceof NextResponse) return permissionCheck;
 
     const { clientSyncId } = await params;
-    const syncId = decodeURIComponent(clientSyncId || '').trim();
+    const syncId = normalizeSyncId(clientSyncId);
     if (!syncId || syncId.length > MAX_SYNC_ID_LENGTH) {
       return NextResponse.json({ error: 'Invalid inspection sync identifier' }, { status: 400 });
     }
