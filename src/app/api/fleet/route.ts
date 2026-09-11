@@ -27,6 +27,7 @@ import {
 
 const INITIAL_VEHICLE_STATUSES = new Set(['available', 'provisional', 'maintenance', 'out_of_service']);
 const VEHICLE_ENTITLEMENT_CONFLICT = 'vehicle_entitlement_conflict:';
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * GET /api/fleet
@@ -48,6 +49,9 @@ export async function GET(req: NextRequest) {
     const search = searchParams.get('search')?.trim();
     const status = searchParams.get('status')?.trim();
     const categoryId = searchParams.get('category_id')?.trim();
+    if (categoryId && !UUID_PATTERN.test(categoryId)) {
+      return NextResponse.json({ error: 'Category filter is invalid' }, { status: 400 });
+    }
 
     const roleNames = await getSessionRoleNames(session);
     const access = resolveDashboardAccess('/dashboard/fleet', roleNames);
@@ -187,6 +191,9 @@ export async function POST(req: NextRequest) {
     const roadworthyTestDate = parseOptionalIsoDate(body.roadworthyTestDate, 'Roadworthy test date');
     const licenceExpiryDate = parseOptionalIsoDate(body.licenceExpiryDate, 'Licence expiry date');
 
+    if (body.categoryId && !UUID_PATTERN.test(String(body.categoryId))) {
+      return NextResponse.json({ error: 'Vehicle category not found in your tenant' }, { status: 422 });
+    }
     if (body.categoryId) {
       const [category] = await db
         .select({ id: vehicleCategories.id })
@@ -205,6 +212,9 @@ export async function POST(req: NextRequest) {
 
     for (const value of [body.officeId, body.assignedOfficeId]) {
       if (!value) continue;
+      if (!UUID_PATTERN.test(String(value))) {
+        return NextResponse.json({ error: 'Selected office not found in your tenant' }, { status: 422 });
+      }
       const [office] = await db
         .select({ id: offices.id })
         .from(offices)
