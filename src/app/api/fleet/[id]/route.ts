@@ -27,6 +27,7 @@ import {
 const MANUAL_EDIT_STATUSES = new Set(['available', 'provisional', 'maintenance']);
 const PROTECTED_REACTIVATION_STATUSES = new Set(['maintenance', 'out_of_service', 'written_off']);
 const VEHICLE_UPDATE_CONFLICT = 'vehicle_update_conflict';
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /**
  * GET /api/fleet/[id]
@@ -43,8 +44,12 @@ export async function GET(req: NextRequest, { params }: { params: Promise<{ id: 
     const permCheck = await requirePermission(session, Permissions.VEHICLE_VIEW);
     if (permCheck instanceof NextResponse) return permCheck;
 
-    const db = getDb();
     const { id } = await params;
+    if (!UUID_PATTERN.test(id)) {
+      return NextResponse.json({ error: 'Vehicle ID is invalid' }, { status: 400 });
+    }
+
+    const db = getDb();
     const roleNames = await getSessionRoleNames(session);
     const access = resolveDashboardAccess('/dashboard/fleet', roleNames);
 
@@ -91,8 +96,12 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
     const permCheck = await requirePermission(session, Permissions.VEHICLE_UPDATE);
     if (permCheck instanceof NextResponse) return permCheck;
 
-    const db = getDb();
     const { id } = await params;
+    if (!UUID_PATTERN.test(id)) {
+      return NextResponse.json({ error: 'Vehicle ID is invalid' }, { status: 400 });
+    }
+
+    const db = getDb();
 
     const [existing] = await db
       .select({
@@ -265,6 +274,9 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
       );
     }
 
+    if (body.categoryId && !UUID_PATTERN.test(String(body.categoryId))) {
+      return NextResponse.json({ error: 'Vehicle category not found in your tenant' }, { status: 422 });
+    }
     if (body.categoryId) {
       const [category] = await db
         .select({ id: vehicleCategories.id })
