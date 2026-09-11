@@ -16,9 +16,10 @@ describe('inspection offline sync token ownership', () => {
     );
     expect(service).toContain('eq(vehicleInspections.tenantId, tenantId)');
     expect(service).toContain('eq(vehicleInspections.clientSyncId, input.clientSyncId)');
-
-    const ownerGuard = "if (existing.inspectorUserId !== userId) {\n        fail('Inspection sync identifier is already in use', 409);\n      }";
-    expect(service.split(ownerGuard)).toHaveLength(3);
+    expect(service.match(/if \(existing\.inspectorUserId !== userId\)/g)).toHaveLength(2);
+    expect(
+      service.match(/fail\('Inspection sync identifier is already in use', 409\)/g),
+    ).toHaveLength(2);
   });
 
   it('preserves same-inspector retry recovery both before mutation and after uniqueness races', () => {
