@@ -15,11 +15,16 @@ import { tripAuthorities, trips, vehicleAllocations } from '@/db/schema/trips';
 import { externalDriverAssignments } from '@/db/schema/external-driver-assignments';
 import { transportRequests } from '@/db/schema/requests';
 import { requireDashboardAction, requireRequestAuth } from '@/lib/auth-helpers';
+import { DRIVER_REACCEPTANCE_AMENDMENT_TYPES } from '@/lib/trip-amendment-acceptance';
 
 const DEPARTURE_REQUEST_STATUSES = ['authorised', 'ready_for_issue', 'approved', 'approved_emergency'];
 const DEPARTURE_AUTHORITY_STATUSES = ['driver_accepted', 'awaiting_pre_trip_inspection'];
 const RETURN_TRIP_STATUSES = ['in_progress', 'return_due', 'return_inspection'];
 const RETURN_AUTHORITY_STATUSES = ['returned', 'awaiting_arrival_inspection'];
+const MATERIAL_AMENDMENT_TYPES_SQL = sql.join(
+  DRIVER_REACCEPTANCE_AMENDMENT_TYPES.map((type) => sql`${type}`),
+  sql`, `,
+);
 
 export async function GET(request: NextRequest) {
   try {
@@ -79,6 +84,14 @@ export async function GET(request: NextRequest) {
                 isNotNull(vehicleAllocations.driverEmployeeId),
                 isNotNull(externalDriverAssignments.id),
               ),
+              sql`not exists (
+                select 1
+                from trip_amendments ta
+                where ta.authority_id = ${tripAuthorities.id}
+                  and ta.status = 'approved'
+                  and ta.amendment_type in (${MATERIAL_AMENDMENT_TYPES_SQL})
+                  and coalesce(ta.approved_at, ta.created_at) > ${tripAuthorities.acceptedAt}
+              )`,
               sql`not exists (
                 select 1
                 from vehicle_defects vd
