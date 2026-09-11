@@ -36,9 +36,12 @@ function normalizeItems(items: unknown): Array<{
   }
   const labels = new Set<string>();
   return items.map((raw, index) => {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+      throw new InspectionTemplateError('Every checklist item requires a category and label', 422);
+    }
     const item = raw as TemplateItemInput;
-    const category = item.category?.trim();
-    const label = item.label?.trim();
+    const category = typeof item.category === 'string' ? item.category.trim() : '';
+    const label = typeof item.label === 'string' ? item.label.trim() : '';
     if (!category || !label) {
       throw new InspectionTemplateError('Every checklist item requires a category and label', 422);
     }
@@ -73,7 +76,7 @@ export async function createInspectionTemplateVersion(input: {
   items: unknown;
   sourceTemplateId?: string | null;
 }) {
-  const name = input.name?.trim();
+  const name = typeof input.name === 'string' ? input.name.trim() : '';
   if (!name) throw new InspectionTemplateError('Template name is required');
   if (!['departure', 'return'].includes(input.type)) {
     throw new InspectionTemplateError('Type must be departure or return');
