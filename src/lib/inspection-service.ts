@@ -93,6 +93,9 @@ export async function completeOfficialInspection(input: InspectionInput) {
       eq(vehicleInspections.clientSyncId, input.clientSyncId),
     )).limit(1);
     if (existing) {
+      if (existing.inspectorUserId !== userId) {
+        fail('Inspection sync identifier is already in use', 409);
+      }
       return {
         inspection: existing,
         trip: null,
@@ -477,6 +480,9 @@ export async function completeOfficialInspection(input: InspectionInput) {
         eq(vehicleInspections.clientSyncId, input.clientSyncId),
       )).limit(1);
       if (existing) {
+        if (existing.inspectorUserId !== userId) {
+          fail('Inspection sync identifier is already in use', 409);
+        }
         return {
           inspection: existing,
           trip: null,
