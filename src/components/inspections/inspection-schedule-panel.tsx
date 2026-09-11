@@ -7,12 +7,6 @@ import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import type { InspectionScheduleEvent } from '@/lib/inspection-schedule';
 
-function scheduleStatus(dueAt: string) {
-  return new Date(dueAt).getTime() < Date.now()
-    ? { label: 'Overdue', variant: 'error' as const }
-    : { label: 'Scheduled', variant: 'info' as const };
-}
-
 export function InspectionSchedulePanel({ events }: { events: InspectionScheduleEvent[] }) {
   const pathname = usePathname();
   if (pathname !== '/dashboard/inspections') return null;
@@ -43,7 +37,6 @@ export function InspectionSchedulePanel({ events }: { events: InspectionSchedule
         ) : (
           <div className="divide-y divide-border overflow-hidden rounded-[8px] border border-border">
             {events.map((event) => {
-              const status = scheduleStatus(event.dueAt);
               const href = event.tripId
                 ? `/dashboard/trips/${event.tripId}`
                 : `/dashboard/allocations/${event.allocationId}`;
@@ -58,7 +51,9 @@ export function InspectionSchedulePanel({ events }: { events: InspectionSchedule
                       <p className="text-sm font-semibold capitalize text-ink-950">
                         {event.type} inspection
                       </p>
-                      <Badge variant={status.variant} size="sm">{status.label}</Badge>
+                      <Badge variant={event.isOverdue ? 'error' : 'info'} size="sm">
+                        {event.isOverdue ? 'Overdue' : 'Scheduled'}
+                      </Badge>
                       {event.allocationState === 'provisional' && (
                         <Badge variant="pending" size="sm">Provisional allocation</Badge>
                       )}
