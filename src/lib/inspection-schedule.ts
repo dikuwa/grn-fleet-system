@@ -66,9 +66,13 @@ export async function getPendingInspectionSchedule(
   const tripIds = Array.from(
     new Set(allocationRows.flatMap((row) => (row.tripId ? [row.tripId] : []))),
   );
-  const completedRows = tripIds.length
+  const inspectionRows = tripIds.length
     ? await db
-        .select({ tripId: vehicleInspections.tripId, type: vehicleInspections.type })
+        .select({
+          tripId: vehicleInspections.tripId,
+          type: vehicleInspections.type,
+          overallPass: vehicleInspections.overallPass,
+        })
         .from(vehicleInspections)
         .where(
           and(
@@ -77,14 +81,24 @@ export async function getPendingInspectionSchedule(
           ),
         )
     : [];
-  const completed = new Set(
-    completedRows.flatMap((row) => (row.tripId ? [`${row.tripId}:${row.type}`] : [])),
+
+  // Departure work remains pending until a passing inspection exists. A failed
+  // departure leaves the authority awaiting pre-trip inspection and may require
+  // defect resolution followed by re-inspection. Return inspection, by contrast,
+  // is complete once performed because its lifecycle advances to closure review
+  // even when defects are recorded for maintenance follow-up.
+  const satisfied = new Set(
+    inspectionRows.flatMap((row) => {
+      if (!row.tripId) return [];
+      if (row.type === 'departure' && row.overallPass !== true) return [];
+      return [`${row.tripId}:${row.type}`];
+    }),
   );
 
   return allocationRows
     .flatMap<InspectionScheduleEvent>((row) => {
       const events: InspectionScheduleEvent[] = [];
-      if (!row.tripId || !completed.has(`${row.tripId}:departure`)) {
+      if (!row.tripId || !satisfied.has(`${row.tripId}:departure`)) {
         events.push({
           key: `${row.allocationId}:departure`,
           allocationId: row.allocationId,
@@ -100,7 +114,7 @@ export async function getPendingInspectionSchedule(
           model: row.model,
         });
       }
-      if (!row.tripId || !completed.has(`${row.tripId}:return`)) {
+      if (!row.tripId || !satisfied.has(`${row.tripId}:return`)) {
         events.push({
           key: `${row.allocationId}:return`,
           allocationId: row.allocationId,
