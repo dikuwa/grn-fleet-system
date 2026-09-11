@@ -35,8 +35,9 @@ describe('inspection schedule and date controls', () => {
     expect(panel).toContain('event.isOverdue');
   });
 
-  it('orders eligible departure and return work by the corresponding scheduled allocation time', () => {
+  it('orders eligible work and renders the corresponding departure or return due time', () => {
     const context = source('src/app/api/inspections/context/route.ts');
+    const form = source('src/app/(dashboard)/dashboard/inspections/new/page.tsx');
 
     expect(context).toContain(
       "asc(type === 'departure' ? vehicleAllocations.startAt : vehicleAllocations.endAt)",
@@ -47,5 +48,8 @@ describe('inspection schedule and date controls', () => {
     expect(context).toContain('eq(transportRequests.tenantId, session.tenantId)');
     expect(context).toContain('eq(vehicles.tenantId, session.tenantId)');
     expect(context).toContain('eq(tripAuthorities.tenantId, session.tenantId)');
+    expect(form).toContain('scheduledAt: string;');
+    expect(form).toContain('new Date(selectedTrip.scheduledAt)');
+    expect(form).not.toContain('new Date(selectedTrip.departureAt)');
   });
 });
