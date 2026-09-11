@@ -466,7 +466,7 @@ export async function POST(request: NextRequest) {
         workspace: notificationWorkspace,
         workflowStage: body.workflowStage || null,
         eventVersion,
-        dedupeKey: body.dedupeKey || null,
+        dedupeKey: null,
         status: type === 'action_required' ? 'action_required' : 'unread',
         mandatory: Boolean(body.mandatory || type === 'action_required'),
       })
