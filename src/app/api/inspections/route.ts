@@ -59,9 +59,8 @@ export async function POST(request: NextRequest) {
     const vehicleId = typeof body.vehicleId === 'string' ? body.vehicleId : '';
     const tripId = typeof body.tripId === 'string' ? body.tripId : '';
     if (
-      vehicleId &&
-      tripId &&
-      (!UUID_PATTERN.test(vehicleId) || !UUID_PATTERN.test(tripId))
+      (vehicleId && !UUID_PATTERN.test(vehicleId)) ||
+      (tripId && !UUID_PATTERN.test(tripId))
     ) {
       return NextResponse.json({ error: 'Trip or vehicle not found' }, { status: 404 });
     }
