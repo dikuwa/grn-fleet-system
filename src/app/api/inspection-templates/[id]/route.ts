@@ -87,6 +87,12 @@ export async function PUT(
       return NextResponse.json({ error: 'Invalid inspection template payload' }, { status: 422 });
     }
     const body = payload as Record<string, unknown>;
+    if (
+      (body.name !== undefined && typeof body.name !== 'string') ||
+      (body.items !== undefined && !Array.isArray(body.items))
+    ) {
+      return NextResponse.json({ error: 'Invalid inspection template payload' }, { status: 422 });
+    }
 
     const template = await createInspectionTemplateVersion({
       tenantId: auth.session.tenantId,
