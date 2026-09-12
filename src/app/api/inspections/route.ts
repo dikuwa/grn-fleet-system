@@ -56,6 +56,14 @@ function hasMalformedSubmissionFields(body: Record<string, unknown>) {
   }
 
   if (
+    body.fuelLevel !== undefined &&
+    body.fuelLevel !== null &&
+    typeof body.fuelLevel !== 'string'
+  ) {
+    return true;
+  }
+
+  if (
     body.clientSyncId !== undefined &&
     body.clientSyncId !== null &&
     typeof body.clientSyncId !== 'string'
