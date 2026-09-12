@@ -22,6 +22,19 @@ describe('inspection offline sync token ownership', () => {
     ).toHaveLength(2);
   });
 
+  it('binds a same-inspector sync token to the original vehicle, trip, and inspection type', () => {
+    const service = source('src/lib/inspection-service.ts');
+
+    expect(service.match(/existing\.vehicleId !== input\.vehicleId/g)).toHaveLength(2);
+    expect(service.match(/existing\.tripId !== input\.tripId/g)).toHaveLength(2);
+    expect(service.match(/existing\.type !== input\.type/g)).toHaveLength(2);
+    expect(
+      service.match(
+        /fail\('Inspection sync identifier is already bound to another inspection', 409\)/g,
+      ),
+    ).toHaveLength(2);
+  });
+
   it('preserves same-inspector retry recovery both before mutation and after uniqueness races', () => {
     const service = source('src/lib/inspection-service.ts');
     const firstLookup = service.indexOf('if (input.clientSyncId) {');
