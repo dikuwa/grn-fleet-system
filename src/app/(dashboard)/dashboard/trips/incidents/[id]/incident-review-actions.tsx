@@ -23,6 +23,7 @@ type IncidentReviewState = {
 
 type ConfirmedAction =
   | 'technical_clearance'
+  | 'technical_not_cleared'
   | 'return_vehicle_to_service'
   | 'close_investigation';
 
@@ -35,6 +36,12 @@ const CONFIRMATION_COPY: Record<
     description:
       'Confirm that the vehicle has been inspected and all blocking defects are resolved. Granted clearance is final for this safety review.',
     confirmLabel: 'Grant clearance',
+  },
+  technical_not_cleared: {
+    title: 'Mark vehicle as not cleared?',
+    description:
+      'Record that the latest technical inspection did not clear the vehicle. The safety hold remains in place until defects are resolved and clearance is issued after re-inspection.',
+    confirmLabel: 'Not cleared',
   },
   return_vehicle_to_service: {
     title: 'Return vehicle to service?',
@@ -112,6 +119,36 @@ export function IncidentReviewActions({
     }
   }
 
+  async function submitTechnicalClearance(status: 'cleared' | 'not_cleared') {
+    setWorking(status === 'cleared' ? 'technical_clearance' : 'technical_not_cleared');
+    try {
+      const response = await fetch(`/api/incidents/${incidentId}/technical-clearance`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status }),
+      });
+      const json = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(json.error || 'The technical-clearance decision could not be saved.');
+      toast({
+        title: status === 'cleared' ? 'Technical clearance granted' : 'Vehicle not cleared',
+        description:
+          status === 'cleared'
+            ? 'The final technical-clearance decision and audit trail were recorded.'
+            : 'The failed re-inspection was recorded and the vehicle remains under the safety hold.',
+        variant: status === 'cleared' ? 'success' : 'error',
+      });
+      router.refresh();
+    } catch (error) {
+      toast({
+        title: 'Clearance update failed',
+        description: error instanceof Error ? error.message : 'Please try again.',
+        variant: 'error',
+      });
+    } finally {
+      setWorking(null);
+    }
+  }
+
   async function closeInvestigation() {
     setWorking('close_investigation');
     try {
@@ -148,6 +185,10 @@ export function IncidentReviewActions({
     const action = pendingConfirmedAction;
     if (action === 'close_investigation') {
       await closeInvestigation();
+      return;
+    }
+    if (action === 'technical_clearance' || action === 'technical_not_cleared') {
+      await submitTechnicalClearance(action === 'technical_clearance' ? 'cleared' : 'not_cleared');
       return;
     }
     await submitReview(action);
@@ -218,11 +259,18 @@ export function IncidentReviewActions({
           <CardHeader><CardTitle>Clearance & closure</CardTitle></CardHeader>
           <CardContent className="space-y-3">
             <p className="text-ink-500 text-xs leading-5">
-              Technical clearance is blocked while any blocking vehicle defect remains unresolved. Returning the vehicle to service is separately blocked while an active trip or another unresolved vehicle-safety incident still restricts the vehicle.
+              Technical clearance is blocked while any blocking vehicle defect remains unresolved. A failed re-inspection can be recorded as Not cleared and keeps the safety hold active. Returning the vehicle to service is separately blocked while an active trip or another unresolved vehicle-safety incident still restricts the vehicle.
             </p>
             <div className="flex flex-wrap gap-2">
               {canGrantTechnicalClearance && initial.technicalClearanceStatus !== 'cleared' && (
-                <Button variant="secondary" loading={working === 'technical_clearance'} onClick={() => setPendingConfirmedAction('technical_clearance')}>Grant technical clearance</Button>
+                <>
+                  <Button variant="secondary" loading={working === 'technical_clearance'} onClick={() => setPendingConfirmedAction('technical_clearance')}>
+                    {initial.technicalClearanceStatus === 'not_cleared' ? 'Issue clearance after re-inspection' : 'Grant technical clearance'}
+                  </Button>
+                  {initial.technicalClearanceStatus !== 'not_cleared' && (
+                    <Button variant="destructive" loading={working === 'technical_not_cleared'} onClick={() => setPendingConfirmedAction('technical_not_cleared')}>Not cleared</Button>
+                  )}
+                </>
               )}
               {canReturnVehicleToService && initial.technicalClearanceStatus === 'cleared' && vehicleStatus !== 'available' && (
                 <Button loading={working === 'return_vehicle_to_service'} onClick={() => setPendingConfirmedAction('return_vehicle_to_service')}>Return vehicle to service</Button>
@@ -255,6 +303,7 @@ export function IncidentReviewActions({
           title={confirmation.title}
           description={confirmation.description}
           confirmLabel={confirmation.confirmLabel}
+          variant={pendingConfirmedAction === 'technical_not_cleared' ? 'destructive' : 'default'}
           onConfirm={confirmPendingAction}
         />
       ) : null}
