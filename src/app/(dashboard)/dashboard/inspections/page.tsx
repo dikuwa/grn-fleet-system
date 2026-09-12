@@ -89,6 +89,7 @@ async function fetchInspections(
     db
       .select({ count: sql<number>`count(*)` })
       .from(vehicleInspections)
+      .leftJoin(vehicles, eq(vehicleInspections.vehicleId, vehicles.id))
       .where(where),
     db
       .select({
