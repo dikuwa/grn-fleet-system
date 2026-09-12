@@ -131,6 +131,7 @@ export async function completeOfficialInspection(input: InspectionInput) {
     id: trips.id,
     status: trips.status,
     vehicleId: trips.vehicleId,
+    allocationId: trips.allocationId,
     requestStatus: transportRequests.status,
     driverEmployeeId: vehicleAllocations.driverEmployeeId,
     authorityId: tripAuthorities.id,
@@ -181,6 +182,7 @@ export async function completeOfficialInspection(input: InspectionInput) {
           and(
             eq(externalDriverAssignments.tenantId, tenantId),
             eq(externalDriverAssignments.tripId, input.tripId),
+            eq(externalDriverAssignments.allocationId, trip.allocationId),
             eq(externalDriverAssignments.state, 'accepted'),
           ),
         )
