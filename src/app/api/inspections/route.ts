@@ -25,6 +25,47 @@ import { SystemRoles, WorkspaceIds } from '@/lib/workspaces';
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function hasMalformedSubmissionFields(body: Record<string, unknown>) {
+  if (body.checklist !== undefined) {
+    if (!Array.isArray(body.checklist)) return true;
+    if (
+      body.checklist.some(
+        (item) =>
+          !isRecord(item) ||
+          (item.label !== undefined && typeof item.label !== 'string') ||
+          (item.result !== undefined && typeof item.result !== 'string') ||
+          (item.comment !== undefined && item.comment !== null && typeof item.comment !== 'string'),
+      )
+    ) {
+      return true;
+    }
+  }
+
+  if (body.photoKeys !== undefined) {
+    if (!Array.isArray(body.photoKeys) || body.photoKeys.some((key) => typeof key !== 'string')) {
+      return true;
+    }
+  }
+
+  if (body.notes !== undefined && body.notes !== null && typeof body.notes !== 'string') {
+    return true;
+  }
+
+  if (
+    body.clientSyncId !== undefined &&
+    body.clientSyncId !== null &&
+    typeof body.clientSyncId !== 'string'
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 export async function POST(request: NextRequest) {
   try {
     const auth = await requireRequestAuth(request);
@@ -41,10 +82,14 @@ export async function POST(request: NextRequest) {
     const permissionCheck = await requirePermission(session, Permissions.INSPECTION_PERFORM);
     if (permissionCheck instanceof NextResponse) return permissionCheck;
 
-    const body = await request.json();
+    const payload: unknown = await request.json();
+    if (!isRecord(payload) || hasMalformedSubmissionFields(payload)) {
+      return NextResponse.json({ error: 'Invalid inspection submission payload' }, { status: 422 });
+    }
+    const body = payload;
     const checklist = Array.isArray(body.checklist) ? body.checklist : [];
     const assessedItems = checklist.filter(
-      (item: { result?: unknown }) => item?.result === 'pass' || item?.result === 'fail',
+      (item) => item?.result === 'pass' || item?.result === 'fail',
     );
     if (checklist.length > 0 && assessedItems.length === 0) {
       return NextResponse.json(
@@ -106,11 +151,15 @@ export async function POST(request: NextRequest) {
       userId: session.user.id,
       vehicleId,
       tripId,
-      type: body.type,
+      type: body.type as 'departure' | 'return',
       odometerReading: Number(body.odometerReading),
-      fuelLevel: body.fuelLevel,
-      checklist,
-      notes: body.notes,
+      fuelLevel: typeof body.fuelLevel === 'string' ? body.fuelLevel : null,
+      checklist: checklist.map((item) => ({
+        label: typeof item.label === 'string' ? item.label : undefined,
+        result: typeof item.result === 'string' ? item.result : undefined,
+        comment: typeof item.comment === 'string' || item.comment === null ? item.comment : undefined,
+      })),
+      notes: typeof body.notes === 'string' || body.notes === null ? body.notes : undefined,
       photoKeys: Array.isArray(body.photoKeys) ? body.photoKeys : [],
       inspectorAcknowledged: body.inspectorAcknowledged === true,
       driverAcknowledged: body.driverAcknowledged === true,
