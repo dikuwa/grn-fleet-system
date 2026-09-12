@@ -10,6 +10,7 @@ import { Permissions } from '@/lib/permissions';
 import { vehicleScopeCondition } from '@/lib/record-scope';
 import { getDatabaseErrorDetails } from '@/lib/database-error-details';
 import { refreshIncidentOperationalDocuments } from '@/lib/incidents/document-refresh';
+import { updateInvestigation } from '@/lib/incidents/mva';
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const investigationStatuses = new Set([
@@ -36,7 +37,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
           ? [Permissions.INCIDENT_TECHNICAL_CLEARANCE, Permissions.MAINTENANCE_MANAGE]
           : action === 'close_investigation'
             ? [Permissions.INCIDENT_CLOSE_INVESTIGATION]
-            : [Permissions.INCIDENT_INVESTIGATE, Permissions.TRIP_INCIDENT_MANAGE];
+            : [Permissions.INCIDENT_INVESTIGATE];
     const permission = await requireAnyPermission(auth.session, requiredPermissions);
     if (permission instanceof NextResponse) return permission;
 
@@ -312,80 +313,41 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
         return NextResponse.json({ success: true, alreadyClosed: true });
       }
 
-      const requiresTechnicalClearance =
-        context.incident.vehicleDamage ||
-        context.incident.vehicleSafe === false ||
-        context.incident.severity === 'critical';
-      if (requiresTechnicalClearance && context.incident.technicalClearanceStatus !== 'cleared') {
+      const notes = typeof body.investigationNotes === 'string'
+        ? body.investigationNotes.trim()
+        : context.incident.investigationNotes?.trim() || '';
+      if (!notes) {
         return NextResponse.json(
-          { error: 'Vehicle-safety incidents require technical clearance before investigation closure.' },
-          { status: 409 },
+          { error: 'Investigation notes are required before closing.' },
+          { status: 422 },
         );
       }
 
-      await db.execute(sql`
-        WITH incident_claim AS (
-          UPDATE trip_incidents ti
-          SET investigation_status = 'closed',
-              investigation_closed_at = ${now},
-              status = 'resolved',
-              details_required = false,
-              updated_at = ${now}
-          WHERE ti.id = ${id}::uuid
-            AND ti.tenant_id = ${auth.session.tenantId}::uuid
-            AND ti.investigation_status <> 'closed'
-            AND ti.status <> 'resolved'
-            AND (
-              NOT (
-                ti.vehicle_damage = true
-                OR ti.vehicle_safe = false
-                OR ti.severity = 'critical'
-              )
-              OR ti.technical_clearance_status = 'cleared'
-            )
-          RETURNING id
-        ),
-        audit_insert AS (
-          INSERT INTO audit_events (
-            tenant_id, tenant_sequence, event_type, actor_user_id,
-            action, entity_type, entity_id, summary, after, source_channel
-          )
-          SELECT
-            ${auth.session.tenantId}::uuid,
-            ${Date.now()},
-            'incident_investigation_closed',
-            ${auth.session.user.id},
-            'incident.investigation.close',
-            'trip_incident',
-            ${id}::uuid,
-            ${`${context.incident.officialNumber || id}: investigation closed`},
-            jsonb_build_object('investigationStatus', 'closed', 'status', 'resolved'),
-            'web'
-          FROM incident_claim
-          RETURNING id
-        )
-        SELECT CAST(CASE
-          WHEN (SELECT count(*) FROM incident_claim) = 1
-           AND (SELECT count(*) FROM audit_insert) = 1
-          THEN '1'
-          WHEN EXISTS (
-            SELECT 1
-            FROM trip_incidents ti
-            WHERE ti.id = ${id}::uuid
-              AND ti.tenant_id = ${auth.session.tenantId}::uuid
-              AND (ti.investigation_status = 'closed' OR ti.status = 'resolved')
-          )
-          THEN '1'
-          ELSE 'incident_investigation_close_conflict'
-        END AS integer) AS committed
-      `);
+      const result = await updateInvestigation(
+        auth.session.tenantId,
+        id,
+        auth.session.user.id,
+        { status: 'closed', notes },
+      );
+      if (!result.ok) {
+        if (result.error === 'technical_clearance_required') {
+          return NextResponse.json(
+            { error: 'Vehicle-safety incidents require technical clearance before investigation closure.' },
+            { status: 409 },
+          );
+        }
+        if (
+          result.error === 'investigation_already_closed' ||
+          result.error === 'investigation_update_conflict'
+        ) {
+          return NextResponse.json(
+            { error: 'The incident safety or investigation state changed while closure was being recorded. Refresh the incident and resolve the latest blockers.' },
+            { status: 409 },
+          );
+        }
+        return NextResponse.json({ error: result.error }, { status: 400 });
+      }
 
-      await refreshIncidentOperationalDocuments({
-        tenantId: auth.session.tenantId,
-        incidentId: id,
-        tripId: context.incident.tripId,
-        actorUserId: auth.session.user.id,
-      });
       return NextResponse.json({ success: true, alreadyClosed: false });
     }
 

@@ -71,7 +71,7 @@ export default async function MvaReviewPage({ params }: { params: Promise<{ id: 
       .orderBy(desc(vehicleDefects.createdAt)),
   ]);
 
-  const canInvestigate = permissions.includes(Permissions.INCIDENT_INVESTIGATE) || permissions.includes(Permissions.TRIP_INCIDENT_MANAGE);
+  const canInvestigate = permissions.includes(Permissions.INCIDENT_INVESTIGATE);
   const canInsurance = permissions.includes(Permissions.INCIDENT_INSURANCE_UPDATE);
   const canGrantTechnicalClearance = permissions.includes(Permissions.INCIDENT_TECHNICAL_CLEARANCE);
   const canReturnVehicleToService = canGrantTechnicalClearance || permissions.includes(Permissions.MAINTENANCE_MANAGE);
