@@ -1,10 +1,19 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { and, eq, or } from 'drizzle-orm';
+import { and, eq, or, sql } from 'drizzle-orm';
 import { getDb } from '@/db';
+import { inspectionPhotos, vehicleInspections } from '@/db/schema/trips';
 import { requestAttachments, transportRequests } from '@/db/schema/requests';
-import { getSessionWorkspace, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import {
+  getSessionRoleNames,
+  getSessionWorkspace,
+  requireDashboardAction,
+  requireRequestAuth,
+  requirePermission,
+} from '@/lib/auth-helpers';
+import { resolveDashboardAccess } from '@/lib/dashboard-access';
 import { canTenantAdminUseGenericFileKey } from '@/lib/file-access-policy';
 import { Permissions } from '@/lib/permissions';
+import { inspectionScopeCondition } from '@/lib/record-scope';
 import { WorkspaceIds } from '@/lib/workspaces';
 import { isStorageConfigured } from '@/lib/storage';
 
@@ -81,9 +90,10 @@ export async function GET(request: NextRequest) {
       }
     }
 
+    const tenantRelativeKey = key.slice(expectedPrefix.length);
     if (
       workspace.activeWorkspace === WorkspaceIds.TENANT_ADMIN &&
-      !canTenantAdminUseGenericFileKey(key.slice(expectedPrefix.length))
+      !canTenantAdminUseGenericFileKey(tenantRelativeKey)
     ) {
       return NextResponse.json(
         {
@@ -92,6 +102,59 @@ export async function GET(request: NextRequest) {
         },
         { status: 403 },
       );
+    }
+
+    if (tenantRelativeKey.startsWith('inspections/')) {
+      const db = getDb();
+      const rawPreviewAccess = (await db.execute(sql`
+        SELECT 1
+        FROM inspection_evidence_uploads ieu
+        WHERE ieu.tenant_id = ${session.tenantId}::uuid
+          AND ieu.file_key = ${key}
+          AND ieu.uploaded_by_user_id = ${session.user.id}
+          AND ieu.claimed_inspection_id IS NULL
+        LIMIT 1
+      `)) as unknown as { rows?: unknown[] } | unknown[];
+      const canPreviewUnclaimedUpload = Array.isArray(rawPreviewAccess)
+        ? rawPreviewAccess.length > 0
+        : Array.isArray(rawPreviewAccess.rows) && rawPreviewAccess.rows.length > 0;
+
+      if (!canPreviewUnclaimedUpload) {
+        const inspectionRouteCheck = await requireDashboardAction(
+          session,
+          '/dashboard/inspections',
+          'view',
+        );
+        if (inspectionRouteCheck instanceof NextResponse) return inspectionRouteCheck;
+
+        const inspectionPermCheck = await requirePermission(session, Permissions.INSPECTION_VIEW);
+        if (inspectionPermCheck instanceof NextResponse) return inspectionPermCheck;
+
+        const roleNames = await getSessionRoleNames(session);
+        const access = resolveDashboardAccess('/dashboard/inspections', roleNames);
+        const [photo] = await db
+          .select({ id: inspectionPhotos.id })
+          .from(inspectionPhotos)
+          .innerJoin(vehicleInspections, eq(inspectionPhotos.inspectionId, vehicleInspections.id))
+          .where(
+            and(
+              eq(inspectionPhotos.fileKey, key),
+              inspectionScopeCondition({
+                tenantId: session.tenantId,
+                userId: session.user.id,
+                recordScope: access.recordScope ?? 'assigned',
+              }),
+            ),
+          )
+          .limit(1);
+
+        if (!photo) {
+          return NextResponse.json(
+            { error: 'Access denied: this file is not available in your inspection scope.' },
+            { status: 403 },
+          );
+        }
+      }
     }
 
     const { getSignedFileUrl, downloadFile } = await import('@/lib/storage');
