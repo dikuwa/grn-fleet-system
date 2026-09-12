@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { tripAuthorities, trips, vehicleAllocations, vehicleInspections } from '@/db/schema/trips';
+import { externalDriverAssignments } from '@/db/schema/external-driver-assignments';
 import {
   requireDashboardAction,
   requirePermission,
@@ -148,7 +149,11 @@ export async function POST(request: NextRequest) {
     if (!hasExistingSyncInspection && tripId && vehicleId) {
       const db = getDb();
       const [allocation] = await db
-        .select({ state: vehicleAllocations.state })
+        .select({
+          id: vehicleAllocations.id,
+          state: vehicleAllocations.state,
+          driverEmployeeId: vehicleAllocations.driverEmployeeId,
+        })
         .from(trips)
         .innerJoin(
           vehicleAllocations,
@@ -175,6 +180,33 @@ export async function POST(request: NextRequest) {
           { error: 'Inspection requires the trip current vehicle allocation to be confirmed.' },
           { status: 409 },
         );
+      }
+
+      if (!allocation.driverEmployeeId) {
+        const [externalDriver] = await db
+          .select({ issueId: externalDriverAssignments.issueId })
+          .from(externalDriverAssignments)
+          .where(
+            and(
+              eq(externalDriverAssignments.tenantId, session.tenantId),
+              eq(externalDriverAssignments.tripId, tripId),
+              eq(externalDriverAssignments.allocationId, allocation.id),
+              eq(externalDriverAssignments.state, 'accepted'),
+            ),
+          )
+          .limit(1);
+        if (!externalDriver) {
+          return NextResponse.json(
+            { error: 'A valid internal or accepted external driver must be assigned before inspection' },
+            { status: 409 },
+          );
+        }
+        if (body.type === 'return' && !externalDriver.issueId) {
+          return NextResponse.json(
+            { error: 'External-driver return inspection requires a completed physical vehicle issue record' },
+            { status: 409 },
+          );
+        }
       }
     }
 
