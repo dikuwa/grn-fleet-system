@@ -90,7 +90,12 @@ export async function POST(request: NextRequest) {
     const permissionCheck = await requirePermission(session, Permissions.INSPECTION_PERFORM);
     if (permissionCheck instanceof NextResponse) return permissionCheck;
 
-    const payload: unknown = await request.json();
+    let payload: unknown;
+    try {
+      payload = await request.json();
+    } catch {
+      return NextResponse.json({ error: 'Invalid inspection submission payload' }, { status: 422 });
+    }
     if (!isRecord(payload) || hasMalformedSubmissionFields(payload)) {
       return NextResponse.json({ error: 'Invalid inspection submission payload' }, { status: 422 });
     }
