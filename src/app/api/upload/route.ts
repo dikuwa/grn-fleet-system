@@ -41,7 +41,11 @@ export async function POST(request: NextRequest) {
     const file = formData.get('file') as File | null;
     const category = (formData.get('category') as UploadCategory) || 'document';
     const requestedPublic = formData.get('public') === 'true';
-    const clientSha256 = ((formData.get('sha256') as string | null) || '').trim().toLowerCase() || null;
+    const rawClientSha256 = formData.get('sha256');
+    if (rawClientSha256 !== null && typeof rawClientSha256 !== 'string') {
+      return NextResponse.json({ error: 'SHA-256 must be provided as text.' }, { status: 400 });
+    }
+    const clientSha256 = rawClientSha256?.trim().toLowerCase() || null;
 
     if (!file) {
       return NextResponse.json({ error: 'No file provided. Use field name "file".' }, { status: 400 });
