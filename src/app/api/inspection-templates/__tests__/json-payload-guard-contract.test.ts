@@ -28,7 +28,7 @@ describe('inspection template JSON payload guards', () => {
     expect(collectionRoute).toContain('{ status: 422 }');
   });
 
-  it('guards version payload parsing after tenant-scoped template lookup', () => {
+  it('guards version payload parsing and explicitly malformed partial fields after tenant lookup', () => {
     const lookupIndex = itemRoute.indexOf(
       'const existing = await loadInspectionTemplate(auth.session.tenantId, id);',
     );
@@ -36,12 +36,17 @@ describe('inspection template JSON payload guards', () => {
     const shapeGuardIndex = itemRoute.indexOf(
       "if (!payload || typeof payload !== 'object' || Array.isArray(payload))",
     );
+    const fieldGuardIndex = itemRoute.indexOf(
+      "body.name !== undefined && typeof body.name !== 'string'",
+    );
     const createIndex = itemRoute.indexOf('const template = await createInspectionTemplateVersion({');
 
     expect(lookupIndex).toBeGreaterThan(-1);
     expect(parseIndex).toBeGreaterThan(lookupIndex);
     expect(shapeGuardIndex).toBeGreaterThan(parseIndex);
-    expect(createIndex).toBeGreaterThan(shapeGuardIndex);
+    expect(fieldGuardIndex).toBeGreaterThan(shapeGuardIndex);
+    expect(createIndex).toBeGreaterThan(fieldGuardIndex);
+    expect(itemRoute).toContain("body.items !== undefined && !Array.isArray(body.items)");
     expect(itemRoute).toContain("{ error: 'Invalid inspection template payload' }");
     expect(itemRoute).toContain('{ status: 422 }');
   });
