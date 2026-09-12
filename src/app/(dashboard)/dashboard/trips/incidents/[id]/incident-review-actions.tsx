@@ -45,7 +45,7 @@ const CONFIRMATION_COPY: Record<
   close_investigation: {
     title: 'Close investigation?',
     description:
-      'This is a final investigation decision. Investigation notes are required, and vehicle-safety incidents must already have technical clearance.',
+      'This is a final investigation decision. Pending investigation and police follow-up edits will be saved first. Investigation notes are required, and vehicle-safety incidents must already have technical clearance.',
     confirmLabel: 'Close investigation',
   },
 };
@@ -115,6 +115,24 @@ export function IncidentReviewActions({
   async function closeInvestigation() {
     setWorking('close_investigation');
     try {
+      // The close action lives beside editable investigation/police fields. Persist
+      // those pending edits first so final closure cannot silently discard evidence
+      // that the reviewer changed immediately before confirming the decision.
+      if (canInvestigate) {
+        const saveResponse = await fetch(`/api/incidents/${incidentId}/review`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ action: 'investigation_update', ...form }),
+        });
+        const saveJson = await saveResponse.json().catch(() => ({}));
+        if (!saveResponse.ok) {
+          throw new Error(
+            saveJson.error ||
+              'The investigation changed while the pending review edits were being saved. Refresh before closing it.',
+          );
+        }
+      }
+
       const response = await fetch(`/api/incidents/${incidentId}/investigation`, {
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
@@ -156,10 +174,12 @@ export function IncidentReviewActions({
   const confirmation = pendingConfirmedAction
     ? CONFIRMATION_COPY[pendingConfirmedAction]
     : null;
+  const showReadOnlyInvestigation =
+    initial.investigationClosedAt != null || (!canInvestigate && canClose);
 
   return (
     <div className="space-y-4">
-      {canInvestigate && (
+      {canInvestigate && initial.investigationClosedAt == null && (
         <Card>
           <CardHeader><CardTitle>Investigation & police follow-up</CardTitle></CardHeader>
           <CardContent className="space-y-4">
@@ -192,6 +212,36 @@ export function IncidentReviewActions({
               <Textarea id="administrator-response" rows={3} value={form.administratorResponse} onChange={(event) => setForm((value) => ({ ...value, administratorResponse: event.target.value }))} placeholder="Recovery, replacement vehicle, route decision or operational instruction…" />
             </div>
             <Button loading={working === 'investigation_update'} onClick={() => void submitReview('investigation_update')}>Save investigation</Button>
+          </CardContent>
+        </Card>
+      )}
+
+      {showReadOnlyInvestigation && (
+        <Card>
+          <CardHeader><CardTitle>Investigation evidence</CardTitle></CardHeader>
+          <CardContent>
+            <dl className="grid gap-4 text-sm sm:grid-cols-2">
+              <div>
+                <dt className="text-ink-500 text-xs">Investigation status</dt>
+                <dd className="text-ink-950 mt-0.5 capitalize">{initial.investigationStatus.replaceAll('_', ' ')}</dd>
+              </div>
+              <div>
+                <dt className="text-ink-500 text-xs">Police report</dt>
+                <dd className="text-ink-950 mt-0.5">{initial.policeReportFiled ? 'Filed / confirmed' : 'Not confirmed'}</dd>
+              </div>
+              <div className="sm:col-span-2">
+                <dt className="text-ink-500 text-xs">Police reference</dt>
+                <dd className="text-ink-950 mt-0.5">{initial.policeReference || 'Not recorded'}</dd>
+              </div>
+              <div className="sm:col-span-2">
+                <dt className="text-ink-500 text-xs">Investigation notes</dt>
+                <dd className="text-ink-950 mt-0.5 whitespace-pre-wrap">{initial.investigationNotes || 'Not recorded'}</dd>
+              </div>
+              <div className="sm:col-span-2">
+                <dt className="text-ink-500 text-xs">Operational response</dt>
+                <dd className="text-ink-950 mt-0.5 whitespace-pre-wrap">{initial.administratorResponse || 'Not recorded'}</dd>
+              </div>
+            </dl>
           </CardContent>
         </Card>
       )}
