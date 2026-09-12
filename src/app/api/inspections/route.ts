@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
-import { tripAuthorities, trips } from '@/db/schema/trips';
+import { tripAuthorities, trips, vehicleAllocations } from '@/db/schema/trips';
 import {
   requireDashboardAction,
   requirePermission,
@@ -121,6 +121,39 @@ export async function POST(request: NextRequest) {
       (tripId && !UUID_PATTERN.test(tripId))
     ) {
       return NextResponse.json({ error: 'Trip or vehicle not found' }, { status: 404 });
+    }
+
+    if (tripId && vehicleId) {
+      const db = getDb();
+      const [allocation] = await db
+        .select({ state: vehicleAllocations.state })
+        .from(trips)
+        .innerJoin(
+          vehicleAllocations,
+          and(
+            eq(vehicleAllocations.id, trips.allocationId),
+            eq(vehicleAllocations.requestId, trips.requestId),
+            eq(vehicleAllocations.vehicleId, trips.vehicleId),
+          ),
+        )
+        .where(
+          and(
+            eq(trips.id, tripId),
+            eq(trips.vehicleId, vehicleId),
+            eq(trips.tenantId, session.tenantId),
+          ),
+        )
+        .limit(1);
+
+      if (!allocation) {
+        return NextResponse.json({ error: 'Trip or vehicle not found' }, { status: 404 });
+      }
+      if (allocation.state !== 'confirmed') {
+        return NextResponse.json(
+          { error: 'Inspection requires the trip current vehicle allocation to be confirmed.' },
+          { status: 409 },
+        );
+      }
     }
 
     // Any driver-material authority amendment invalidates the previous
