@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { sql } from 'drizzle-orm';
 import { getDb } from '@/db';
 import { getSessionWorkspace, requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
+import { canTenantAdminUseGenericFileKey } from '@/lib/file-access-policy';
 import { Permissions } from '@/lib/permissions';
 import { WorkspaceIds } from '@/lib/workspaces';
 import {
@@ -259,11 +260,27 @@ export async function GET(request: NextRequest) {
     if (category && !CATEGORY_PATHS[category as UploadCategory]) {
       return NextResponse.json({ error: 'Invalid file category.' }, { status: 400 });
     }
-    const prefix = `tenant/${session.tenantId}/${category ? CATEGORY_PATHS[category as UploadCategory] + '/' : ''}`;
 
+    if (
+      workspace.activeWorkspace === WorkspaceIds.TENANT_ADMIN &&
+      category &&
+      !canTenantAdminUseGenericFileKey(`${CATEGORY_PATHS[category as UploadCategory]}/`)
+    ) {
+      return NextResponse.json(
+        { error: 'Transport Operations evidence is not available in Tenant Administration.' },
+        { status: 403 },
+      );
+    }
+
+    const tenantPrefix = `tenant/${session.tenantId}/`;
+    const prefix = `${tenantPrefix}${category ? CATEGORY_PATHS[category as UploadCategory] + '/' : ''}`;
     const files = await listFiles(prefix);
+    const visibleFiles =
+      workspace.activeWorkspace === WorkspaceIds.TENANT_ADMIN
+        ? files.filter((file) => canTenantAdminUseGenericFileKey(file.key.slice(tenantPrefix.length)))
+        : files;
 
-    return NextResponse.json({ success: true, data: files });
+    return NextResponse.json({ success: true, data: visibleFiles });
   } catch (error) {
     console.error('[Upload:GET] Failed:', error);
     return NextResponse.json({ error: 'Failed to list tenant files.' }, { status: 500 });
