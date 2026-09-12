@@ -77,7 +77,23 @@ export async function PUT(
     const existing = await loadInspectionTemplate(auth.session.tenantId, id);
     if (!existing) return NextResponse.json({ error: 'Template not found' }, { status: 404 });
 
-    const body = await request.json();
+    let payload: unknown;
+    try {
+      payload = await request.json();
+    } catch {
+      return NextResponse.json({ error: 'Invalid inspection template payload' }, { status: 422 });
+    }
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      return NextResponse.json({ error: 'Invalid inspection template payload' }, { status: 422 });
+    }
+    const body = payload as Record<string, unknown>;
+    if (
+      (body.name !== undefined && typeof body.name !== 'string') ||
+      (body.items !== undefined && !Array.isArray(body.items))
+    ) {
+      return NextResponse.json({ error: 'Invalid inspection template payload' }, { status: 422 });
+    }
+
     const template = await createInspectionTemplateVersion({
       tenantId: auth.session.tenantId,
       userId: auth.session.user.id,
