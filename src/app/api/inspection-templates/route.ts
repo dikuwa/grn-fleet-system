@@ -48,12 +48,23 @@ export async function POST(request: NextRequest) {
   try {
     const auth = await requireTemplateManager(request, 'create');
     if (!auth.ok) return auth.error;
-    const body = await request.json();
+
+    let payload: unknown;
+    try {
+      payload = await request.json();
+    } catch {
+      return NextResponse.json({ error: 'Invalid inspection template payload' }, { status: 422 });
+    }
+    if (!payload || typeof payload !== 'object' || Array.isArray(payload)) {
+      return NextResponse.json({ error: 'Invalid inspection template payload' }, { status: 422 });
+    }
+    const body = payload as Record<string, unknown>;
+
     const template = await createInspectionTemplateVersion({
       tenantId: auth.session.tenantId,
       userId: auth.session.user.id,
-      name: body.name,
-      type: body.type,
+      name: typeof body.name === 'string' ? body.name : '',
+      type: typeof body.type === 'string' ? body.type : '',
       items: body.items,
     });
     return NextResponse.json({ template }, { status: 201 });
