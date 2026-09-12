@@ -233,6 +233,13 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
           ELSE 'incident_insurance_update_conflict'
         END AS integer) AS committed
       `);
+
+      await refreshIncidentOperationalDocuments({
+        tenantId: auth.session.tenantId,
+        incidentId: id,
+        tripId: context.incident.tripId,
+        actorUserId: auth.session.user.id,
+      });
       return NextResponse.json({ success: true });
     }
 
@@ -304,6 +311,13 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
           ELSE 'incident_technical_clearance_blocked'
         END AS integer) AS committed
       `);
+
+      await refreshIncidentOperationalDocuments({
+        tenantId: auth.session.tenantId,
+        incidentId: id,
+        tripId: context.incident.tripId,
+        actorUserId: auth.session.user.id,
+      });
       return NextResponse.json({ success: true, alreadyCleared: false });
     }
 
