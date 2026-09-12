@@ -19,6 +19,10 @@ import { findPendingAuthorityAmendmentAcceptance } from '@/lib/trip-amendment-ac
 const VALID_TYPES = ['departure', 'return'] as const;
 type InspectionType = (typeof VALID_TYPES)[number];
 
+function externalAssignmentKey(tripId: string, allocationId: string) {
+  return `${tripId}:${allocationId}`;
+}
+
 /**
  * Inspector-specific form context. Exposes only lifecycle-eligible trips and
  * the active server-owned checklist template; it does not grant Inspectors the
@@ -93,6 +97,7 @@ export async function GET(request: NextRequest) {
         id: trips.id,
         status: trips.status,
         vehicleId: trips.vehicleId,
+        allocationId: trips.allocationId,
         requestReference: transportRequests.reference,
         requestStatus: transportRequests.status,
         authorityId: tripAuthorities.id,
@@ -155,6 +160,7 @@ export async function GET(request: NextRequest) {
       db
         .select({
           tripId: externalDriverAssignments.tripId,
+          allocationId: externalDriverAssignments.allocationId,
           issueId: externalDriverAssignments.issueId,
           driverName: sql<string>`trim(concat(${externalParties.firstName}, ' ', ${externalParties.lastName}))`,
         })
@@ -174,12 +180,17 @@ export async function GET(request: NextRequest) {
         ),
     ]);
 
-    const acceptedExternalByTrip = new Map(
-      acceptedExternalRows.map((row) => [row.tripId, { issueId: row.issueId, driverName: row.driverName }]),
+    const acceptedExternalByTripAllocation = new Map(
+      acceptedExternalRows.map((row) => [
+        externalAssignmentKey(row.tripId, row.allocationId),
+        { issueId: row.issueId, driverName: row.driverName },
+      ]),
     );
 
     const driverEligibleTrips = tripRows.filter((trip) => {
-      const external = acceptedExternalByTrip.get(trip.id);
+      const external = acceptedExternalByTripAllocation.get(
+        externalAssignmentKey(trip.id, trip.allocationId),
+      );
       const hasValidDriver = Boolean(trip.driverEmployeeId || external);
       if (!hasValidDriver) return false;
       if (type === 'departure') {
@@ -214,7 +225,9 @@ export async function GET(request: NextRequest) {
       driverKind: trip.driverEmployeeId ? ('internal' as const) : ('external' as const),
       driverName: trip.driverEmployeeId
         ? trip.driverName
-        : acceptedExternalByTrip.get(trip.id)?.driverName || null,
+        : acceptedExternalByTripAllocation.get(
+            externalAssignmentKey(trip.id, trip.allocationId),
+          )?.driverName || null,
     }));
 
     const vehicleMap = new Map<string, {
