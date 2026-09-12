@@ -211,6 +211,8 @@ export default function NewInspectionPage() {
     setSubmitting(true);
     setError(null);
 
+    const clientSyncId = crypto.randomUUID();
+    const photoKeys: string[] = [];
     const draftData = {
       vehicleId,
       tripRef: tripId,
@@ -219,6 +221,7 @@ export default function NewInspectionPage() {
       checklist: checklist.map(({ label, result, comment }) => ({ label, result, comment })),
       notes,
       photos: photos.map((photo) => photo.file),
+      photoKeys,
       inspectorAcknowledged,
       driverAcknowledged,
     };
@@ -235,7 +238,6 @@ export default function NewInspectionPage() {
       const failedWithoutComment = checklist.find((item) => item.result === 'fail' && !item.comment.trim());
       if (failedWithoutComment) throw new Error(`Describe the defect for “${failedWithoutComment.label}”`);
 
-      const photoKeys: string[] = [];
       for (const photo of photos) {
         const form = new FormData();
         form.append('file', photo.file);
@@ -266,6 +268,7 @@ export default function NewInspectionPage() {
           photoKeys,
           inspectorAcknowledged,
           driverAcknowledged,
+          clientSyncId,
         }),
       });
       const json = await response.json().catch(() => ({}));
@@ -281,6 +284,7 @@ export default function NewInspectionPage() {
       const networkFailure = !navigator.onLine || reason instanceof TypeError;
       if (networkFailure) {
         await saveDraft({
+          id: clientSyncId,
           draftType: type === 'departure' ? 'inspection_departure' : 'inspection_return',
           formData: draftData,
           userId: profile?.id || null,
