@@ -25,9 +25,19 @@ import { SystemRoles, WorkspaceIds } from '@/lib/workspaces';
 
 const UUID_PATTERN =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const MAX_SYNC_ID_LENGTH = 128;
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object' && !Array.isArray(value);
+}
+
+function isCanonicalNewSyncId(value: string) {
+  if (value.length > MAX_SYNC_ID_LENGTH || value !== value.trim()) return false;
+  try {
+    return decodeURIComponent(value) === value;
+  } catch {
+    return false;
+  }
 }
 
 function hasMalformedSubmissionFields(body: Record<string, unknown>) {
@@ -144,6 +154,15 @@ export async function POST(request: NextRequest) {
         )
         .limit(1);
       hasExistingSyncInspection = Boolean(existingSyncInspection);
+    }
+
+    // Keep newly-created offline tokens recoverable through the dedicated sync
+    // endpoint, which URI-decodes and trims path identifiers before lookup. New
+    // tokens must therefore already be their own decoded/trimmed representation.
+    // Existing tokens are allowed through first so historical idempotent replays
+    // remain valid even if an older client produced a non-canonical identifier.
+    if (!hasExistingSyncInspection && clientSyncId && !isCanonicalNewSyncId(clientSyncId)) {
+      return NextResponse.json({ error: 'Invalid inspection sync identifier' }, { status: 422 });
     }
 
     if (!hasExistingSyncInspection && tripId && vehicleId) {
