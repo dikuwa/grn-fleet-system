@@ -96,6 +96,13 @@ export async function completeOfficialInspection(input: InspectionInput) {
       if (existing.inspectorUserId !== userId) {
         fail('Inspection sync identifier is already in use', 409);
       }
+      if (
+        existing.vehicleId !== input.vehicleId ||
+        existing.tripId !== input.tripId ||
+        existing.type !== input.type
+      ) {
+        fail('Inspection sync identifier is already bound to another inspection', 409);
+      }
       return {
         inspection: existing,
         trip: null,
@@ -482,6 +489,13 @@ export async function completeOfficialInspection(input: InspectionInput) {
       if (existing) {
         if (existing.inspectorUserId !== userId) {
           fail('Inspection sync identifier is already in use', 409);
+        }
+        if (
+          existing.vehicleId !== input.vehicleId ||
+          existing.tripId !== input.tripId ||
+          existing.type !== input.type
+        ) {
+          fail('Inspection sync identifier is already bound to another inspection', 409);
         }
         return {
           inspection: existing,
