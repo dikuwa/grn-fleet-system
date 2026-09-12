@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { and, eq } from 'drizzle-orm';
 import { getDb } from '@/db';
-import { tripAuthorities, trips } from '@/db/schema/trips';
+import { tripAuthorities, trips, vehicleAllocations, vehicleInspections } from '@/db/schema/trips';
 import {
   requireDashboardAction,
   requirePermission,
@@ -116,6 +116,7 @@ export async function POST(request: NextRequest) {
 
     const vehicleId = typeof body.vehicleId === 'string' ? body.vehicleId : '';
     const tripId = typeof body.tripId === 'string' ? body.tripId : '';
+    const clientSyncId = typeof body.clientSyncId === 'string' ? body.clientSyncId : null;
     if (
       (vehicleId && !UUID_PATTERN.test(vehicleId)) ||
       (tripId && !UUID_PATTERN.test(tripId))
@@ -123,11 +124,65 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'Trip or vehicle not found' }, { status: 404 });
     }
 
+    // Preserve the service's idempotency ordering. A committed inspection may be
+    // replayed after later lifecycle transitions (for example, closure releases
+    // the allocation after a return inspection). If this sync token already
+    // exists in the tenant, let the service resolve ownership and payload binding
+    // before applying current-state guards to genuinely new submissions.
+    let hasExistingSyncInspection = false;
+    if (clientSyncId) {
+      const db = getDb();
+      const [existingSyncInspection] = await db
+        .select({ id: vehicleInspections.id })
+        .from(vehicleInspections)
+        .where(
+          and(
+            eq(vehicleInspections.tenantId, session.tenantId),
+            eq(vehicleInspections.clientSyncId, clientSyncId),
+          ),
+        )
+        .limit(1);
+      hasExistingSyncInspection = Boolean(existingSyncInspection);
+    }
+
+    if (!hasExistingSyncInspection && tripId && vehicleId) {
+      const db = getDb();
+      const [allocation] = await db
+        .select({ state: vehicleAllocations.state })
+        .from(trips)
+        .innerJoin(
+          vehicleAllocations,
+          and(
+            eq(vehicleAllocations.id, trips.allocationId),
+            eq(vehicleAllocations.requestId, trips.requestId),
+            eq(vehicleAllocations.vehicleId, trips.vehicleId),
+          ),
+        )
+        .where(
+          and(
+            eq(trips.id, tripId),
+            eq(trips.vehicleId, vehicleId),
+            eq(trips.tenantId, session.tenantId),
+          ),
+        )
+        .limit(1);
+
+      if (!allocation) {
+        return NextResponse.json({ error: 'Trip or vehicle not found' }, { status: 404 });
+      }
+      if (allocation.state !== 'confirmed') {
+        return NextResponse.json(
+          { error: 'Inspection requires the trip current vehicle allocation to be confirmed.' },
+          { status: 409 },
+        );
+      }
+    }
+
     // Any driver-material authority amendment invalidates the previous
     // acceptance for departure. Keep the original acknowledgement immutable,
     // but require acceptance of the current authority before a fresh official
     // departure inspection can be submitted.
-    if (body.type === 'departure' && tripId) {
+    if (!hasExistingSyncInspection && body.type === 'departure' && tripId) {
       const db = getDb();
       const [authority] = await db
         .select({ id: tripAuthorities.id, acceptedAt: tripAuthorities.acceptedAt })
@@ -176,7 +231,7 @@ export async function POST(request: NextRequest) {
       photoKeys: Array.isArray(body.photoKeys) ? body.photoKeys : [],
       inspectorAcknowledged: body.inspectorAcknowledged === true,
       driverAcknowledged: body.driverAcknowledged === true,
-      clientSyncId: typeof body.clientSyncId === 'string' ? body.clientSyncId : null,
+      clientSyncId,
     });
 
     // A passed departure inspection makes formal Trip Authority issuance the
