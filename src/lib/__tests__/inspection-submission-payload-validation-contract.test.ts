@@ -12,7 +12,7 @@ describe('inspection submission payload validation', () => {
     const permissionIndex = source.indexOf(
       'requirePermission(session, Permissions.INSPECTION_PERFORM)',
     );
-    const payloadIndex = source.indexOf('const payload: unknown = await request.json()');
+    const payloadIndex = source.indexOf('payload = await request.json()');
     const malformedGuardIndex = source.indexOf(
       'if (!isRecord(payload) || hasMalformedSubmissionFields(payload))',
     );
