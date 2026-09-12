@@ -37,7 +37,12 @@ export async function POST(request: NextRequest) {
     const permCheck = await requirePermission(session, Permissions.FILE_UPLOAD);
     if (permCheck instanceof NextResponse) return permCheck;
 
-    const formData = await request.formData();
+    let formData: FormData;
+    try {
+      formData = await request.formData();
+    } catch {
+      return NextResponse.json({ error: 'Invalid upload form data.' }, { status: 400 });
+    }
     const file = formData.get('file') as File | null;
     const category = (formData.get('category') as UploadCategory) || 'document';
     const requestedPublic = formData.get('public') === 'true';
