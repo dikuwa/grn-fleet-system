@@ -64,12 +64,15 @@ describe('notification dedupe tenant-scope rollout preparation', () => {
     expect(readyPath).not.toContain('.where(eq(notifications.dedupeKey, dedupeKey))');
   });
 
-  it('keeps caller-supplied API dedupe inserts conflict-target agnostic for the future index swap', () => {
+  it('keeps public API inserts outside the internal dedupe uniqueness namespace', () => {
     const postIndex = notificationRoute.indexOf('export async function POST');
     const deleteIndex = notificationRoute.indexOf('export async function DELETE');
     const postRoute = notificationRoute.slice(postIndex, deleteIndex);
 
-    expect(postRoute).toContain('dedupeKey: body.dedupeKey || null');
+    expect(postIndex).toBeGreaterThan(-1);
+    expect(deleteIndex).toBeGreaterThan(postIndex);
+    expect(postRoute).toContain('dedupeKey: null');
+    expect(postRoute).not.toContain('dedupeKey: body.dedupeKey');
     expect(postRoute).toContain('tenantId,');
     expect(postRoute).toContain('.onConflictDoNothing()');
   });
