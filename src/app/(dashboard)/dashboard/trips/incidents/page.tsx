@@ -2,7 +2,7 @@ import Link from 'next/link';
 import { and, desc, eq, inArray, like, or } from 'drizzle-orm';
 import { AlertTriangle, CarFront, CheckCircle2, Search } from 'lucide-react';
 import { getDb } from '@/db';
-import { tripIncidents, trips } from '@/db/schema/trips';
+import { incidentCategories, tripIncidents, trips } from '@/db/schema/trips';
 import { vehicles } from '@/db/schema/fleet';
 import { transportRequests } from '@/db/schema/requests';
 import { Breadcrumbs, PageHeader } from '@/components/layout/page-header';
@@ -14,9 +14,13 @@ import { getSessionPermissions, getSessionRoleNames } from '@/lib/auth-helpers';
 import { resolveDashboardAccess } from '@/lib/dashboard-access';
 import { Permissions } from '@/lib/permissions';
 import { vehicleScopeCondition } from '@/lib/record-scope';
+import { incidentRequiresVehicleRestriction } from '@/lib/incidents/incident-safety';
 import { getServerSession } from '@/lib/session';
 import { formatDateTime } from '@/lib/utils';
 import { notFound } from 'next/navigation';
+
+type IncidentRestrictionSeverity =
+  Parameters<typeof incidentRequiresVehicleRestriction>[0]['severity'];
 
 const MVA_CODES = [
   'accident',
@@ -49,9 +53,18 @@ export default async function MvaWorkspacePage({ searchParams }: { searchParams:
 
   const { status = 'open' } = await searchParams;
   const db = getDb();
+  // Keep workspace discovery aligned with the same MVA eligibility inputs used
+  // when canonical incident documents are selected/generated. ACC-* remains a
+  // compatibility signal for historical records, while tenant-configured
+  // categories marked requiresMvaForm must not disappear from the register.
   const mvaCondition = or(
     like(tripIncidents.officialNumber, 'ACC-%'),
+    eq(incidentCategories.requiresMvaForm, true),
     inArray(tripIncidents.incidentCategoryCode, MVA_CODES),
+    and(
+      inArray(tripIncidents.incidentType, ['accident', 'accident_collision']),
+      inArray(tripIncidents.severity, ['serious', 'critical']),
+    ),
   );
   const statusCondition = status === 'resolved'
     ? eq(tripIncidents.investigationStatus, 'closed')
@@ -78,6 +91,8 @@ export default async function MvaWorkspacePage({ searchParams }: { searchParams:
       insuranceNotified: tripIncidents.insuranceNotified,
       policeReportFiled: tripIncidents.policeReportFiled,
       detailsRequired: tripIncidents.detailsRequired,
+      vehicleDamage: tripIncidents.vehicleDamage,
+      vehicleSafe: tripIncidents.vehicleSafe,
       tripId: tripIncidents.tripId,
       tripStatus: trips.status,
       vehicleId: vehicles.id,
@@ -90,13 +105,27 @@ export default async function MvaWorkspacePage({ searchParams }: { searchParams:
     .from(tripIncidents)
     .innerJoin(trips, and(eq(trips.id, tripIncidents.tripId), eq(trips.tenantId, session.tenantId)))
     .innerJoin(vehicles, and(eq(vehicles.id, trips.vehicleId), eq(vehicles.tenantId, session.tenantId)))
+    .leftJoin(
+      incidentCategories,
+      and(
+        eq(incidentCategories.tenantId, session.tenantId),
+        eq(incidentCategories.code, tripIncidents.incidentCategoryCode),
+      ),
+    )
     .leftJoin(transportRequests, and(eq(transportRequests.id, trips.requestId), eq(transportRequests.tenantId, session.tenantId)))
     .where(and(eq(tripIncidents.tenantId, session.tenantId), vehicleScope, mvaCondition, statusCondition))
     .orderBy(desc(tripIncidents.occurredAt));
 
   const openCount = rows.filter((row) => row.investigationStatus !== 'closed').length;
   const seriousCount = rows.filter((row) => ['serious', 'critical'].includes(row.severity)).length;
-  const clearanceCount = rows.filter((row) => row.technicalClearanceStatus !== 'cleared' && row.vehicleStatus === 'maintenance').length;
+  const clearanceCount = rows.filter((row) =>
+    row.technicalClearanceStatus !== 'cleared' &&
+    incidentRequiresVehicleRestriction({
+      severity: row.severity as IncidentRestrictionSeverity,
+      vehicleDamage: row.vehicleDamage,
+      vehicleSafe: row.vehicleSafe,
+    }),
+  ).length;
 
   return (
     <div className="space-y-6">
