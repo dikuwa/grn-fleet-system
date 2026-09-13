@@ -30,6 +30,26 @@ async function generateSerializedDocument(payload: DocumentRefreshPayload) {
   });
 }
 
+/**
+ * Generate/regenerate the manually requested MVA document through the same
+ * per-document serialization boundary used by lifecycle-triggered refreshes.
+ * This prevents an older manual snapshot from overwriting a newer mutable
+ * draft after investigation, insurance or technical-clearance evidence changes.
+ */
+export async function generateSerializedMvaDocument(input: {
+  tenantId: string;
+  incidentId: string;
+  actorUserId: string;
+}) {
+  return generateSerializedDocument({
+    documentType: 'accident_report',
+    entityType: 'trip_incident',
+    entityId: input.incidentId,
+    tenantId: input.tenantId,
+    generatedByUserId: input.actorUserId,
+  });
+}
+
 function logRejectedRefreshes(
   label: string,
   results: PromiseSettledResult<unknown>[],

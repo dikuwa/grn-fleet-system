@@ -8,15 +8,13 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { requireRequestAuth, requirePermission } from '@/lib/auth-helpers';
 import { Permissions } from '@/lib/permissions';
-import {
-  getTenantIncident,
-  generateMvaReport,
-} from '@/lib/incidents/mva';
+import { getTenantIncident } from '@/lib/incidents/mva';
 import { getIncidentCategory } from '@/lib/incidents/categories';
 import {
   requiresMvaForm,
   type CreateIncidentInput,
 } from '@/lib/incidents/create-incident';
+import { generateSerializedMvaDocument } from '@/lib/incidents/document-refresh';
 import { generateDocumentPdf } from '@/lib/pdf/generate';
 import { canSessionReadGeneratedDocument } from '@/lib/document-access';
 import { getDb } from '@/db';
@@ -149,21 +147,21 @@ export async function POST(
       return nonMvaResponse();
     }
 
-    const result = await generateMvaReport(
-      session.tenantId,
-      id,
-      session.user.id,
-    );
+    const document = await generateSerializedMvaDocument({
+      tenantId: session.tenantId,
+      incidentId: id,
+      actorUserId: session.user.id,
+    });
 
-    if (!result.ok) {
-      return NextResponse.json({ error: result.error }, { status: 400 });
+    if (!document) {
+      return NextResponse.json({ error: 'generation_failed' }, { status: 400 });
     }
 
     return NextResponse.json({
       data: {
-        documentId: result.document.id,
-        documentVersion: result.document.documentVersion,
-        status: result.document.status,
+        documentId: document.id,
+        documentVersion: document.documentVersion,
+        status: document.status,
       },
     });
   } catch (error) {

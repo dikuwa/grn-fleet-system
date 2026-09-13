@@ -6,6 +6,10 @@ const routeSource = readFileSync(
   resolve(process.cwd(), 'src/app/api/incidents/[id]/mva-report/route.ts'),
   'utf8',
 );
+const refreshSource = readFileSync(
+  resolve(process.cwd(), 'src/lib/incidents/document-refresh.ts'),
+  'utf8',
+);
 
 describe('MVA report eligibility contract', () => {
   it('uses the canonical incident/category MVA predicate', () => {
@@ -28,7 +32,17 @@ describe('MVA report eligibility contract', () => {
     expect(getSection.indexOf(guard)).toBeGreaterThan(-1);
     expect(getSection.indexOf(guard)).toBeLessThan(getSection.indexOf('const db = getDb();'));
     expect(postSection.indexOf(guard)).toBeGreaterThan(-1);
-    expect(postSection.indexOf(guard)).toBeLessThan(postSection.indexOf('const result = await generateMvaReport('));
+    expect(postSection.indexOf(guard)).toBeLessThan(
+      postSection.indexOf('const document = await generateSerializedMvaDocument('),
+    );
+  });
+
+  it('serializes manual MVA regeneration on the shared incident document lock', () => {
+    expect(routeSource).toContain('generateSerializedMvaDocument');
+    expect(refreshSource).toContain('export async function generateSerializedMvaDocument');
+    expect(refreshSource).toContain("documentType: 'accident_report'");
+    expect(refreshSource).toContain("entityType: 'trip_incident'");
+    expect(refreshSource).toContain('return generateSerializedDocument({');
   });
 
   it('returns a controlled conflict instead of creating or serving an accident report for a non-MVA incident', () => {
