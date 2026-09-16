@@ -24,13 +24,15 @@ test('staff directory search accepts typing and filters by query', async ({ brow
   const searchInput = page.getByPlaceholder(/Search by name, employee number/);
   await expect(searchInput).toBeVisible();
 
-  // Regression: typing must not be reverted by the URL-adoption effect.
+  // Regression: typing must reach the hydrated LiveSearchInput and must not be
+  // reverted by its URL-adoption effect. The clear-search control only renders
+  // after React has accepted the new controlled value, so it is also a stable
+  // hydration signal for the debounce assertion below.
   await searchInput.fill('KERC');
   await expect(searchInput).toHaveValue('KERC');
+  await expect(page.getByRole('button', { name: 'Clear search' })).toBeVisible({ timeout: 5_000 });
 
   // The 300ms debounce commits the query to the URL and the server filters.
-  // The staff page renders against a remote Neon database (~2–4s per render),
-  // so the URL-commit assertion needs a generous timeout.
   await expect(page).toHaveURL(/[?&]q=KERC/, { timeout: 15_000 });
   await expect(
     page.locator('tbody tr').first().getByText(/KERC/, { exact: false }),
@@ -49,13 +51,13 @@ test('user management rows never show two Active labels', async ({ browser }) =>
   const page = await context.newPage();
   await page.goto('/dashboard/admin/users', { waitUntil: 'domcontentloaded' });
 
-  const rows = page.locator('div.divide-y > div:visible');
+  // User Management uses clickable card rows rather than a table/divide-y list.
+  // Scope to the row contract itself instead of presentation-only container classes.
+  const rows = page.locator('div.cursor-pointer.border-b');
   const retryButton = page.getByRole('button', { name: 'Retry' });
 
-  // Cold-start resilience: right after the E2E server boots, the first
-  // client-side fetch can hit a cold Neon connection and render the Retry
-  // card (the query self-heals via retries once the pool is warm). Wait for
-  // rows to appear, and click Retry if the error card sticks.
+  // Cold-start resilience: the first client-side fetch can occasionally render
+  // the Retry card. Wait for rows to appear, and retry the query if that card sticks.
   await expect
     .poll(
       async () => {
@@ -91,17 +93,39 @@ test('inspector workspace: inspections attention badge + topbar bell total', asy
     viewport: { width: 1440, height: 900 },
   });
   const page = await context.newPage();
-  // The hook waits for every badge endpoint the workspace navigation declares
-  // before merging counts, so mock them all to keep the test deterministic.
+
+  // Sidebar workspace attention and topbar notification attention are separate
+  // contracts. Mock each endpoint explicitly so the test proves both without
+  // coupling the bell to sidebar totals.
   await page.route('**/api/inspections/attention', async (route) => {
     await route.fulfill({
       contentType: 'application/json',
       body: JSON.stringify({ data: { total: 2 } }),
     });
   });
+  await page.route('**/api/notifications?limit=50', async (route) => {
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        data: {
+          notifications: [],
+          unreadCount: 0,
+          actionRequiredCount: 2,
+          attentionCount: 2,
+          preferences: {
+            emailNotifications: true,
+            inAppNotifications: true,
+            quietHoursStart: null,
+            quietHoursEnd: null,
+          },
+        },
+      }),
+    });
+  });
+
   await page.goto('/dashboard', { waitUntil: 'domcontentloaded' });
 
-  // Sidebar: Assigned Inspections badge (aria-hidden pill located by class).
+  // Sidebar: Assigned Inspections badge.
   const sidebarBadge = page
     .getByRole('link', { name: /Assigned Inspections/ })
     .locator('span.bg-status-error-text');
@@ -111,14 +135,12 @@ test('inspector workspace: inspections attention badge + topbar bell total', asy
     page.getByRole('link', { name: /Assigned Inspections.*2 items require your attention/ }),
   ).toBeVisible();
 
-  // Topbar: the bell carries the amber total-attention pill. Scoped to the
-  // header — the sidebar also has a "Notifications" link whose accessible name
-  // collides with the bell's aria-label.
+  // Topbar: the bell displays the notification feed's attentionCount.
   const bell = page.locator('header a[href="/dashboard/notifications"]');
   await expect(bell).toBeVisible();
-  await expect(bell.locator('span.bg-amber-500')).toHaveText('2');
+  await expect(bell.locator('span.bg-status-error-text')).toHaveText('2');
   await expect(
-    page.getByRole('link', { name: /Notifications.*2 items need your attention/ }),
+    page.getByRole('link', { name: /Notifications.*2 requiring attention/ }),
   ).toBeVisible();
 
   await context.close();
