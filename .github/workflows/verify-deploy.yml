@@ -9,6 +9,10 @@ on:
   push:
     branches: [master]
 
+concurrency:
+  group: verify-deploy-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   verify:
     name: Verify production deployment
