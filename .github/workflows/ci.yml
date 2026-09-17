@@ -180,6 +180,9 @@ jobs:
           src/e2e/programme-selector-scale.spec.ts
           src/e2e/staff-import-preview.spec.ts
           src/e2e/staff-search-and-user-status.spec.ts
+          src/e2e/approval-queue.spec.ts
+          src/e2e/approval-decision-workspace.spec.ts
+          src/e2e/conflict-of-interest.spec.ts
           src/e2e/maintenance-lifecycle-closure.spec.ts
           --project=chromium --workers=1
         env:
