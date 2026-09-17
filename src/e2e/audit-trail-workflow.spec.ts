@@ -102,7 +102,7 @@ test.describe('Audit Trail Workflow', () => {
       },
       headers: { cookie: await getCookieHeader(page) },
     });
-    expect(fuelRes.status()).toBe(200);
+    expect(fuelRes.status()).toBe(201);
 
     // The transport admin cannot read the audit log — switch back to the
     // tenant admin (AUDIT_READ) before querying the audit API.
