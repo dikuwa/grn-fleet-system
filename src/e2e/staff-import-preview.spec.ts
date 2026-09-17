@@ -58,6 +58,29 @@ function buildStaffCsv(): Buffer {
   return Buffer.from([header, ...rows].join('\n'), 'utf-8');
 }
 
+/**
+ * Upload the deterministic fixture and wait until the mapping step is actually
+ * ready to advance. Rendering "Column Mapping" alone is not sufficient: the
+ * page also resolves organisation options asynchronously before the primary
+ * action is guaranteed to be actionable under a long serial E2E run.
+ */
+async function uploadFixtureAndContinueToPreview(page: Page) {
+  await page.setInputFiles('input[type="file"]', {
+    name: 'staff-errors.csv',
+    mimeType: 'text/csv',
+    buffer: buildStaffCsv(),
+  });
+
+  await expect(page.locator('text=Column Mapping').first()).toBeVisible({ timeout: 15_000 });
+  const continueBtn = page.getByRole('button', { name: /Continue to Preview/i }).first();
+  await expect(continueBtn).toBeVisible({ timeout: 15_000 });
+  await expect(continueBtn).toBeEnabled({ timeout: 15_000 });
+  await continueBtn.click();
+  await expect(page.locator('text=Defaults Applied to Every Imported Row').first()).toBeVisible({
+    timeout: 15_000,
+  });
+}
+
 test.describe('Staff Import — Defaults Card, Row-Level Errors & Error File', () => {
   test.setTimeout(60_000);
 
@@ -69,21 +92,9 @@ test.describe('Staff Import — Defaults Card, Row-Level Errors & Error File', (
     await page.goto('/dashboard/staff/import', { waitUntil: 'domcontentloaded', timeout: 30000 });
     await expect(page.locator('h1:has-text("Import Staff")').first()).toBeVisible({ timeout: 20000 });
 
-    // Upload the CSV through the hidden file input
-    await page.setInputFiles('input[type="file"]', {
-      name: 'staff-errors.csv',
-      mimeType: 'text/csv',
-      buffer: buildStaffCsv(),
-    });
-
-    // Auto-mapped columns land us on the Column Mapping step; continue to preview.
-    await expect(page.locator('text=Column Mapping').first()).toBeVisible({ timeout: 15000 });
-    const continueBtn = page.locator('button:has-text("Continue to Preview")').first();
-    await expect(continueBtn).toBeEnabled({ timeout: 15000 });
-    await continueBtn.click();
+    await uploadFixtureAndContinueToPreview(page);
 
     // Defaults card: the four canonical defaults are shown.
-    await expect(page.locator('text=Defaults Applied to Every Imported Row').first()).toBeVisible({ timeout: 15000 });
     await expect(page.locator('text=Employment status').first()).toBeVisible();
     await expect(page.locator('text=Availability').first()).toBeVisible();
     await expect(page.locator('text=Login account').first()).toBeVisible();
@@ -112,14 +123,7 @@ test.describe('Staff Import — Defaults Card, Row-Level Errors & Error File', (
     await page.goto('/dashboard/staff/import', { waitUntil: 'domcontentloaded', timeout: 30000 });
     await expect(page.locator('h1:has-text("Import Staff")').first()).toBeVisible({ timeout: 20000 });
 
-    await page.setInputFiles('input[type="file"]', {
-      name: 'staff-errors.csv',
-      mimeType: 'text/csv',
-      buffer: buildStaffCsv(),
-    });
-
-    await expect(page.locator('text=Column Mapping').first()).toBeVisible({ timeout: 15000 });
-    await page.locator('button:has-text("Continue to Preview")').first().click();
+    await uploadFixtureAndContinueToPreview(page);
 
     await expect(page.locator('button:has-text("Download Error File")').first()).toBeVisible({ timeout: 15000 });
 
