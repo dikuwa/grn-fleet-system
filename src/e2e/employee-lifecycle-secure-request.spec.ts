@@ -20,7 +20,7 @@ test.describe('Employee lifecycle and secure request surfaces', () => {
     await expect(page.getByRole('button', { name: /select theme/i })).toBeVisible({
       timeout: 10_000,
     });
-    await expect(page.getByText(/same response is shown whether or not/i)).toBeVisible({
+    await expect(page.getByText(/same failure response is used whether or not/i)).toBeVisible({
       timeout: 10_000,
     });
 
