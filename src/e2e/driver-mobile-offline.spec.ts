@@ -38,6 +38,7 @@ import {
   tripIncidents,
   inspectionTemplates,
   inspectionTemplateItems,
+  generatedDocuments,
 } from '@/db/schema';
 import { and, desc, eq, gt, inArray, isNotNull, lt } from 'drizzle-orm';
 import { uploadInspectionEvidence } from '@/e2e/helpers/inspection-evidence';
@@ -318,6 +319,28 @@ async function setupDriverAssignedTrip(): Promise<{
     },
   });
   expect(departure.status(), await departure.text()).toBe(200);
+
+  const [authorityDocument] = await db
+    .select({ id: generatedDocuments.id, status: generatedDocuments.status })
+    .from(generatedDocuments)
+    .where(
+      and(
+        eq(generatedDocuments.tenantId, TENANT_ID as never),
+        eq(generatedDocuments.entityType, 'vehicle_allocation'),
+        eq(generatedDocuments.entityId, allocationId),
+        eq(generatedDocuments.documentType, 'trip_authority'),
+      ),
+    )
+    .orderBy(desc(generatedDocuments.documentVersion))
+    .limit(1);
+  expect(authorityDocument?.id, 'current Trip Authority document').toBeTruthy();
+  expect(authorityDocument?.status).toBe('draft');
+
+  const formalIssue = await transport.post(
+    `/api/documents/${authorityDocument!.id}/action`,
+    { data: { action: 'issue' } },
+  );
+  expect(formalIssue.status(), await formalIssue.text()).toBe(200);
 
   const issue = await transport.post(`/api/trips/${tripId}/issue`, {
     data: {
