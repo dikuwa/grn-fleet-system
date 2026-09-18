@@ -22,7 +22,7 @@ test('request filters clear completely and scoped statistics remain numeric', as
   const page = await context.newPage();
   await page.goto('/dashboard/requests', { waitUntil: 'domcontentloaded' });
 
-  const metricLabels = ['Total Requests', 'Pending Approval', 'Active / In Progress', 'Closed'];
+  const metricLabels = ['Total Requests', 'Pending Approval', 'Active', 'Closed'];
   const initialMetrics: string[] = [];
   for (const label of metricLabels) {
     const card = page.getByText(label, { exact: true }).locator('..');
