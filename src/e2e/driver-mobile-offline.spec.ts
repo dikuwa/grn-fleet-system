@@ -308,6 +308,9 @@ async function setupDriverAssignedTrip(): Promise<{
         `tenant/${TENANT_ID}/inspections/e2e-departure-1.jpg`,
         `tenant/${TENANT_ID}/inspections/e2e-departure-2.jpg`,
         `tenant/${TENANT_ID}/inspections/e2e-departure-3.jpg`,
+        `tenant/${TENANT_ID}/inspections/e2e-departure-4.jpg`,
+        `tenant/${TENANT_ID}/inspections/e2e-departure-5.jpg`,
+        `tenant/${TENANT_ID}/inspections/e2e-departure-6.jpg`,
       ],
       checklist: departureItems.map((item) => ({
         label: item.label,
