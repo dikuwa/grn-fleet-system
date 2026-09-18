@@ -18,6 +18,8 @@ describe('workflow release readiness gate contract', () => {
     expect(releaseGateSource).toContain('checks.scheduleConflictsClear');
     expect(releaseGateSource).toContain("eq(vehicleAllocations.state, 'confirmed')");
     expect(releaseGateSource).not.toContain("inArray(vehicleAllocations.state, ['confirmed', 'released'])");
+    expect(releaseGateSource).toContain("eq(vehicleAllocations.state, 'confirmed')");
+    expect(releaseGateSource).not.toContain("inArray(vehicleAllocations.state, ['confirmed', 'released'])");
     expect(releaseGateSource).toContain('checks.driverLicenceValidThroughReturn');
     expect(releaseGateSource).toContain('checks.driverLicenceClassCoversVehicle');
     expect(releaseGateSource).toContain('checks.noBlockingVehicleDefect');
