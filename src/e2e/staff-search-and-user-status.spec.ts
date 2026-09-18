@@ -20,6 +20,7 @@ test('staff directory search accepts typing and filters by query', async ({ brow
   });
   const page = await context.newPage();
   await page.goto('/dashboard/staff', { waitUntil: 'domcontentloaded' });
+  await page.waitForLoadState('networkidle');
 
   const searchInput = page.getByPlaceholder(/Search by name, employee number/);
   await expect(searchInput).toBeVisible();
