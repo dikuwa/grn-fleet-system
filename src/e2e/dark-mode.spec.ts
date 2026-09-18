@@ -144,15 +144,15 @@ test.describe('Dark Mode — Dashboard', () => {
     await expect(page.locator('html')).not.toHaveClass(/dark/);
   });
 
-  test('dark mode toggle works on trips page', async ({ page }) => {
-    await page.goto('/dashboard/trips', { waitUntil: 'load', timeout: 60000 });
-    await page.waitForTimeout(3000);
+  test('dark mode persists across dashboard navigation', async ({ page }) => {
+    await page.goto('/dashboard', { waitUntil: 'load', timeout: 60000 });
+    await page.waitForTimeout(2000);
 
     await selectTheme(page, 'Dark');
     await page.waitForTimeout(500);
     await expect(page.locator('html')).toHaveClass(/dark/);
 
-    // Navigate to fleet — dark mode persists
+    // Navigate to another authorised dashboard surface — dark mode persists.
     await page.goto('/dashboard/fleet', { waitUntil: 'load', timeout: 60000 });
     await page.waitForTimeout(2000);
     await expect(page.locator('html')).toHaveClass(/dark/);
