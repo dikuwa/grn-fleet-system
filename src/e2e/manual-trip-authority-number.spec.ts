@@ -200,7 +200,11 @@ async function driveRegionalTrip(input: {
   });
   expect(driverAssignment.status(), await driverAssignment.text()).toBe(200);
 
-  await approve(approvers.transport, workflowId);
+  await approve(
+    approvers.transport,
+    workflowId,
+    'Vehicle and driver assigned; schedule and operational readiness verified for release.',
+  );
   await approve(approvers.release, workflowId);
   await approve(approvers.authoriser, workflowId);
 
@@ -274,9 +278,9 @@ async function login(email: string) {
   return api;
 }
 
-async function approve(api: APIRequestContext, workflowId: string) {
+async function approve(api: APIRequestContext, workflowId: string, comment?: string) {
   const response = await api.post(`/api/approvals/${workflowId}/action`, {
-    data: { actionType: 'approved' },
+    data: { actionType: 'approved', ...(comment ? { comment } : {}) },
   });
   expect(response.status(), await response.text()).toBe(200);
 }
