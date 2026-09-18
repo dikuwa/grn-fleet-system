@@ -42,6 +42,7 @@ test.describe('Notification Delivery Pipeline', () => {
   test.describe.configure({ mode: 'serial' });
 
   let authCookie = '';
+  let fuelNotificationId = '';
 
   test.beforeAll(async ({ browser }) => {
     const page = await browser.newPage();
@@ -51,8 +52,6 @@ test.describe('Notification Delivery Pipeline', () => {
   });
 
   test('1. Create fuel transaction and verify scoped outcome notification created', async ({ request }) => {
-    test.skip(!authCookie, 'Sign-in failed, skipping all tests');
-
     const fleetResp = await request.get('/api/fleet', {
       headers: { cookie: `better-auth.session_token=${authCookie}` },
     });
@@ -62,7 +61,7 @@ test.describe('Notification Delivery Pipeline', () => {
       fleetBody.data ||
       fleetBody.vehicles ||
       (Array.isArray(fleetBody) ? fleetBody : []);
-    test.skip(!vehicleList.length, 'No vehicles available for test');
+    expect(vehicleList.length, 'seeded fleet must contain at least one vehicle').toBeGreaterThan(0);
 
     const vehicleId = vehicleList[0].id;
     const fuelResp = await request.post('/api/fuel', {
@@ -96,13 +95,12 @@ test.describe('Notification Delivery Pipeline', () => {
         notification.type === 'outcome' && notification.eventType === 'fuel_entry_recorded',
     );
     expect(fuelNotif).toBeTruthy();
-    expect(fuelNotif.title).toContain('Fuel Entry Recorded');
-    expect(fuelNotif.entityType).toBe('fuel_transaction');
+    fuelNotificationId = fuelNotif!.id;
+    expect(fuelNotif!.title).toContain('Fuel Entry Recorded');
+    expect(fuelNotif!.entityType).toBe('fuel_transaction');
   });
 
   test('2. Notification keeps durable event identity and starts unread', async ({ request }) => {
-    test.skip(!authCookie, 'Sign-in failed, skipping all tests');
-
     const notifResp = await request.get('/api/notifications', {
       headers: { cookie: `better-auth.session_token=${authCookie}` },
     });
@@ -113,41 +111,40 @@ test.describe('Notification Delivery Pipeline', () => {
       (notification: { type: string; eventType?: string }) =>
         notification.type === 'outcome' && notification.eventType === 'fuel_entry_recorded',
     );
-    test.skip(!fuelNotif, 'No scoped fuel notification found');
-
-    expect(fuelNotif.id).toBeTruthy();
-    expect(fuelNotif.eventType).toBe('fuel_entry_recorded');
-    expect(fuelNotif.isRead).toBe(false);
+    expect(fuelNotif).toBeTruthy();
+    expect(fuelNotif!.id).toBe(fuelNotificationId);
+    expect(fuelNotif!.eventType).toBe('fuel_entry_recorded');
+    expect(fuelNotif!.isRead).toBe(false);
   });
 
-  test('3. Mark notification as read and verify', async ({ page }) => {
-    test.skip(!authCookie, 'Sign-in failed, skipping all tests');
+  test('3. Mark notification as read and verify', async ({ request }) => {
+    expect(fuelNotificationId).toBeTruthy();
 
-    await page.goto('/dashboard');
-    await page.waitForTimeout(1000);
+    const markReadResp = await request.patch('/api/notifications', {
+      headers: {
+        'Content-Type': 'application/json',
+        cookie: `better-auth.session_token=${authCookie}`,
+      },
+      data: {
+        action: 'mark_read',
+        notificationId: fuelNotificationId,
+      },
+    });
+    expect(markReadResp.ok(), await markReadResp.text()).toBeTruthy();
 
-    try {
-      const acceptBtn = page.locator('button', { hasText: /accept|agree/i }).first();
-      if (await acceptBtn.isVisible({ timeout: 2000 })) {
-        await acceptBtn.click();
-      }
-    } catch {
-      // Optional cookie/privacy affordance is not present in every environment.
-    }
-
-    const markReadBtn = page
-      .locator('button:has-text("Mark All Read"), button:has-text("Mark all read")')
-      .first();
-    if (await markReadBtn.isVisible({ timeout: 2000 })) {
-      await markReadBtn.click();
-      await page.waitForTimeout(500);
-      await expect(page).toHaveURL(/\/dashboard/);
-    }
+    const notifResp = await request.get('/api/notifications', {
+      headers: { cookie: `better-auth.session_token=${authCookie}` },
+    });
+    expect(notifResp.ok()).toBeTruthy();
+    const notifData = await notifResp.json();
+    const fuelNotif = notifData.data.notifications.find(
+      (notification: { id: string }) => notification.id === fuelNotificationId,
+    );
+    expect(fuelNotif).toBeTruthy();
+    expect(fuelNotif!.isRead).toBe(true);
   });
 
   test('4. Notification category filtering works', async ({ request }) => {
-    test.skip(!authCookie, 'Sign-in failed, skipping all tests');
-
     const filteredResp = await request.get('/api/notifications?type=outcome', {
       headers: { cookie: `better-auth.session_token=${authCookie}` },
     });
@@ -161,8 +158,6 @@ test.describe('Notification Delivery Pipeline', () => {
   });
 
   test('5. Unread count endpoint returns valid data', async ({ request }) => {
-    test.skip(!authCookie, 'Sign-in failed, skipping all tests');
-
     const unreadResp = await request.get('/api/notifications?unreadOnly=true', {
       headers: { cookie: `better-auth.session_token=${authCookie}` },
     });
