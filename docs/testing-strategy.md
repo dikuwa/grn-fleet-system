@@ -27,7 +27,7 @@ It runs:
 - nightly
 - on pull requests only when the extended workflow or one of its selected E2E files changes
 
-The initial extended lane contains 8 skip-free suites / approximately 30 checks:
+The extended lane contains 10 skip-free suites / 36 checks:
 
 - calendar and badge behavior
 - dark-mode persistence
@@ -37,6 +37,8 @@ The initial extended lane contains 8 skip-free suites / approximately 30 checks:
 - manual Trip Authority numbering
 - offline drafts
 - public-site behavior
+- notification delivery/read-state behavior
+- full role lifecycle smoke
 
 Failures here should be investigated, but the lane must not become a hidden second release gate.
 
@@ -49,7 +51,6 @@ The remaining E2E suites fall into two categories:
 Keep outside automated release blocking when equivalent or stronger coverage already exists in Tier 1:
 
 - `active-trips-smoke.spec.ts`
-- `full-trip-workflow.spec.ts`
 - `mobile-responsive.spec.ts`
 - `regional-trip-workflow.spec.ts`
 - `seed-logins.spec.ts`
@@ -58,21 +59,20 @@ Keep outside automated release blocking when equivalent or stronger coverage alr
 
 These can still be useful for exploratory/manual runs, but should not duplicate the permanent gate.
 
+Two explicitly superseded lifecycle specs (`full-trip-workflow.spec.ts` and `trip-return-due-lifecycle.spec.ts`) were retired after stronger closure coverage replaced them.
+
 ### Conditional / skip-heavy debt
 
 - `offline-conflict-resolution.spec.ts` — targets the retired `/dashboard/offline` route and remains quarantined until redesigned or retired.
 
 Rewrite or retire before promotion:
 
-- `notification-delivery.spec.ts`
 - `photo-upload-workflow.spec.ts`
 - `physical-trip-authority-reservation.spec.ts`
 - `public-request-lifecycle.spec.ts`
 - `role-isolation-workflow.spec.ts`
-- `role-lifecycle-smoke.spec.ts`
 - `route-calculation.spec.ts`
 - `route-flow.spec.ts`
-- `trip-return-due-lifecycle.spec.ts`
 
 A skipped test does not count as release evidence. Prefer deterministic fixtures and explicit local substitutes for external services.
 
