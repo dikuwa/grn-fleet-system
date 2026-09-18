@@ -221,7 +221,7 @@ test.describe.serial('GovFleet document-system redesign', () => {
     const verifier = await publicContext.newPage();
     await verifier.goto(localVerificationUrl, { waitUntil: 'domcontentloaded' });
     await expect(verifier.getByText('Verified and active')).toBeVisible();
-    await expect(verifier.getByText('GovFleet secure document verification')).toBeVisible();
+    await expect(verifier.getByText('Powered by GovFleet Secure Verification')).toBeVisible();
     await expect(verifier.locator('header p').first()).toContainText(
       'Kavango East Regional Council',
     );
