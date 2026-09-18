@@ -132,10 +132,6 @@ test.describe('Route flow with maps and reporting', () => {
         seatedCapacity: 5,
       },
     });
-    if (createVehicleRes.status() === 403) {
-      test.skip(true, 'Transport admin lacks VEHICLE_CREATE permission');
-      return;
-    }
     expect(createVehicleRes.status(), await createVehicleRes.text()).toBe(201);
     const vehicleId = ((await createVehicleRes.json()).vehicle as { id: string }).id;
 
@@ -158,13 +154,10 @@ test.describe('Route flow with maps and reporting', () => {
     const profileBody = await profileRes.json();
     const profileData = profileBody.data || profileBody;
     const driverEmpId = profileData.employee?.id || profileData.profile?.employeeId;
-    if (!driverEmpId) {
-      test.skip(true, 'Could not determine driver employee ID');
-      return;
-    }
+    expect(driverEmpId, 'seeded driver employee ID').toBeTruthy();
 
     const assignRes = await transport.patch(`/api/allocations/${allocationId}/driver`, {
-      data: { driverEmployeeId: driverEmpId },
+      data: { driverEmployeeId: driverEmpId as string },
     });
     expect(assignRes.status(), await assignRes.text()).toBe(200);
 
@@ -175,8 +168,12 @@ test.describe('Route flow with maps and reporting', () => {
       [authoriser, 'authorise'],
       [driver, 'driver ack'],
     ] as const) {
+      const comment =
+        label === 'transport review'
+          ? 'Vehicle and driver assigned; mapped route, schedule, and operational readiness verified for release.'
+          : `Route flow: ${label}`;
       const res = await api.post(`/api/approvals/${requestData.workflowInstanceId}/action`, {
-        data: { actionType: 'approved', comment: `Route flow: ${label}` },
+        data: { actionType: 'approved', comment },
       });
       expect(res.status(), `${label}: ${await res.text()}`).toBe(200);
     }
