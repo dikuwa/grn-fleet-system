@@ -83,6 +83,7 @@ jobs:
       R2_SECRET_ACCESS_KEY: test
       R2_BUCKET_NAME: grn-fleet
       R2_ENDPOINT: http://localhost:4566
+      SHARE_TOKEN_PEPPER: ci-${{ github.run_id }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
@@ -190,6 +191,11 @@ jobs:
           src/e2e/inspection-action-permissions.spec.ts
           src/e2e/employee-lifecycle-secure-request.spec.ts
           src/e2e/tenant-admin-settings.spec.ts
+          src/e2e/programme-workflow.spec.ts
+          src/e2e/driver-mobile-offline.spec.ts
+          src/e2e/protected-role-edit.spec.ts
+          src/e2e/document-system-redesign.spec.ts
+          src/e2e/pdf-export.spec.ts
           src/e2e/maintenance-lifecycle-closure.spec.ts
           --project=chromium --workers=1
         env:

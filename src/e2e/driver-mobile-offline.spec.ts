@@ -36,9 +36,12 @@ import {
   vehicles,
   trips,
   tripIncidents,
+  inspectionTemplates,
+  inspectionTemplateItems,
+  generatedDocuments,
 } from '@/db/schema';
-import { and, eq, gt, inArray, isNotNull, lt } from 'drizzle-orm';
-import { DEPARTURE_INSPECTION_ITEMS } from '@/lib/inspection-checklists';
+import { and, desc, eq, gt, inArray, isNotNull, lt } from 'drizzle-orm';
+import { uploadInspectionEvidence } from '@/e2e/helpers/inspection-evidence';
 
 const BASE = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 const PASSWORD = process.env.SEED_ADMIN_PASSWORD || 'changeme';
@@ -249,7 +252,12 @@ async function setupDriverAssignedTrip(): Promise<{
   );
   expect(driverAssignment.status(), await driverAssignment.text()).toBe(200);
 
-  await approve(transport, workflowId);
+  await approve(
+    transport,
+    workflowId,
+    'approved',
+    'Vehicle and driver assigned; schedule and operational readiness verified for release.',
+  );
   await approve(release, workflowId);
   await approve(authoriser, workflowId);
   const acknowledgement = await driver.post(`/api/trips/${tripId}/acknowledge`, {
@@ -269,6 +277,26 @@ async function setupDriverAssignedTrip(): Promise<{
   // ── Phase 32: advance to in_progress ────────────────────────────────────
   // The Inspector performs the official departure inspection (all items pass),
   // Transport physically issues the vehicle, then the assigned driver starts.
+  const [departureTemplate] = await db
+    .select({ id: inspectionTemplates.id })
+    .from(inspectionTemplates)
+    .where(
+      and(
+        eq(inspectionTemplates.tenantId, TENANT_ID as never),
+        eq(inspectionTemplates.type, 'departure'),
+        eq(inspectionTemplates.isActive, true),
+      ),
+    )
+    .orderBy(desc(inspectionTemplates.version))
+    .limit(1);
+  expect(departureTemplate, 'active departure template').toBeTruthy();
+  const departureItems = await db
+    .select({ label: inspectionTemplateItems.label })
+    .from(inspectionTemplateItems)
+    .where(eq(inspectionTemplateItems.templateId, departureTemplate!.id))
+    .orderBy(inspectionTemplateItems.sortOrder);
+  expect(departureItems.length, 'departure checklist items').toBeGreaterThan(0);
+
   const departure = await inspector.post('/api/inspections', {
     data: {
       vehicleId: available.id,
@@ -278,12 +306,12 @@ async function setupDriverAssignedTrip(): Promise<{
       fuelLevel: 'full',
       inspectorAcknowledged: true,
       driverAcknowledged: true,
-      photoKeys: [
-        `tenant/${TENANT_ID}/inspections/e2e-departure-1.jpg`,
-        `tenant/${TENANT_ID}/inspections/e2e-departure-2.jpg`,
-        `tenant/${TENANT_ID}/inspections/e2e-departure-3.jpg`,
-      ],
-      checklist: DEPARTURE_INSPECTION_ITEMS.map((item) => ({
+      photoKeys: await Promise.all(
+        Array.from({ length: 6 }, (_, index) =>
+          uploadInspectionEvidence(inspector, `driver-mobile-departure-${index}`),
+        ),
+      ),
+      checklist: departureItems.map((item) => ({
         label: item.label,
         result: 'pass',
         comment: null,
@@ -291,6 +319,28 @@ async function setupDriverAssignedTrip(): Promise<{
     },
   });
   expect(departure.status(), await departure.text()).toBe(200);
+
+  const [authorityDocument] = await db
+    .select({ id: generatedDocuments.id, status: generatedDocuments.status })
+    .from(generatedDocuments)
+    .where(
+      and(
+        eq(generatedDocuments.tenantId, TENANT_ID as never),
+        eq(generatedDocuments.entityType, 'vehicle_allocation'),
+        eq(generatedDocuments.entityId, allocationId),
+        eq(generatedDocuments.documentType, 'trip_authority'),
+      ),
+    )
+    .orderBy(desc(generatedDocuments.documentVersion))
+    .limit(1);
+  expect(authorityDocument?.id, 'current Trip Authority document').toBeTruthy();
+  expect(authorityDocument?.status).toBe('draft');
+
+  const formalIssue = await transport.post(
+    `/api/documents/${authorityDocument!.id}/action`,
+    { data: { action: 'issue' } },
+  );
+  expect(formalIssue.status(), await formalIssue.text()).toBe(200);
 
   const issue = await transport.post(`/api/trips/${tripId}/issue`, {
     data: {

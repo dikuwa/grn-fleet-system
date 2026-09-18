@@ -85,11 +85,12 @@ test.describe.serial('GovFleet document-system redesign', () => {
 
     const requestHref = await firstDocument(page, api, 'transport_request');
     await page.goto(requestHref, { waitUntil: 'domcontentloaded' });
-    const requestPreview = page.getByTestId('human-readable-document');
+    const requestPreview = page.getByLabel('Transport Request printable preview', { exact: true });
     await expect(requestPreview).toBeVisible();
-    await waitForVisibleImages(page);
-    await expect(requestPreview).not.toContainText('[{');
-    await expect(requestPreview).not.toContainText('{"');
+    await expect(
+      page.getByLabel(/Transport Request printable preview, page 1 of/),
+    ).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('pre')).toHaveCount(0);
     await page.screenshot({
       path: `${SCREENSHOTS}/document-transport-request-redesign.png`,
       fullPage: true,
@@ -103,8 +104,12 @@ test.describe.serial('GovFleet document-system redesign', () => {
 
     const authorityHref = await firstDocument(page, api, 'trip_authority');
     await page.goto(authorityHref, { waitUntil: 'domcontentloaded' });
-    await expect(page.getByTestId('human-readable-document')).toBeVisible();
-    await waitForVisibleImages(page);
+    await expect(
+      page.getByLabel('Trip Authority printable preview', { exact: true }),
+    ).toBeVisible();
+    await expect(
+      page.getByLabel(/Trip Authority printable preview, page 1 of/),
+    ).toBeVisible({ timeout: 15_000 });
     await page.screenshot({
       path: `${SCREENSHOTS}/document-trip-authority-redesign.png`,
       fullPage: true,
@@ -116,7 +121,12 @@ test.describe.serial('GovFleet document-system redesign', () => {
     });
     const mobilePage = await mobile.newPage();
     await mobilePage.goto(requestHref, { waitUntil: 'domcontentloaded' });
-    await expect(mobilePage.getByTestId('human-readable-document')).toBeVisible();
+    await expect(
+      mobilePage.getByLabel('Transport Request printable preview', { exact: true }),
+    ).toBeVisible();
+    await expect(
+      mobilePage.getByLabel(/Transport Request printable preview, page 1 of/),
+    ).toBeVisible({ timeout: 15_000 });
     expect(
       await mobilePage.evaluate(
         () => document.documentElement.scrollWidth <= window.innerWidth + 1,
@@ -211,10 +221,11 @@ test.describe.serial('GovFleet document-system redesign', () => {
     const verifier = await publicContext.newPage();
     await verifier.goto(localVerificationUrl, { waitUntil: 'domcontentloaded' });
     await expect(verifier.getByText('Verified and active')).toBeVisible();
-    await expect(verifier.getByText('GovFleet secure document verification')).toBeVisible();
-    await expect(verifier.locator('header p').first()).toContainText(
-      'Kavango East Regional Council',
-    );
+    await expect(verifier.getByText('Powered by GovFleet Secure Verification')).toBeVisible();
+    await expect(verifier.getByText('Republic of Namibia')).toBeVisible();
+    await expect(
+      verifier.locator('header').getByText('Kavango East Regional Council'),
+    ).toBeVisible();
     await waitForVisibleImages(verifier);
     await expect(verifier.getByText(documentId)).toHaveCount(0);
     await verifier.screenshot({
