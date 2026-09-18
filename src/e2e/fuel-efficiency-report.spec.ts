@@ -107,7 +107,7 @@ test.describe('Fuel efficiency report with route km', () => {
         stationName: 'E2E Fuel Station',
       },
     });
-    expect(fuelRes.status(), await fuelRes.text()).toBe(200);
+    expect(fuelRes.status(), await fuelRes.text()).toBe(201);
 
     // ── 3. Enhanced reports returns per-vehicle route km + trend ─────────
     const reportRes = await transport.get('/api/reports/enhanced?period=30d');

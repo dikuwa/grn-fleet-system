@@ -1,0 +1,144 @@
+name: Extended E2E
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: '30 0 * * *'
+  pull_request:
+    branches: [master]
+    paths:
+      - '.github/workflows/extended-e2e.yml'
+      - 'src/e2e/calendar-and-badges-ui.spec.ts'
+      - 'src/e2e/dark-mode.spec.ts'
+      - 'src/e2e/driver-queue.spec.ts'
+      - 'src/e2e/fuel-efficiency-report.spec.ts'
+      - 'src/e2e/licence-expiry-report.spec.ts'
+      - 'src/e2e/manual-trip-authority-number.spec.ts'
+      - 'src/e2e/offline-drafts.spec.ts'
+      - 'src/e2e/public-site.spec.ts'
+
+concurrency:
+  group: extended-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: '22'
+  NEXT_PUBLIC_APP_NAME: GovFleet Namibia
+  DATABASE_URL: postgres://govfleet:govfleet-test@localhost:5432/govfleet_test
+  BETTER_AUTH_URL: http://localhost:3000
+  BETTER_AUTH_SECRET: extended-auth-secret-${{ github.run_id }}-test-only-value
+  NEXT_PUBLIC_APP_URL: http://localhost:3000
+  SEED_ADMIN_EMAIL: admin@kavangoeast.gov.na
+  SEED_ADMIN_PASSWORD: extended-${{ github.run_id }}
+  R2_ACCOUNT_ID: extended-e2e-localstack
+  R2_ACCESS_KEY_ID: test
+  R2_SECRET_ACCESS_KEY: test
+  R2_BUCKET_NAME: grn-fleet
+  R2_ENDPOINT: http://localhost:4566
+  SHARE_TOKEN_PEPPER: extended-e2e-${{ github.run_id }}
+
+jobs:
+  extended-e2e:
+    name: Extended browser coverage
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: govfleet
+          POSTGRES_PASSWORD: govfleet-test
+          POSTGRES_DB: govfleet_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U govfleet -d govfleet_test"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+      localstack:
+        image: localstack/localstack:3.8
+        env:
+          SERVICES: s3
+          AWS_DEFAULT_REGION: us-east-1
+          EAGER_SERVICE_LOADING: '1'
+        ports:
+          - 4566:4566
+        options: >-
+          --health-cmd "curl -fsS http://localhost:4566/_localstack/health || exit 1"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+
+      - name: Create disposable S3 test bucket
+        run: >-
+          node --input-type=module -e "import { CreateBucketCommand, S3Client } from '@aws-sdk/client-s3';
+          const client = new S3Client({ region: 'us-east-1', endpoint: process.env.R2_ENDPOINT,
+          forcePathStyle: true, credentials: { accessKeyId: process.env.R2_ACCESS_KEY_ID,
+          secretAccessKey: process.env.R2_SECRET_ACCESS_KEY } });
+          await client.send(new CreateBucketCommand({ Bucket: process.env.R2_BUCKET_NAME }));"
+
+      - name: Prepare disposable database
+        run: |
+          pnpm db:migrate
+          node scripts/apply-pending-migrations.mjs
+          pnpm db:seed:demo
+          npx tsx src/seed/seed-users.ts
+
+      - name: Start dev server
+        run: |
+          pnpm dev &>/tmp/dev-server.log &
+          for i in $(seq 1 60); do
+            curl -fsS -o /dev/null http://localhost:3000 && exit 0
+            sleep 1
+          done
+          tail -n 300 /tmp/dev-server.log || true
+          exit 1
+
+      - name: Install Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Run extended browser coverage
+        run: >-
+          pnpm exec playwright test
+          src/e2e/calendar-and-badges-ui.spec.ts
+          src/e2e/dark-mode.spec.ts
+          src/e2e/driver-queue.spec.ts
+          src/e2e/fuel-efficiency-report.spec.ts
+          src/e2e/licence-expiry-report.spec.ts
+          src/e2e/manual-trip-authority-number.spec.ts
+          src/e2e/offline-drafts.spec.ts
+          src/e2e/public-site.spec.ts
+          --project=chromium --workers=1
+        env:
+          CI: ''
+
+      - name: Show dev server log on failure
+        if: failure()
+        run: tail -n 800 /tmp/dev-server.log || true
+
+      - name: Upload extended E2E diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: extended-e2e-diagnostics
+          path: |
+            playwright-report/
+            test-results/
+            /tmp/dev-server.log
+          if-no-files-found: ignore
+
+      - name: Stop dev server
+        if: always()
+        run: kill $(lsof -ti :3000) 2>/dev/null || true

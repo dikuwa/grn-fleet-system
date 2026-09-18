@@ -35,7 +35,7 @@ test.describe('Public website regression', () => {
   });
 
   test('primary nav pages are public and render header + footer', async ({ page }) => {
-    const publicPages = ['/about', '/services', '/faq', '/contact', '/request-demo'];
+    const publicPages = ['/about', '/faq', '/contact', '/request-demo'];
 
     for (const path of publicPages) {
       await page.goto(path);
@@ -47,6 +47,11 @@ test.describe('Public website regression', () => {
       await expect(page.getByRole('link', { name: /— home$/ })).toBeVisible();
       await expect(page.locator('footer')).toBeVisible();
     }
+
+    // Legacy /services remains public but intentionally redirects to the
+    // consolidated Platform section on the homepage.
+    await page.goto('/services');
+    await expect(page).toHaveURL(`${BASE}/#platform`);
   });
 
   test('request-demo form completes end to end', async ({ page }) => {
@@ -54,11 +59,14 @@ test.describe('Public website regression', () => {
 
     await page.locator('#demo-name').fill('E2E Visitor');
     await page.locator('#demo-organisation').fill('E2E Test Organisation');
-    await page.locator('#demo-org-type').selectOption({ label: 'Regional Council' });
+    const organisationType = page.getByRole('combobox').filter({ hasText: 'Select an organisation type' });
+    await organisationType.click();
+    await page.getByRole('option', { name: 'Regional Council' }).click();
     await page.locator('#demo-email').fill(`e2e.visitor.${Date.now()}@example.org`);
     await page.locator('#demo-phone').fill('+264 81 000 0000');
-    // '26–50' is index 2 of the fleet-size options (1–10, 11–25, 26–50, …).
-    await page.locator('#demo-fleet-size').selectOption({ index: 2 });
+    const fleetSize = page.getByRole('combobox').filter({ hasText: 'Select fleet size' });
+    await fleetSize.click();
+    await page.getByRole('option', { name: '26–50 vehicles' }).click();
     await page.locator('#demo-message').fill('E2E regression test submission.');
 
     await page.getByRole('button', { name: 'Request a Demo' }).click();
