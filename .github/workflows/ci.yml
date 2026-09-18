@@ -184,6 +184,12 @@ jobs:
           src/e2e/approval-decision-workspace.spec.ts
           src/e2e/conflict-of-interest.spec.ts
           src/e2e/audit-trail-workflow.spec.ts
+          src/e2e/login-identity-isolation.spec.ts
+          src/e2e/shared-notification-isolation.spec.ts
+          src/e2e/documents-workspace-guard.spec.ts
+          src/e2e/inspection-action-permissions.spec.ts
+          src/e2e/employee-lifecycle-secure-request.spec.ts
+          src/e2e/tenant-admin-settings.spec.ts
           src/e2e/maintenance-lifecycle-closure.spec.ts
           --project=chromium --workers=1
         env:
