@@ -33,6 +33,7 @@ test.describe('Employee lifecycle and secure request surfaces', () => {
     // Use a unique verifier each run to avoid rate-limit collisions
     const uniqueVerifier = `nobody-${Date.now()}@example.invalid`;
     await page.locator('input[name="employeeNumber"]').fill('DOES-NOT-EXIST');
+    await page.locator('input[name="surname"]').fill('Nobody');
     await page.locator('input[name="verifier"]').fill(uniqueVerifier);
 
     // Click submit and wait for the API response
