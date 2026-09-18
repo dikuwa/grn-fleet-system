@@ -51,7 +51,7 @@ test.describe('Public website regression', () => {
     // Legacy /services remains public but intentionally redirects to the
     // consolidated Platform section on the homepage.
     await page.goto('/services');
-    await expect(page).toHaveURL(new RegExp(`${escapeRegExp(BASE)}/#platform$`));
+    await expect(page).toHaveURL(`${BASE}/#platform`);
   });
 
   test('request-demo form completes end to end', async ({ page }) => {
