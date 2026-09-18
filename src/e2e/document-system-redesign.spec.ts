@@ -223,7 +223,9 @@ test.describe.serial('GovFleet document-system redesign', () => {
     await expect(verifier.getByText('Verified and active')).toBeVisible();
     await expect(verifier.getByText('Powered by GovFleet Secure Verification')).toBeVisible();
     await expect(verifier.getByText('Republic of Namibia')).toBeVisible();
-    await expect(verifier.getByText('Kavango East Regional Council')).toBeVisible();
+    await expect(
+      verifier.locator('header').getByText('Kavango East Regional Council'),
+    ).toBeVisible();
     await waitForVisibleImages(verifier);
     await expect(verifier.getByText(documentId)).toHaveCount(0);
     await verifier.screenshot({
