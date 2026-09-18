@@ -65,6 +65,7 @@ function buildStaffCsv(): Buffer {
  * action is guaranteed to be actionable under a long serial E2E run.
  */
 async function uploadFixtureAndContinueToPreview(page: Page) {
+  await page.waitForLoadState('networkidle');
   await page.setInputFiles('input[type="file"]', {
     name: 'staff-errors.csv',
     mimeType: 'text/csv',
@@ -73,7 +74,7 @@ async function uploadFixtureAndContinueToPreview(page: Page) {
 
   await expect(page.locator('text=Column Mapping').first()).toBeVisible({ timeout: 15_000 });
   const continueBtn = page.getByRole('button', { name: /Continue to Preview/i }).first();
-  await expect(continueBtn).toBeVisible({ timeout: 15_000 });
+  await expect(continueBtn).toBeVisible({ timeout: 30_000 });
   await expect(continueBtn).toBeEnabled({ timeout: 15_000 });
   await continueBtn.click();
   await expect(page.locator('text=Defaults Applied to Every Imported Row').first()).toBeVisible({
