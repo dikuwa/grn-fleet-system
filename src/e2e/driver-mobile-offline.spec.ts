@@ -249,7 +249,12 @@ async function setupDriverAssignedTrip(): Promise<{
   );
   expect(driverAssignment.status(), await driverAssignment.text()).toBe(200);
 
-  await approve(transport, workflowId);
+  await approve(
+    transport,
+    workflowId,
+    'approved',
+    'Vehicle and driver assigned; schedule and operational readiness verified for release.',
+  );
   await approve(release, workflowId);
   await approve(authoriser, workflowId);
   const acknowledgement = await driver.post(`/api/trips/${tripId}/acknowledge`, {
