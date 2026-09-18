@@ -83,6 +83,7 @@ jobs:
       R2_SECRET_ACCESS_KEY: test
       R2_BUCKET_NAME: grn-fleet
       R2_ENDPOINT: http://localhost:4566
+      SHARE_TOKEN_PEPPER: ci-${{ github.run_id }}
     steps:
       - uses: actions/checkout@v4
       - uses: pnpm/action-setup@v4
