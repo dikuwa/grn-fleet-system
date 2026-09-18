@@ -84,7 +84,6 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
     );
   }
 
-  const now = new Date();
   try {
     await db.execute(sql`
       WITH authority_claim AS (
@@ -93,8 +92,8 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
             authority_number_source = 'manual_override',
             manual_number_override_reason = ${reason},
             manual_number_override_by_user_id = ${session.user.id},
-            manual_number_override_at = ${now},
-            updated_at = ${now}
+            manual_number_override_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
         WHERE id = ${authority.id}::uuid
           AND tenant_id = ${session.tenantId}::uuid
           AND status = ${authority.status}
