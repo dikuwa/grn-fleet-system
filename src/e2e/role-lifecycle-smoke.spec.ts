@@ -13,7 +13,11 @@
  * Roles exercised:  requester → supervisor → transport → release → regional
  *   authoriser → driver → inspector → auditor
  */
-import { expect, request as playwrightRequest, test } from '@playwright/test';
+import { expect, request as playwrightRequest, test, type APIRequestContext } from '@playwright/test';
+import { and, desc, eq } from 'drizzle-orm';
+import { getDb } from '@/db';
+import { generatedDocuments } from '@/db/schema/documents';
+import { uploadInspectionEvidence } from '@/e2e/helpers/inspection-evidence';
 import { DEPARTURE_INSPECTION_ITEMS, RETURN_INSPECTION_ITEMS } from '@/lib/inspection-checklists';
 
 const BASE = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
@@ -29,6 +33,23 @@ async function login(email: string) {
 /** Build a full checklist from the template items — all pass, no comments */
 function fullChecklist(template: typeof DEPARTURE_INSPECTION_ITEMS) {
   return template.map((item) => ({ label: item.label, result: 'pass' as const, comment: null }));
+}
+
+async function requiredInspectionPhotos(
+  api: APIRequestContext,
+  type: 'departure' | 'return',
+  prefix: string,
+) {
+  const context = await api.get(`/api/inspections/context?type=${type}`);
+  expect(context.status(), await context.text()).toBe(200);
+  const body = await context.json();
+  const requiredPhotoCount = Number(body.requiredPhotoCount ?? 0);
+  expect(requiredPhotoCount, `${type} required photo count`).toBeGreaterThan(0);
+  return Promise.all(
+    Array.from({ length: requiredPhotoCount }, (_value, index) =>
+      uploadInspectionEvidence(api, `${prefix}-${index}`),
+    ),
+  );
 }
 
 test.describe('Role lifecycle smoke', () => {
@@ -102,10 +123,6 @@ test.describe('Role lifecycle smoke', () => {
         seatedCapacity: 5,
       },
     });
-    if (createVehicleRes.status() === 403) {
-      test.skip(true, 'Transport admin lacks VEHICLE_CREATE permission');
-      return;
-    }
     expect(createVehicleRes.status(), await createVehicleRes.text()).toBe(201);
     const vehicle = (await createVehicleRes.json()).vehicle;
     expect(vehicle).toBeTruthy();
@@ -133,13 +150,10 @@ test.describe('Role lifecycle smoke', () => {
     const profileBody = await profileRes.json();
     const profileData = profileBody.data || profileBody;
     const driverEmpId = profileData.employee?.id || profileData.profile?.employeeId;
-    if (!driverEmpId) {
-      test.skip(true, 'Could not determine driver employee ID');
-      return;
-    }
+    expect(driverEmpId, 'seeded driver employee ID').toBeTruthy();
 
     const assignRes = await transport.patch(`/api/allocations/${allocationId}/driver`, {
-      data: { driverEmployeeId: driverEmpId },
+      data: { driverEmployeeId: driverEmpId as string },
     });
     expect(assignRes.status(), await assignRes.text()).toBe(200);
 
@@ -150,14 +164,23 @@ test.describe('Role lifecycle smoke', () => {
       [authoriser, 'authorise'],
       [driver, 'driver ack'],
     ] as const) {
+      const comment =
+        label === 'transport review'
+          ? 'Vehicle and driver assigned; schedule, route, and operational readiness verified for release.'
+          : `Smoke: ${label}`;
       const res = await api.post(`/api/approvals/${requestData.workflowInstanceId}/action`, {
-        data: { actionType: 'approved', comment: `Smoke: ${label}` },
+        data: { actionType: 'approved', comment },
       });
       expect(res.status(), `${label}: ${await res.text()}`).toBe(200);
     }
 
     // 5. Departure inspection (using source-of-truth constants)
     const inspector = await login('inspector@kavangoeast.test');
+    const departurePhotoKeys = await requiredInspectionPhotos(
+      inspector,
+      'departure',
+      'role-lifecycle-departure',
+    );
     const depRes = await inspector.post('/api/inspections', {
       data: {
         vehicleId,
@@ -167,11 +190,32 @@ test.describe('Role lifecycle smoke', () => {
         fuelLevel: 'full',
         inspectorAcknowledged: true,
         driverAcknowledged: true,
-        photoKeys: ['smoke/dep-front.jpg', 'smoke/dep-rear.jpg', 'smoke/dep-dash.jpg'],
+        photoKeys: departurePhotoKeys,
         checklist: fullChecklist(DEPARTURE_INSPECTION_ITEMS),
       },
     });
     expect(depRes.status(), await depRes.text()).toBe(200);
+
+    const db = getDb();
+    const [authorityDocument] = await db
+      .select({ id: generatedDocuments.id, status: generatedDocuments.status })
+      .from(generatedDocuments)
+      .where(
+        and(
+          eq(generatedDocuments.entityType, 'vehicle_allocation'),
+          eq(generatedDocuments.entityId, allocationId),
+          eq(generatedDocuments.documentType, 'trip_authority'),
+        ),
+      )
+      .orderBy(desc(generatedDocuments.documentVersion))
+      .limit(1);
+    expect(authorityDocument?.id, 'current Trip Authority document').toBeTruthy();
+    expect(authorityDocument?.status).toBe('draft');
+
+    const formalIssue = await transport.post(`/api/documents/${authorityDocument!.id}/action`, {
+      data: { action: 'issue' },
+    });
+    expect(formalIssue.status(), await formalIssue.text()).toBe(200);
 
     // 6. Issue trip + start trip
     const issueRes = await transport.post(`/api/trips/${tripId}/issue`, {
@@ -195,6 +239,11 @@ test.describe('Role lifecycle smoke', () => {
     });
     expect(returnRes.status(), await returnRes.text()).toBe(200);
 
+    const returnPhotoKeys = await requiredInspectionPhotos(
+      inspector,
+      'return',
+      'role-lifecycle-return',
+    );
     const returnInspectionRes = await inspector.post('/api/inspections', {
       data: {
         vehicleId,
@@ -204,7 +253,7 @@ test.describe('Role lifecycle smoke', () => {
         fuelLevel: 'half',
         inspectorAcknowledged: true,
         driverAcknowledged: true,
-        photoKeys: ['smoke/ret-front.jpg', 'smoke/ret-rear.jpg', 'smoke/ret-dash.jpg'],
+        photoKeys: returnPhotoKeys,
         checklist: fullChecklist(RETURN_INSPECTION_ITEMS),
       },
     });
