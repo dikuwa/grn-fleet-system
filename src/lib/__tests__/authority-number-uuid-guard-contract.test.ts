@@ -26,6 +26,13 @@ describe('Trip Authority number UUID guard', () => {
     expect(dbIndex).toBeGreaterThan(guardIndex);
   });
 
+  it('uses database timestamps for atomic manual-number overrides', () => {
+    expect(route).toContain('manual_number_override_at = CURRENT_TIMESTAMP');
+    expect(route).toContain('updated_at = CURRENT_TIMESTAMP');
+    expect(route).not.toContain('const now = new Date()');
+    expect(route).not.toContain('manual_number_override_at = ${now}');
+  });
+
   it('keeps concurrent authority-number correction conflict semantics intact', () => {
     expect(route).toContain('authority_number_correction_conflict');
     expect(route).toContain("(error as { code?: string })?.code === '23505'");
