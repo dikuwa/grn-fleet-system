@@ -102,7 +102,7 @@ test.describe('Audit Trail Workflow', () => {
       },
       headers: { cookie: await getCookieHeader(page) },
     });
-    expect(fuelRes.status()).toBe(200);
+    expect(fuelRes.status()).toBe(201);
 
     // The transport admin cannot read the audit log — switch back to the
     // tenant admin (AUDIT_READ) before querying the audit API.
@@ -190,7 +190,7 @@ test.describe('Audit Trail Workflow', () => {
     // admin seed account (platform.admin@grnfleet.test) for this test.
     await signInAs(page, process.env.SEED_PLATFORM_ADMIN_EMAIL || 'platform.admin@grnfleet.test');
 
-    const uniqueCode = `E2E-${Date.now()}`;
+    const uniqueCode = `E2E${Date.now().toString().slice(-7)}`;
     const uniqueName = `E2E Test Region ${Date.now()}`;
 
     // CREATE: Create a region
@@ -255,7 +255,7 @@ test.describe('Audit Trail Workflow', () => {
     expect(deletedAudit.status()).toBe(200);
     const deletedBody = await deletedAudit.json();
     const deletedEvents = deletedBody.data?.events || [];
-    const deleteEvent = deletedEvents.find((e: { summary?: string }) => e.summary?.includes(regionId));
+    const deleteEvent = deletedEvents.find((e: { summary?: string }) => e.summary?.includes(uniqueCode));
     expect(deleteEvent).toBeTruthy();
     expect(deleteEvent.eventType).toBe('region_deleted');
     expect(deleteEvent.action).toBe('delete');
