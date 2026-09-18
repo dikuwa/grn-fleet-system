@@ -4,6 +4,19 @@ on:
   workflow_dispatch:
   schedule:
     - cron: '30 0 * * *'
+  pull_request:
+    branches: [master]
+    paths:
+      - '.github/workflows/extended-e2e.yml'
+      - 'src/e2e/calendar-and-badges-ui.spec.ts'
+      - 'src/e2e/dark-mode.spec.ts'
+      - 'src/e2e/driver-queue.spec.ts'
+      - 'src/e2e/fuel-efficiency-report.spec.ts'
+      - 'src/e2e/licence-expiry-report.spec.ts'
+      - 'src/e2e/manual-trip-authority-number.spec.ts'
+      - 'src/e2e/offline-conflict-resolution.spec.ts'
+      - 'src/e2e/offline-drafts.spec.ts'
+      - 'src/e2e/public-site.spec.ts'
 
 concurrency:
   group: extended-e2e-${{ github.ref }}
