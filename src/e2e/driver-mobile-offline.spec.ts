@@ -40,6 +40,7 @@ import {
   inspectionTemplateItems,
 } from '@/db/schema';
 import { and, desc, eq, gt, inArray, isNotNull, lt } from 'drizzle-orm';
+import { uploadInspectionEvidence } from '@/e2e/helpers/inspection-evidence';
 
 const BASE = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 const PASSWORD = process.env.SEED_ADMIN_PASSWORD || 'changeme';
@@ -304,14 +305,11 @@ async function setupDriverAssignedTrip(): Promise<{
       fuelLevel: 'full',
       inspectorAcknowledged: true,
       driverAcknowledged: true,
-      photoKeys: [
-        `tenant/${TENANT_ID}/inspections/e2e-departure-1.jpg`,
-        `tenant/${TENANT_ID}/inspections/e2e-departure-2.jpg`,
-        `tenant/${TENANT_ID}/inspections/e2e-departure-3.jpg`,
-        `tenant/${TENANT_ID}/inspections/e2e-departure-4.jpg`,
-        `tenant/${TENANT_ID}/inspections/e2e-departure-5.jpg`,
-        `tenant/${TENANT_ID}/inspections/e2e-departure-6.jpg`,
-      ],
+      photoKeys: await Promise.all(
+        Array.from({ length: 6 }, (_, index) =>
+          uploadInspectionEvidence(inspector, `driver-mobile-departure-${index}`),
+        ),
+      ),
       checklist: departureItems.map((item) => ({
         label: item.label,
         result: 'pass',
