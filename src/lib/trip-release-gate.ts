@@ -192,7 +192,7 @@ export async function evaluateTripReleaseGate(input: {
       code: 'schedule_conflict',
       message: vehicleConflict
         ? 'The allocated vehicle now has another confirmed allocation that overlaps this trip.'
-        : 'The assigned driver now has another confirmed/released allocation that overlaps this trip.',
+        : 'The assigned driver now has another confirmed allocation that overlaps this trip.',
     });
   }
 
