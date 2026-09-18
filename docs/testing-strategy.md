@@ -27,7 +27,7 @@ It runs:
 - nightly
 - on pull requests only when the extended workflow or one of its selected E2E files changes
 
-The initial extended lane contains 9 skip-free suites / approximately 37 checks:
+The initial extended lane contains 8 skip-free suites / approximately 30 checks:
 
 - calendar and badge behavior
 - dark-mode persistence
@@ -35,7 +35,6 @@ The initial extended lane contains 9 skip-free suites / approximately 37 checks:
 - fuel-efficiency reporting
 - licence-expiry reporting
 - manual Trip Authority numbering
-- offline conflict handling
 - offline drafts
 - public-site behavior
 
@@ -60,6 +59,8 @@ Keep outside automated release blocking when equivalent or stronger coverage alr
 These can still be useful for exploratory/manual runs, but should not duplicate the permanent gate.
 
 ### Conditional / skip-heavy debt
+
+- `offline-conflict-resolution.spec.ts` — targets the retired `/dashboard/offline` route and remains quarantined until redesigned or retired.
 
 Rewrite or retire before promotion:
 
