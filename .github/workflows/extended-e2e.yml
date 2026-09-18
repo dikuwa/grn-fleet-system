@@ -27,7 +27,7 @@ env:
   NEXT_PUBLIC_APP_NAME: GovFleet Namibia
   DATABASE_URL: postgres://govfleet:govfleet-test@localhost:5432/govfleet_test
   BETTER_AUTH_URL: http://localhost:3000
-  BETTER_AUTH_SECRET: extended-auth-${{ github.run_id }}-only
+  BETTER_AUTH_SECRET: extended-auth-secret-${{ github.run_id }}-test-only-value
   NEXT_PUBLIC_APP_URL: http://localhost:3000
   SEED_ADMIN_EMAIL: admin@kavangoeast.gov.na
   SEED_ADMIN_PASSWORD: extended-${{ github.run_id }}
