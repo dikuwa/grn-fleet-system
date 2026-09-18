@@ -12,7 +12,7 @@
 import { test, expect, type Page } from '@playwright/test';
 
 async function signIn(page: Page): Promise<string> {
-  const email = process.env.SEED_ADMIN_EMAIL || 'transport.admin@kavangoeast.test';
+  const email = 'transport.admin@kavangoeast.test';
   const password = process.env.SEED_ADMIN_PASSWORD || 'changeme';
 
   const response = await page.request.post('/api/auth/sign-in', {
