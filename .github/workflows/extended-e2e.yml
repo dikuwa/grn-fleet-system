@@ -16,6 +16,8 @@ on:
       - 'src/e2e/manual-trip-authority-number.spec.ts'
       - 'src/e2e/offline-drafts.spec.ts'
       - 'src/e2e/public-site.spec.ts'
+      - 'src/e2e/role-lifecycle-smoke.spec.ts'
+      - 'src/e2e/route-flow.spec.ts'
 
 concurrency:
   group: extended-e2e-${{ github.ref }}
@@ -120,6 +122,8 @@ jobs:
           src/e2e/manual-trip-authority-number.spec.ts
           src/e2e/offline-drafts.spec.ts
           src/e2e/public-site.spec.ts
+          src/e2e/role-lifecycle-smoke.spec.ts
+          src/e2e/route-flow.spec.ts
           --project=chromium --workers=1
         env:
           CI: ''
