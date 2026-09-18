@@ -115,7 +115,11 @@ test.describe.serial('Driver acknowledgment queue', () => {
 
     // 3. Approve steps 2-4 (transport review, release, authorisation) so the
     //    workflow lands on the driver acknowledgment step.
-    await approve(transport, workflowId);
+    await approve(
+      transport,
+      workflowId,
+      'Vehicle and driver assigned; schedule and operational readiness verified for release.',
+    );
     await approve(release, workflowId);
     await approve(authoriser, workflowId);
 
@@ -213,9 +217,9 @@ async function login(email: string) {
   return api;
 }
 
-async function approve(api: APIRequestContext, workflowId: string) {
+async function approve(api: APIRequestContext, workflowId: string, comment?: string) {
   const response = await api.post(`/api/approvals/${workflowId}/action`, {
-    data: { actionType: 'approved' },
+    data: { actionType: 'approved', ...(comment ? { comment } : {}) },
   });
   expect(response.status(), await response.text()).toBe(200);
 }
