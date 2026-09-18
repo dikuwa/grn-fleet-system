@@ -14,6 +14,9 @@
  *   authoriser → driver → inspector → auditor
  */
 import { expect, request as playwrightRequest, test } from '@playwright/test';
+import { and, desc, eq } from 'drizzle-orm';
+import { getDb } from '@/db';
+import { generatedDocuments } from '@/db/schema/documents';
 import { DEPARTURE_INSPECTION_ITEMS, RETURN_INSPECTION_ITEMS } from '@/lib/inspection-checklists';
 
 const BASE = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
@@ -102,10 +105,6 @@ test.describe('Role lifecycle smoke', () => {
         seatedCapacity: 5,
       },
     });
-    if (createVehicleRes.status() === 403) {
-      test.skip(true, 'Transport admin lacks VEHICLE_CREATE permission');
-      return;
-    }
     expect(createVehicleRes.status(), await createVehicleRes.text()).toBe(201);
     const vehicle = (await createVehicleRes.json()).vehicle;
     expect(vehicle).toBeTruthy();
@@ -133,28 +132,44 @@ test.describe('Role lifecycle smoke', () => {
     const profileBody = await profileRes.json();
     const profileData = profileBody.data || profileBody;
     const driverEmpId = profileData.employee?.id || profileData.profile?.employeeId;
-    if (!driverEmpId) {
-      test.skip(true, 'Could not determine driver employee ID');
-      return;
-    }
+    expect(driverEmpId, 'seeded driver employee identity').toBeTruthy();
 
     const assignRes = await transport.patch(`/api/allocations/${allocationId}/driver`, {
       data: { driverEmployeeId: driverEmpId },
     });
     expect(assignRes.status(), await assignRes.text()).toBe(200);
 
-    // 4. Transport admin reviews + Release officer releases + Authoriser authorises + Driver acknowledges
-    for (const [api, label] of [
-      [transport, 'transport review'],
-      [release, 'release'],
-      [authoriser, 'authorise'],
-      [driver, 'driver ack'],
+    // 4. Transport review -> release -> authorisation.
+    for (const [api, label, comment] of [
+      [
+        transport,
+        'transport review',
+        'Vehicle and driver assigned; schedule and operational readiness verified for release.',
+      ],
+      [release, 'release', 'Release checks complete.'],
+      [authoriser, 'authorise', 'Regional authorisation granted.'],
     ] as const) {
       const res = await api.post(`/api/approvals/${requestData.workflowInstanceId}/action`, {
-        data: { actionType: 'approved', comment: `Smoke: ${label}` },
+        data: { actionType: 'approved', comment },
       });
       expect(res.status(), `${label}: ${await res.text()}`).toBe(200);
     }
+
+    // Driver acknowledgement is operational and must use the canonical Trip Console endpoint.
+    const acknowledgeRes = await driver.post(`/api/trips/${tripId}/acknowledge`, {
+      data: {
+        vehicleConfirmed: true,
+        authorityConfirmed: true,
+        routeUnderstood: true,
+        passengersUnderstood: true,
+        licenceValidConfirmed: true,
+        responsibilityAccepted: true,
+        conditionsReviewed: true,
+        signature: 'Role lifecycle E2E driver acknowledgement',
+        comment: 'Driver confirmed operational readiness.',
+      },
+    });
+    expect(acknowledgeRes.status(), await acknowledgeRes.text()).toBe(200);
 
     // 5. Departure inspection (using source-of-truth constants)
     const inspector = await login('inspector@kavangoeast.test');
@@ -167,15 +182,42 @@ test.describe('Role lifecycle smoke', () => {
         fuelLevel: 'full',
         inspectorAcknowledged: true,
         driverAcknowledged: true,
-        photoKeys: ['smoke/dep-front.jpg', 'smoke/dep-rear.jpg', 'smoke/dep-dash.jpg'],
+        photoKeys: Array.from({ length: 6 }, (_, index) => `smoke/dep-${index + 1}.jpg`),
         checklist: fullChecklist(DEPARTURE_INSPECTION_ITEMS),
       },
     });
     expect(depRes.status(), await depRes.text()).toBe(200);
 
-    // 6. Issue trip + start trip
+    // 6. Formally issue the generated Trip Authority, then release the physical vehicle.
+    const db = getDb();
+    const [authorityDocument] = await db
+      .select({ id: generatedDocuments.id, status: generatedDocuments.status })
+      .from(generatedDocuments)
+      .where(
+        and(
+          eq(generatedDocuments.entityType, 'vehicle_allocation'),
+          eq(generatedDocuments.entityId, allocationId),
+          eq(generatedDocuments.documentType, 'trip_authority'),
+        ),
+      )
+      .orderBy(desc(generatedDocuments.documentVersion))
+      .limit(1);
+    expect(authorityDocument?.id, 'current Trip Authority document').toBeTruthy();
+
+    if (authorityDocument?.status === 'draft') {
+      const formalIssueRes = await transport.post(
+        `/api/documents/${authorityDocument.id}/action`,
+        { data: { action: 'issue' } },
+      );
+      expect(formalIssueRes.status(), await formalIssueRes.text()).toBe(200);
+    }
+
     const issueRes = await transport.post(`/api/trips/${tripId}/issue`, {
-      data: { keysIssued: true, issueOdometer: initialOdometer },
+      data: {
+        keysIssued: true,
+        fuelCardIssued: true,
+        issueOdometer: initialOdometer,
+      },
     });
     expect(issueRes.status(), await issueRes.text()).toBe(200);
     const startRes = await driver.post(`/api/trips/${tripId}/start`, {
@@ -204,7 +246,7 @@ test.describe('Role lifecycle smoke', () => {
         fuelLevel: 'half',
         inspectorAcknowledged: true,
         driverAcknowledged: true,
-        photoKeys: ['smoke/ret-front.jpg', 'smoke/ret-rear.jpg', 'smoke/ret-dash.jpg'],
+        photoKeys: Array.from({ length: 6 }, (_, index) => `smoke/ret-${index + 1}.jpg`),
         checklist: fullChecklist(RETURN_INSPECTION_ITEMS),
       },
     });
