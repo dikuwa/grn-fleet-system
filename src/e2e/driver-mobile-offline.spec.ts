@@ -36,9 +36,10 @@ import {
   vehicles,
   trips,
   tripIncidents,
+  inspectionTemplates,
+  inspectionTemplateItems,
 } from '@/db/schema';
-import { and, eq, gt, inArray, isNotNull, lt } from 'drizzle-orm';
-import { DEPARTURE_INSPECTION_ITEMS } from '@/lib/inspection-checklists';
+import { and, desc, eq, gt, inArray, isNotNull, lt } from 'drizzle-orm';
 
 const BASE = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 const PASSWORD = process.env.SEED_ADMIN_PASSWORD || 'changeme';
@@ -274,6 +275,26 @@ async function setupDriverAssignedTrip(): Promise<{
   // ── Phase 32: advance to in_progress ────────────────────────────────────
   // The Inspector performs the official departure inspection (all items pass),
   // Transport physically issues the vehicle, then the assigned driver starts.
+  const [departureTemplate] = await db
+    .select({ id: inspectionTemplates.id })
+    .from(inspectionTemplates)
+    .where(
+      and(
+        eq(inspectionTemplates.tenantId, TENANT_ID as never),
+        eq(inspectionTemplates.type, 'departure'),
+        eq(inspectionTemplates.isActive, true),
+      ),
+    )
+    .orderBy(desc(inspectionTemplates.version))
+    .limit(1);
+  expect(departureTemplate, 'active departure template').toBeTruthy();
+  const departureItems = await db
+    .select({ label: inspectionTemplateItems.label })
+    .from(inspectionTemplateItems)
+    .where(eq(inspectionTemplateItems.templateId, departureTemplate!.id))
+    .orderBy(inspectionTemplateItems.sortOrder);
+  expect(departureItems.length, 'departure checklist items').toBeGreaterThan(0);
+
   const departure = await inspector.post('/api/inspections', {
     data: {
       vehicleId: available.id,
@@ -288,7 +309,7 @@ async function setupDriverAssignedTrip(): Promise<{
         `tenant/${TENANT_ID}/inspections/e2e-departure-2.jpg`,
         `tenant/${TENANT_ID}/inspections/e2e-departure-3.jpg`,
       ],
-      checklist: DEPARTURE_INSPECTION_ITEMS.map((item) => ({
+      checklist: departureItems.map((item) => ({
         label: item.label,
         result: 'pass',
         comment: null,
