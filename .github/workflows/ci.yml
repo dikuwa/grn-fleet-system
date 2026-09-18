@@ -196,6 +196,11 @@ jobs:
           src/e2e/protected-role-edit.spec.ts
           src/e2e/document-system-redesign.spec.ts
           src/e2e/pdf-export.spec.ts
+          src/e2e/approval-chain.spec.ts
+          src/e2e/approval-chain-national.spec.ts
+          src/e2e/filter-reset-and-statistics.spec.ts
+          src/e2e/live-search-and-request-people.spec.ts
+          src/e2e/platform-users.spec.ts
           src/e2e/maintenance-lifecycle-closure.spec.ts
           --project=chromium --workers=1
         env:
