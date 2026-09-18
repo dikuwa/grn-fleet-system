@@ -155,7 +155,7 @@ export async function evaluateTripReleaseGate(input: {
   }
 
   // Re-check schedule eligibility at each operational release boundary. Allocation
-  // creation already checks this, but another confirmed/released allocation can
+  // creation already checks this, but another confirmed allocation can
   // be introduced later and must not silently invalidate the safety decision.
   const [vehicleConflict] = await db
     .select({ id: vehicleAllocations.id })
@@ -164,7 +164,7 @@ export async function evaluateTripReleaseGate(input: {
       and(
         ne(vehicleAllocations.id, trip.allocationId),
         eq(vehicleAllocations.vehicleId, trip.vehicleId),
-        inArray(vehicleAllocations.state, ['confirmed', 'released']),
+        eq(vehicleAllocations.state, 'confirmed'),
         lt(vehicleAllocations.startAt, trip.allocationEndAt),
         gt(vehicleAllocations.endAt, trip.allocationStartAt),
       ),
@@ -179,7 +179,7 @@ export async function evaluateTripReleaseGate(input: {
           and(
             ne(vehicleAllocations.id, trip.allocationId),
             eq(vehicleAllocations.driverEmployeeId, trip.driverEmployeeId),
-            inArray(vehicleAllocations.state, ['confirmed', 'released']),
+            eq(vehicleAllocations.state, 'confirmed'),
             lt(vehicleAllocations.startAt, trip.allocationEndAt),
             gt(vehicleAllocations.endAt, trip.allocationStartAt),
           ),
@@ -191,7 +191,7 @@ export async function evaluateTripReleaseGate(input: {
     blockers.push({
       code: 'schedule_conflict',
       message: vehicleConflict
-        ? 'The allocated vehicle now has another confirmed/released allocation that overlaps this trip.'
+        ? 'The allocated vehicle now has another confirmed allocation that overlaps this trip.'
         : 'The assigned driver now has another confirmed/released allocation that overlaps this trip.',
     });
   }
