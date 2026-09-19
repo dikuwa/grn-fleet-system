@@ -42,7 +42,6 @@ test.describe('Route flow with maps and reporting', () => {
   test('mapped request -> detail map -> report km -> authority map', async ({ browser }) => {
     const requester = await login('requester@kavangoeast.test');
     const supervisor = await login('supervisor@kavangoeast.test');
-    const admin = await login(process.env.SEED_ADMIN_EMAIL || 'admin@kavangoeast.gov.na');
     const transport = await login('transport.admin@kavangoeast.test');
     const release = await login('release.officer@kavangoeast.test');
     const authoriser = await login('regional.authoriser@kavangoeast.test');
@@ -118,7 +117,7 @@ test.describe('Route flow with maps and reporting', () => {
     );
     expect(supApprove.status(), await supApprove.text()).toBe(200);
 
-    const createVehicleRes = await admin.post('/api/fleet', {
+    const createVehicleRes = await transport.post('/api/fleet', {
       headers: { 'idempotency-key': crypto.randomUUID() },
       data: {
         licenceNumber: `E2E-RF-${Date.now()}`,
@@ -210,7 +209,7 @@ test.describe('Route flow with maps and reporting', () => {
     await context.close();
     await api.dispose();
     await Promise.all(
-      [requester, supervisor, admin, transport, release, authoriser, driver].map((a) => a.dispose()),
+      [requester, supervisor, transport, release, authoriser, driver].map((a) => a.dispose()),
     );
   });
 });
