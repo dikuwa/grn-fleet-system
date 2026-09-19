@@ -685,8 +685,8 @@ export async function PATCH(req: NextRequest) {
           'fuel_transaction',
           id,
           ${`Fuel transaction ${action === 'verify' ? 'verified' : 'rejected'}`},
-          jsonb_build_object('isVerified', ${transaction.isVerified}, 'anomalyState', ${transaction.anomalyState}),
-          jsonb_build_object('isVerified', ${nextVerified}, 'anomalyState', ${nextState}),
+          jsonb_build_object('isVerified', ${transaction.isVerified}::boolean, 'anomalyState', ${transaction.anomalyState}::text),
+          jsonb_build_object('isVerified', ${nextVerified}::boolean, 'anomalyState', ${nextState}::text),
           ${reason},
           'web'
         FROM transitioned
