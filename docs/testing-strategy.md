@@ -27,7 +27,7 @@ It runs:
 - nightly
 - on pull requests only when the extended workflow or one of its selected E2E files changes
 
-The initial extended lane contains 9 skip-free suites / approximately 35 checks:
+The extended lane contains 11 skip-free suites / approximately 39 checks:
 
 - calendar and badge behavior
 - dark-mode persistence
@@ -38,6 +38,8 @@ The initial extended lane contains 9 skip-free suites / approximately 35 checks:
 - notification delivery and read-state behavior
 - offline drafts
 - public-site behavior
+- verified public request intake and idempotency
+- mapped route persistence, reporting, and authority rendering
 
 Failures here should be investigated, but the lane must not become a hidden second release gate.
 
@@ -67,11 +69,9 @@ Rewrite or retire before promotion:
 
 - `photo-upload-workflow.spec.ts`
 - `physical-trip-authority-reservation.spec.ts`
-- `public-request-lifecycle.spec.ts`
 - `role-isolation-workflow.spec.ts`
 - `role-lifecycle-smoke.spec.ts`
 - `route-calculation.spec.ts`
-- `route-flow.spec.ts`
 - `trip-return-due-lifecycle.spec.ts`
 
 A skipped test does not count as release evidence. Prefer deterministic fixtures and explicit local substitutes for external services.
