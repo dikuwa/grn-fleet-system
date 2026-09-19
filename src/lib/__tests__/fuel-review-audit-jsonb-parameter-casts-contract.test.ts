@@ -34,6 +34,15 @@ describe('Fuel review audit jsonb parameter cast contract', () => {
     expect(patchHandler).toContain('INSERT INTO audit_events (');
   });
 
+  it('takes the review timestamp from the database instead of binding a JS Date', () => {
+    // Passing a JS Date into this raw SQL reached postgres.js with a value it
+    // serialises as a string, failing with ERR_INVALID_ARG_TYPE
+    // ("Received an instance of Date") and returning 500 from PATCH /api/fuel.
+    // The same construct was replaced in the inspection service for the same reason.
+    expect(patchHandler).toContain('updated_at = CURRENT_TIMESTAMP');
+    expect(patchHandler).not.toContain('updated_at = ${now}');
+  });
+
   it('casts every jsonb_build_object argument so null parameters keep a determinate type', () => {
     const calls = jsonbBuildObjectCalls(patchHandler);
 
