@@ -38,6 +38,7 @@ The initial extended lane contains 9 skip-free suites / approximately 35 checks:
 - notification delivery and read-state behavior
 - offline drafts
 - public-site behavior
+- complete multi-role request-to-trip lifecycle
 
 Failures here should be investigated, but the lane must not become a hidden second release gate.
 
@@ -69,7 +70,6 @@ Rewrite or retire before promotion:
 - `physical-trip-authority-reservation.spec.ts`
 - `public-request-lifecycle.spec.ts`
 - `role-isolation-workflow.spec.ts`
-- `role-lifecycle-smoke.spec.ts`
 - `route-calculation.spec.ts`
 - `route-flow.spec.ts`
 - `trip-return-due-lifecycle.spec.ts`
