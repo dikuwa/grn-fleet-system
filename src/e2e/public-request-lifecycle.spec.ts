@@ -16,7 +16,7 @@ test.describe.serial('Public request lifecycle', () => {
       data: {
         employeeNumber: 'KERC002',
         surname: 'Shikongo',
-        verifier: 'maria.shikongo@kavangoeast.test',
+        verifier: 'requester@kavangoeast.test',
       },
     });
     expect(verifyResponse.status(), await verifyResponse.text()).toBe(200);
@@ -113,7 +113,7 @@ test.describe.serial('Public request lifecycle', () => {
       data: {
         employeeNumber: 'KERC003',
         surname: 'Ndara',
-        verifier: 'petrus.ndara@kavangoeast.test',
+        verifier: 'supervisor@kavangoeast.test',
       },
     });
     expect(verifyResponse.status(), await verifyResponse.text()).toBe(200);
