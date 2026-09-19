@@ -184,6 +184,7 @@ test.describe('Route flow with maps and reporting', () => {
         passengersUnderstood: true,
         licenceValidConfirmed: true,
         responsibilityAccepted: true,
+        conditionsReviewed: true,
       },
     });
     expect(acknowledge.status(), await acknowledge.text()).toBe(200);
