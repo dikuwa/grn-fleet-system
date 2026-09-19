@@ -59,8 +59,27 @@ test.describe.serial('Driver acknowledgment queue', () => {
     const fleetResponse = await transport.get('/api/fleet?limit=100');
     const fleetBody = await fleetResponse.json();
     const fleetRows = fleetBody.rows || fleetBody.data || fleetBody;
-    const vehicle = fleetRows.find((row: { status: string }) => row.status === 'available');
-    test.skip(!vehicle, 'No available vehicle in seed for driver acknowledgment E2E');
+    let vehicle = fleetRows.find((row: { status: string }) => row.status === 'available');
+    if (!vehicle) {
+      const createVehicle = await transport.post('/api/fleet', {
+        headers: { 'idempotency-key': crypto.randomUUID() },
+        data: {
+          licenceNumber: `E2E-DQ-${Date.now()}`,
+          make: 'Toyota',
+          model: 'Hilux',
+          manufactureYear: 2025,
+          colour: 'White',
+          fuelType: 'diesel',
+          transmission: 'manual',
+          currentOdometer: 100,
+          status: 'available',
+          seatedCapacity: 5,
+        },
+      });
+      expect(createVehicle.status(), await createVehicle.text()).toBe(201);
+      vehicle = (await createVehicle.json()).vehicle;
+    }
+    expect(vehicle?.id, 'available or provisioned vehicle').toBeTruthy();
     const vehicleId = vehicle.id as string;
 
     const db = getDb();
