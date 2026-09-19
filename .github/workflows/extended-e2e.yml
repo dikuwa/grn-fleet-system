@@ -15,7 +15,10 @@ on:
       - 'src/e2e/licence-expiry-report.spec.ts'
       - 'src/e2e/manual-trip-authority-number.spec.ts'
       - 'src/e2e/notification-delivery.spec.ts'
+      - 'src/e2e/offline-conflict-resolution.spec.ts'
       - 'src/e2e/offline-drafts.spec.ts'
+      - 'src/e2e/role-isolation-workflow.spec.ts'
+      - 'src/e2e/role-lifecycle-smoke.spec.ts'
       - 'src/e2e/public-site.spec.ts'
 
 concurrency:
@@ -120,7 +123,10 @@ jobs:
           src/e2e/licence-expiry-report.spec.ts
           src/e2e/manual-trip-authority-number.spec.ts
           src/e2e/notification-delivery.spec.ts
+          src/e2e/offline-conflict-resolution.spec.ts
           src/e2e/offline-drafts.spec.ts
+          src/e2e/role-isolation-workflow.spec.ts
+          src/e2e/role-lifecycle-smoke.spec.ts
           src/e2e/public-site.spec.ts
           --project=chromium --workers=1
         env:

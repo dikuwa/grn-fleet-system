@@ -27,7 +27,7 @@ It runs:
 - nightly
 - on pull requests only when the extended workflow or one of its selected E2E files changes
 
-The initial extended lane contains 9 skip-free suites / approximately 35 checks:
+The extended lane contains 12 skip-free suites / approximately 46 checks:
 
 - calendar and badge behavior
 - dark-mode persistence
@@ -36,8 +36,11 @@ The initial extended lane contains 9 skip-free suites / approximately 35 checks:
 - licence-expiry reporting
 - manual Trip Authority numbering
 - notification delivery and read-state behavior
+- offline conflict resolution
 - offline drafts
 - public-site behavior
+- repaired role-isolation workflow
+- complete multi-role request-to-trip lifecycle
 
 Failures here should be investigated, but the lane must not become a hidden second release gate.
 
@@ -50,29 +53,23 @@ The remaining E2E suites fall into two categories:
 Keep outside automated release blocking when equivalent or stronger coverage already exists in Tier 1:
 
 - `active-trips-smoke.spec.ts`
-- `full-trip-workflow.spec.ts`
 - `mobile-responsive.spec.ts`
 - `regional-trip-workflow.spec.ts`
 - `seed-logins.spec.ts`
 - `settings-branding-ui.spec.ts`
 - `ui-smoke.spec.ts`
 
-These can still be useful for exploratory/manual runs, but should not duplicate the permanent gate.
+These can still be useful for exploratory/manual runs, but should not duplicate the permanent gate. The superseded `full-trip-workflow.spec.ts` and `trip-return-due-lifecycle.spec.ts` suites have been retired.
 
 ### Conditional / skip-heavy debt
-
-- `offline-conflict-resolution.spec.ts` — targets the retired `/dashboard/offline` route and remains quarantined until redesigned or retired.
 
 Rewrite or retire before promotion:
 
 - `photo-upload-workflow.spec.ts`
 - `physical-trip-authority-reservation.spec.ts`
 - `public-request-lifecycle.spec.ts`
-- `role-isolation-workflow.spec.ts`
-- `role-lifecycle-smoke.spec.ts`
 - `route-calculation.spec.ts`
 - `route-flow.spec.ts`
-- `trip-return-due-lifecycle.spec.ts`
 
 A skipped test does not count as release evidence. Prefer deterministic fixtures and explicit local substitutes for external services.
 

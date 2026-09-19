@@ -656,7 +656,6 @@ export async function PATCH(req: NextRequest) {
 
     const nextVerified = action === 'verify';
     const nextState = nextVerified ? 'verified' : 'rejected';
-    const now = new Date();
 
     await db.execute(sql`
       WITH transitioned AS (
@@ -665,7 +664,7 @@ export async function PATCH(req: NextRequest) {
             verified_by_user_id = ${session.user.id},
             anomaly_state = ${nextState},
             anomaly_notes = ${reason},
-            updated_at = ${now}
+            updated_at = CURRENT_TIMESTAMP
         WHERE id = ${transaction.id}::uuid
           AND is_verified = ${transaction.isVerified}
           AND anomaly_state IS NOT DISTINCT FROM ${transaction.anomalyState}
@@ -685,8 +684,8 @@ export async function PATCH(req: NextRequest) {
           'fuel_transaction',
           id,
           ${`Fuel transaction ${action === 'verify' ? 'verified' : 'rejected'}`},
-          jsonb_build_object('isVerified', ${transaction.isVerified}, 'anomalyState', ${transaction.anomalyState}),
-          jsonb_build_object('isVerified', ${nextVerified}, 'anomalyState', ${nextState}),
+          jsonb_build_object('isVerified', ${transaction.isVerified}::boolean, 'anomalyState', ${transaction.anomalyState}::text),
+          jsonb_build_object('isVerified', ${nextVerified}::boolean, 'anomalyState', ${nextState}::text),
           ${reason},
           'web'
         FROM transitioned

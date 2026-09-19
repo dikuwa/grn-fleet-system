@@ -357,7 +357,7 @@ export async function completeOfficialInspection(input: InspectionInput) {
                   WHEN c.status IN ('out_of_service', 'written_off', 'decommissioned') THEN c.status
                   ELSE 'maintenance'
                 END,
-                updated_at = ${now}
+                updated_at = CURRENT_TIMESTAMP
             FROM candidate c
             WHERE v.id = c.id
             RETURNING v.id, c.status AS previous_status, v.status AS new_status
