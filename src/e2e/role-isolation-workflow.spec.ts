@@ -76,7 +76,7 @@ async function openAs(
 async function liveInspectionEvidence(
   api: APIRequestContext,
   type: 'departure' | 'return',
-  failIndex?: number,
+  failCritical = false,
 ) {
   const db = getDb();
   const [template] = await db
@@ -97,6 +97,7 @@ async function liveInspectionEvidence(
     .select({
       label: inspectionTemplateItems.label,
       requiresPhoto: inspectionTemplateItems.requiresPhoto,
+      isCritical: inspectionTemplateItems.isCritical,
     })
     .from(inspectionTemplateItems)
     .where(eq(inspectionTemplateItems.templateId, template.id))
@@ -109,12 +110,17 @@ async function liveInspectionEvidence(
       .map((_item, index) => uploadInspectionEvidence(api, `role-isolation-${type}-${index}`)),
   );
 
+  const failedIndex = failCritical ? items.findIndex((item) => item.isCritical) : -1;
+  if (failCritical) {
+    expect(failedIndex, `${type} inspection template has a critical item`).toBeGreaterThanOrEqual(0);
+  }
+
   return {
     photoKeys,
     checklist: items.map((item, index) => ({
       label: item.label,
-      result: index === failIndex ? ('fail' as const) : ('pass' as const),
-      comment: index === failIndex ? 'Critical windshield damage found' : null,
+      result: index === failedIndex ? ('fail' as const) : ('pass' as const),
+      comment: index === failedIndex ? 'Critical inspection defect found' : null,
     })),
   };
 }
@@ -425,7 +431,7 @@ test.describe.serial('Approved multi-role workflow and isolation', () => {
       },
     });
     expect(returned.status(), await returned.text()).toBe(200);
-    const returnEvidence = await liveInspectionEvidence(inspector, 'return', 1);
+    const returnEvidence = await liveInspectionEvidence(inspector, 'return', true);
     const returnInspection = await inspector.post('/api/inspections', {
       data: {
         vehicleId,
