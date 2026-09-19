@@ -38,7 +38,7 @@ test.describe.serial('Manual Trip Authority number', () => {
 
     const run = Date.now().toString(36).toUpperCase();
     const vehicles = await pickAvailableVehicles(transport, 2);
-    test.skip(!vehicles.length, 'No available vehicle in seed for manual authority E2E');
+    expect(vehicles).toHaveLength(2);
 
     // ---- Trip 1: auto-generated number, then manual override ----
     const trip1 = await driveRegionalTrip({
@@ -242,10 +242,37 @@ async function findAuthority(db: ReturnType<typeof getDb>, tripId: string) {
 
 async function pickAvailableVehicles(transport: APIRequestContext, count: number) {
   const fleetResponse = await transport.get('/api/fleet?limit=100');
+  expect(fleetResponse.status(), await fleetResponse.text()).toBe(200);
   const fleetBody = await fleetResponse.json();
   const fleetRows = fleetBody.rows || fleetBody.data || fleetBody;
-  const available = fleetRows.filter((row: { status: string }) => row.status === 'available');
-  return available.slice(0, count) as { id: string }[];
+  const available = fleetRows
+    .filter((row: { status: string }) => row.status === 'available')
+    .slice(0, count) as { id: string }[];
+
+  while (available.length < count) {
+    const index = available.length + 1;
+    const createVehicle = await transport.post('/api/fleet', {
+      headers: { 'idempotency-key': crypto.randomUUID() },
+      data: {
+        licenceNumber: `E2E-MANUAL-${Date.now()}-${index}`,
+        make: 'Toyota',
+        model: 'Hilux',
+        manufactureYear: 2025,
+        colour: 'White',
+        fuelType: 'diesel',
+        transmission: 'manual',
+        currentOdometer: 100,
+        status: 'available',
+        seatedCapacity: 5,
+      },
+    });
+    expect(createVehicle.status(), await createVehicle.text()).toBe(201);
+    const vehicle = (await createVehicle.json()).vehicle as { id: string };
+    expect(vehicle.id).toBeTruthy();
+    available.push(vehicle);
+  }
+
+  return available;
 }
 
 async function cancelLeftoverAllocations(vehicleId: string) {
