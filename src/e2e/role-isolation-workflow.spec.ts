@@ -8,6 +8,9 @@ import {
 import { getDb } from '@/db';
 import {
   auditEvents,
+  generatedDocuments,
+  inspectionTemplateItems,
+  inspectionTemplates,
   notifications,
   transportRequests,
   trips,
@@ -15,8 +18,8 @@ import {
   vehicleAllocations,
   vehicleDefects,
 } from '@/db/schema';
-import { and, eq, gt, inArray, isNull, lt } from 'drizzle-orm';
-import { DEPARTURE_INSPECTION_ITEMS, RETURN_INSPECTION_ITEMS } from '@/lib/inspection-checklists';
+import { and, desc, eq, gt, inArray, isNull, lt } from 'drizzle-orm';
+import { uploadInspectionEvidence } from '@/e2e/helpers/inspection-evidence';
 
 const BASE = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 const PASSWORD = process.env.SEED_ADMIN_PASSWORD || 'changeme';
@@ -48,7 +51,7 @@ async function approve(
   api: APIRequestContext,
   workflowId: string,
   actionType = 'approved',
-  comment?: string,
+  comment = 'Role isolation E2E operational handover and approval verified.',
 ) {
   const response = await api.post(`/api/approvals/${workflowId}/action`, {
     data: { actionType, comment },
@@ -69,6 +72,53 @@ async function openAs(
   await page.goto(path, { waitUntil: 'domcontentloaded' });
   return { api, context, page };
 }
+
+async function liveInspectionEvidence(
+  api: APIRequestContext,
+  type: 'departure' | 'return',
+  failIndex?: number,
+) {
+  const db = getDb();
+  const [template] = await db
+    .select({ id: inspectionTemplates.id })
+    .from(inspectionTemplates)
+    .where(
+      and(
+        eq(inspectionTemplates.tenantId, '00000000-0000-0000-0000-000000000001' as never),
+        eq(inspectionTemplates.type, type),
+        eq(inspectionTemplates.isActive, true),
+      ),
+    )
+    .orderBy(desc(inspectionTemplates.version))
+    .limit(1);
+  expect(template, `active ${type} inspection template`).toBeTruthy();
+
+  const items = await db
+    .select({
+      label: inspectionTemplateItems.label,
+      requiresPhoto: inspectionTemplateItems.requiresPhoto,
+    })
+    .from(inspectionTemplateItems)
+    .where(eq(inspectionTemplateItems.templateId, template.id))
+    .orderBy(inspectionTemplateItems.sortOrder);
+  expect(items.length, `${type} inspection checklist items`).toBeGreaterThan(0);
+
+  const photoKeys = await Promise.all(
+    items
+      .filter((item) => item.requiresPhoto)
+      .map((_item, index) => uploadInspectionEvidence(api, `role-isolation-${type}-${index}`)),
+  );
+
+  return {
+    photoKeys,
+    checklist: items.map((item, index) => ({
+      label: item.label,
+      result: index === failIndex ? ('fail' as const) : ('pass' as const),
+      comment: index === failIndex ? 'Critical windshield damage found' : null,
+    })),
+  };
+}
+
 
 test.describe.serial('Approved multi-role workflow and isolation', () => {
   // Remote Neon authentication and the stateful regional lifecycle both make
