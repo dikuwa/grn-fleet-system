@@ -14,6 +14,7 @@ on:
       - 'src/e2e/fuel-efficiency-report.spec.ts'
       - 'src/e2e/licence-expiry-report.spec.ts'
       - 'src/e2e/manual-trip-authority-number.spec.ts'
+      - 'src/e2e/notification-delivery.spec.ts'
       - 'src/e2e/offline-drafts.spec.ts'
       - 'src/e2e/public-site.spec.ts'
 
@@ -118,6 +119,7 @@ jobs:
           src/e2e/fuel-efficiency-report.spec.ts
           src/e2e/licence-expiry-report.spec.ts
           src/e2e/manual-trip-authority-number.spec.ts
+          src/e2e/notification-delivery.spec.ts
           src/e2e/offline-drafts.spec.ts
           src/e2e/public-site.spec.ts
           --project=chromium --workers=1
