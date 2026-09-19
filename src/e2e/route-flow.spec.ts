@@ -15,6 +15,9 @@
  * test is reliable offline and in CI.
  */
 import { expect, request as playwrightRequest, test } from '@playwright/test';
+import { getDb } from '@/db';
+import { vehicleAllocations } from '@/db/schema/trips';
+import { and, eq, inArray, lt } from 'drizzle-orm';
 
 const BASE = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 const PASSWORD = process.env.SEED_ADMIN_PASSWORD || 'changeme';
@@ -95,7 +98,9 @@ test.describe('Route flow with maps and reporting', () => {
     // configure a browser key, so the supported fallback must render while the
     // route data remains visible below.
     await expect(page.getByText('Routes').first()).toBeVisible({ timeout: 10_000 });
-    await expect(page.getByLabel('Interactive route map').first()).toBeAttached({ timeout: 15_000 });
+    await expect(page.getByLabel('Interactive route map').first()).toBeAttached({
+      timeout: 15_000,
+    });
     await expect(page.getByText('Interactive map unavailable').first()).toBeVisible({
       timeout: 15_000,
     });
@@ -158,6 +163,26 @@ test.describe('Route flow with maps and reporting', () => {
     )?.id as string;
     expect(driverEmpId, 'seeded driver KERC008 found').toBeTruthy();
 
+    // Extended/CI runs are disposable, but a local run may leave the seeded
+    // driver with a still-confirmed allocation from an earlier attempt that
+    // failed before its cleanup. Cancel stale driver allocations inside the
+    // fixture horizon (the same retry-safe pattern the physical-authority
+    // suite uses) so the assignment below is deterministic. Cancelled trips
+    // stay in the audit trail; no lifecycle or authorization behavior is
+    // changed.
+    const db = getDb();
+    const horizon = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
+    await db
+      .update(vehicleAllocations)
+      .set({ state: 'cancelled', updatedAt: new Date() })
+      .where(
+        and(
+          eq(vehicleAllocations.driverEmployeeId, driverEmpId),
+          inArray(vehicleAllocations.state, ['provisional', 'confirmed', 'issued']),
+          lt(vehicleAllocations.startAt, horizon),
+        ),
+      );
+
     const assignRes = await transport.patch(`/api/allocations/${allocationId}/driver`, {
       data: { driverEmployeeId: driverEmpId },
     });
@@ -198,9 +223,9 @@ test.describe('Route flow with maps and reporting', () => {
       waitUntil: 'load',
       timeout: 60_000,
     });
-    await expect(
-      authorityPage.getByText('Official Vehicle Trip Authority').first(),
-    ).toBeVisible({ timeout: 20_000 });
+    await expect(authorityPage.getByText('Official Vehicle Trip Authority').first()).toBeVisible({
+      timeout: 20_000,
+    });
     await expect(authorityPage.getByText('Route map').first()).toBeVisible({ timeout: 15_000 });
     await expect(authorityPage.getByLabel('Interactive route map').first()).toBeAttached({
       timeout: 15_000,
