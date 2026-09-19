@@ -132,10 +132,6 @@ test.describe('Route flow with maps and reporting', () => {
         seatedCapacity: 5,
       },
     });
-    if (createVehicleRes.status() === 403) {
-      test.skip(true, 'Transport admin lacks VEHICLE_CREATE permission');
-      return;
-    }
     expect(createVehicleRes.status(), await createVehicleRes.text()).toBe(201);
     const vehicleId = ((await createVehicleRes.json()).vehicle as { id: string }).id;
 
@@ -153,15 +149,15 @@ test.describe('Route flow with maps and reporting', () => {
     const tripId = allocationData.trip.id as string;
     expect(tripId).toBeTruthy();
 
-    // Use the dedicated driver identity; never mutate the fixed Requester persona.
-    const profileRes = await driver.get('/api/users/profile');
-    const profileBody = await profileRes.json();
-    const profileData = profileBody.data || profileBody;
-    const driverEmpId = profileData.employee?.id || profileData.profile?.employeeId;
-    if (!driverEmpId) {
-      test.skip(true, 'Could not determine driver employee ID');
-      return;
-    }
+    // Resolve the dedicated seeded driver through the canonical roster API.
+    const driversResponse = await transport.get('/api/drivers');
+    expect(driversResponse.status(), await driversResponse.text()).toBe(200);
+    const driverRows = (await driversResponse.json()).data as Array<{
+      id: string;
+      employeeNumber: string;
+    }>;
+    const driverEmpId = driverRows.find((row) => row.employeeNumber === 'KERC008')?.id;
+    expect(driverEmpId, 'seeded driver KERC008 found').toBeTruthy();
 
     const assignRes = await transport.patch(`/api/allocations/${allocationId}/driver`, {
       data: { driverEmployeeId: driverEmpId },
