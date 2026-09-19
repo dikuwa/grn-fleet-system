@@ -14,8 +14,10 @@ import {
   vehicleInspections,
 } from '@/db/schema/trips';
 import { transportRequests } from '@/db/schema/requests';
+import { generatedDocuments } from '@/db/schema/documents';
 import { vehicles } from '@/db/schema/fleet';
 import { employees } from '@/db/schema/people';
+import { uploadInspectionEvidence } from '@/e2e/helpers/inspection-evidence';
 import { and, desc, eq, inArray, lt } from 'drizzle-orm';
 
 const BASE = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
@@ -67,8 +69,6 @@ test.describe.serial('Physical Trip Authority reservation and departure inspecti
 
     const run = Date.now().toString(36).toUpperCase();
     const vehiclesList = await pickAvailableVehicles(transport, 2);
-    test.skip(!vehiclesList.length, 'No available vehicle in seed for reservation E2E');
-
     const driverEmployeeId = await seededDriverEmployeeId(transport);
     const transportUserId = await employeeUserId('transport.admin@kavangoeast.test');
     const authoriserUserId = await employeeUserId('regional.authoriser@kavangoeast.test');
@@ -169,8 +169,6 @@ test.describe.serial('Physical Trip Authority reservation and departure inspecti
 
     const run = Date.now().toString(36).toUpperCase();
     const vehiclesList = await pickAvailableVehicles(transport, 1);
-    test.skip(!vehiclesList.length, 'No available vehicle in seed for inspection E2E');
-
     const driverEmployeeId = await seededDriverEmployeeId(transport);
     const transportUserId = await employeeUserId('transport.admin@kavangoeast.test');
 
@@ -246,7 +244,10 @@ test.describe.serial('Physical Trip Authority reservation and departure inspecti
       .limit(1);
     expect(authorityAfter.status).toBe('ready_for_departure');
 
-    // 7c. With a passed inspection, physical issue succeeds.
+    // 7c. With a passed inspection the Transport Administrator formally issues
+    //     the current Trip Authority document, then physical issue succeeds.
+    await issueTripAuthorityDocument(transport, trip.allocationId);
+
     const [inspectionRow] = await db
       .select({ odometerReading: vehicleInspections.odometerReading })
       .from(vehicleInspections)
@@ -274,8 +275,6 @@ test.describe.serial('Physical Trip Authority reservation and departure inspecti
 
     const run = Date.now().toString(36).toUpperCase();
     const vehiclesList = await pickAvailableVehicles(transport, 1);
-    test.skip(!vehiclesList.length, 'No available vehicle in seed for failed-inspection E2E');
-
     const driverEmployeeId = await seededDriverEmployeeId(transport);
     const transportUserId = await employeeUserId('transport.admin@kavangoeast.test');
 
@@ -401,16 +400,22 @@ async function createReservedTrip(input: {
   const workflowId = created.request.workflowInstanceId as string;
   expect(workflowId).toBeTruthy();
 
-  await approve(approvers.supervisor, workflowId);
+  await approve(approvers.supervisor, workflowId, 'supervisor review');
 
   // The reservation route needs a confirmed allocation WITHOUT an existing
   // trip, and a request status it accepts. Mirror the state the atomic
-  // allocation endpoint would leave behind, then insert the confirmed
-  // allocation directly (the same fixture technique the seed scripts use).
+  // allocation endpoint would leave behind — including the request-side driver
+  // assignment it records alongside the status, which the driver acknowledgement
+  // gate re-verifies — then insert the confirmed allocation directly (the same
+  // fixture technique the seed scripts use).
   await cancelLeftoverAllocations(vehicleId);
   const allocationId = crypto.randomUUID();
   await db.update(transportRequests)
-    .set({ status: 'vehicle_allocated', updatedAt: new Date() })
+    .set({
+      status: 'vehicle_allocated',
+      assignedDriverEmployeeId: driverEmployeeId,
+      updatedAt: new Date(),
+    })
     .where(eq(transportRequests.id, requestId));
   await db.insert(vehicleAllocations).values({
     id: allocationId,
@@ -440,9 +445,9 @@ async function createReservedTrip(input: {
   );
 
   // Transport Review -> Release -> Authorisation provisions the authority.
-  await approve(approvers.transport, workflowId);
-  await approve(approvers.release, workflowId);
-  await approve(approvers.authoriser, workflowId);
+  await approve(approvers.transport, workflowId, 'transport review');
+  await approve(approvers.release, workflowId, 'release');
+  await approve(approvers.authoriser, workflowId, 'authorisation');
 
   const [trip] = await db
     .select({ id: trips.id })
@@ -495,12 +500,16 @@ async function prepareAllocationWithoutTrip(input: {
   const workflowId = created.request.workflowInstanceId as string;
   expect(workflowId).toBeTruthy();
 
-  await approve(approvers.supervisor, workflowId);
+  await approve(approvers.supervisor, workflowId, 'supervisor review');
 
   await cancelLeftoverAllocations(vehicleId);
   const allocationId = crypto.randomUUID();
   await db.update(transportRequests)
-    .set({ status: 'vehicle_allocated', updatedAt: new Date() })
+    .set({
+      status: 'vehicle_allocated',
+      assignedDriverEmployeeId: driverEmployeeId,
+      updatedAt: new Date(),
+    })
     .where(eq(transportRequests.id, requestId));
   await db.insert(vehicleAllocations).values({
     id: allocationId,
@@ -516,6 +525,35 @@ async function prepareAllocationWithoutTrip(input: {
   });
 
   return { requestId, allocationId };
+}
+
+/**
+ * Formally issue the current Trip Authority document for an allocation, as the
+ * Transport Administrator does from the vehicle-issue workspace. The vehicle
+ * release gate requires the latest `trip_authority` document to be `issued`
+ * and to match the canonical authority version.
+ */
+async function issueTripAuthorityDocument(transport: APIRequestContext, allocationId: string) {
+  const [authorityDocument] = await getDb()
+    .select({ id: generatedDocuments.id, status: generatedDocuments.status })
+    .from(generatedDocuments)
+    .where(
+      and(
+        eq(generatedDocuments.tenantId, TENANT_ID as never),
+        eq(generatedDocuments.entityType, 'vehicle_allocation'),
+        eq(generatedDocuments.entityId, allocationId),
+        eq(generatedDocuments.documentType, 'trip_authority'),
+      ),
+    )
+    .orderBy(desc(generatedDocuments.documentVersion))
+    .limit(1);
+  expect(authorityDocument?.id, 'current Trip Authority document exists').toBeTruthy();
+  expect(authorityDocument?.status).toBe('draft');
+
+  const formalIssue = await transport.post(`/api/documents/${authorityDocument!.id}/action`, {
+    data: { action: 'issue' },
+  });
+  expect(formalIssue.status(), await formalIssue.text()).toBe(200);
 }
 
 /**
@@ -568,12 +606,18 @@ async function submitDepartureInspection(input: {
       comment: isFailedItem ? 'E2E: critical item failed to prove the issue gate' : null,
     };
   });
-  const photoKeys = templateItems
-    .filter((item: { requiresPhoto?: boolean | null }) => item.requiresPhoto)
-    .map(
-      (_item: unknown, index: number) =>
-        `tenant/${TENANT_ID}/inspections/e2e-${tripId.slice(0, 8)}-${index}.jpg`,
-    );
+  // Official departure evidence must be genuinely uploaded by the inspecting
+  // user before submission: the database claims each returned key for this
+  // inspection and rejects fabricated keys (migration 0109
+  // inspection_evidence_claim_guard). Use the shared evidence helper, exactly
+  // as the real inspection workspace (and the release-gate suites) do.
+  const requiredPhotoCount = templateItems.filter(
+    (item: { requiresPhoto?: boolean | null }) => item.requiresPhoto,
+  ).length;
+  const photoKeys: string[] = [];
+  for (let index = 0; index < requiredPhotoCount; index++) {
+    photoKeys.push(await uploadInspectionEvidence(api, `departure-${tripId.slice(0, 8)}-${index}`));
+  }
 
   const response = await api.post('/api/inspections', {
     data: {
@@ -629,10 +673,35 @@ async function employeeUserId(email: string) {
 
 async function pickAvailableVehicles(transport: APIRequestContext, count: number) {
   const fleetResponse = await transport.get('/api/fleet?limit=100');
+  expect(fleetResponse.status(), await fleetResponse.text()).toBe(200);
   const fleetBody = await fleetResponse.json();
   const fleetRows = fleetBody.rows || fleetBody.data || fleetBody;
   const available = fleetRows.filter((row: { status: string }) => row.status === 'available');
-  return available.slice(0, count) as { id: string }[];
+  if (available.length >= count) return available.slice(0, count) as { id: string }[];
+
+  // Extended/CI runs are disposable. Reuse seeded tenant vehicles
+  // deterministically instead of skipping when earlier suites left them busy.
+  const db = getDb();
+  const candidates = await db
+    .select({ id: vehicles.id })
+    .from(vehicles)
+    .where(eq(vehicles.tenantId, TENANT_ID as never))
+    .limit(count);
+
+  expect(
+    candidates.length,
+    `seeded tenant vehicles available for ${count} physical-authority fixtures`,
+  ).toBeGreaterThanOrEqual(count);
+
+  for (const candidate of candidates.slice(0, count)) {
+    await cancelLeftoverAllocations(candidate.id);
+    await db
+      .update(vehicles)
+      .set({ status: 'available', updatedAt: new Date() })
+      .where(and(eq(vehicles.id, candidate.id), eq(vehicles.tenantId, TENANT_ID as never)));
+  }
+
+  return candidates.slice(0, count);
 }
 
 async function cancelLeftoverAllocations(vehicleId: string) {
@@ -665,9 +734,14 @@ async function login(email: string) {
   return api;
 }
 
-async function approve(api: APIRequestContext, workflowId: string) {
+async function approve(api: APIRequestContext, workflowId: string, label: string) {
   const response = await api.post(`/api/approvals/${workflowId}/action`, {
-    data: { actionType: 'approved' },
+    data: {
+      actionType: 'approved',
+      // Transport Review refuses to advance until an operational release note is
+      // recorded, so every stage states the handover it is approving.
+      comment: `Physical authority reservation: ${label}; assignment and schedule checks recorded.`,
+    },
   });
   expect(response.status(), await response.text()).toBe(200);
 }
