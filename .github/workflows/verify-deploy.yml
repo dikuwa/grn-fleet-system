@@ -1,13 +1,20 @@
 name: Verify Deploy
 
-# Auto-verifies that the latest push to master is deployed and healthy.
-# Vercel deploys on push via the GitHub integration; this job polls the
+# Auto-verifies runtime-affecting pushes to master are deployed and healthy.
+# CI/docs/E2E-only pushes are ignored because Vercel may intentionally skip
+# creating a production deployment for those changes. This job polls the
 # GitHub deployment status API until the production deployment is ready,
 # then checks the live landing page and sign-in endpoint.
 
 on:
   push:
     branches: [master]
+    paths-ignore:
+      - '.github/**'
+      - 'docs/**'
+      - 'optional/**'
+      - 'src/e2e/**'
+      - '**/*.md'
 
 concurrency:
   group: verify-deploy-${{ github.ref }}
