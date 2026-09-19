@@ -8,30 +8,26 @@ test.describe.serial('Public request lifecycle', () => {
   test('1. Employee without a login account can submit a verified request', async () => {
     const ctx = await playwrightRequest.newContext({ baseURL: BASE });
 
-    // --- OTP request ---
-    const otpResponse = await ctx.post(`/api/public/requests/kavango-east/otp`, {
-      data: { employeeNumber: 'KERC002', verifier: 'Shikongo' },
-    });
-    expect(otpResponse.status(), await otpResponse.text()).toBe(200);
-    const otpBody = await otpResponse.json();
-
-    // Disposable Extended E2E runs without an email provider, so a
-    // development OTP must be returned deterministically.
-    const otp = otpBody.developmentOtp;
-    expect(otp, 'development OTP must be available in disposable CI').toBeTruthy();
-    expect(otpBody.verificationId).toBeTruthy();
-    expect(otpBody.destination).toMatch(/^.+@kavangoeast\.test$/);
-    const verificationId = otpBody.verificationId;
-
-    // --- OTP verify ---
-    const verifyResponse = await ctx.post(`/api/public/requests/kavango-east/verify`, {
-      data: { verificationId, otp },
+    // --- Directory verification ---
+    // Disposable CI intentionally has no email provider configured. The
+    // secure intake therefore verifies against the active staff directory and
+    // establishes the HttpOnly secure-request session without exposing an OTP.
+    const verifyResponse = await ctx.post(`/api/public/requests/kavango-east/otp`, {
+      data: {
+        employeeNumber: 'KERC002',
+        surname: 'Shikongo',
+        verifier: 'maria.shikongo@kavangoeast.test',
+      },
     });
     expect(verifyResponse.status(), await verifyResponse.text()).toBe(200);
     const verifyBody = await verifyResponse.json();
-    expect(verifyBody.employee).toBeTruthy();
-    expect(verifyBody.employee.firstName).toBeTruthy();
-    // Cookie is now auto-stored in the APIRequestContext
+    expect(verifyBody.mode).toBe('directory');
+    expect(verifyBody.employee).toMatchObject({
+      firstName: 'Maria',
+      lastName: 'Shikongo',
+      employeeNumber: 'KERC002',
+    });
+    // The secure session cookie is auto-stored in this APIRequestContext.
 
     // --- Submit request (secure session cookie auto-attached) ---
     const submitResponse = await ctx.post(`/api/public/requests/kavango-east/submit`, {
@@ -93,7 +89,11 @@ test.describe.serial('Public request lifecycle', () => {
 
     // Non-existent employee number + verifier should get generic message
     const otpResponse = await ctx.post(`/api/public/requests/kavango-east/otp`, {
-      data: { employeeNumber: 'DOES-NOT-EXIST', verifier: uniqueVerifier },
+      data: {
+        employeeNumber: 'DOES-NOT-EXIST',
+        surname: 'Nobody',
+        verifier: uniqueVerifier,
+      },
     });
     expect(otpResponse.status(), await otpResponse.text()).toBe(200);
     const body = await otpResponse.json();
@@ -107,21 +107,18 @@ test.describe.serial('Public request lifecycle', () => {
   test('3. Missing required submit fields return 400', async () => {
     const ctx = await playwrightRequest.newContext({ baseURL: BASE });
 
-    // Establish a valid secure session
-    const otpResponse = await ctx.post(`/api/public/requests/kavango-east/otp`, {
-      data: { employeeNumber: 'KERC003', verifier: 'Ndara' },
-    });
-    expect(otpResponse.status(), await otpResponse.text()).toBe(200);
-    const otpBody = await otpResponse.json();
-    const otp = otpBody.developmentOtp;
-    expect(otp, 'development OTP must be available in disposable CI').toBeTruthy();
-    const verificationId = otpBody.verificationId;
-
-    // Verify OTP
-    const verifyResponse = await ctx.post(`/api/public/requests/kavango-east/verify`, {
-      data: { verificationId, otp },
+    // Establish a separate valid directory-backed secure session so this
+    // validation test does not share identity-rate-limit state with test 1.
+    const verifyResponse = await ctx.post(`/api/public/requests/kavango-east/otp`, {
+      data: {
+        employeeNumber: 'KERC003',
+        surname: 'Ndara',
+        verifier: 'petrus.ndara@kavangoeast.test',
+      },
     });
     expect(verifyResponse.status(), await verifyResponse.text()).toBe(200);
+    const verifyBody = await verifyResponse.json();
+    expect(verifyBody.mode).toBe('directory');
 
     // Submit with empty/missing required fields
     const submitResponse = await ctx.post(`/api/public/requests/kavango-east/submit`, {
