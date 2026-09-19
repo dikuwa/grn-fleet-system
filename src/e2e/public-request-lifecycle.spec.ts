@@ -15,9 +15,10 @@ test.describe.serial('Public request lifecycle', () => {
     expect(otpResponse.status(), await otpResponse.text()).toBe(200);
     const otpBody = await otpResponse.json();
 
-    // In dev mode without Resend, the OTP is returned inline
+    // Disposable Extended E2E runs without an email provider, so a
+    // development OTP must be returned deterministically.
     const otp = otpBody.developmentOtp;
-    test.skip(!otp, 'Skipping verified-submit test: email sending succeeded (no dev OTP), or rate-limited');
+    expect(otp, 'development OTP must be available in disposable CI').toBeTruthy();
     expect(otpBody.verificationId).toBeTruthy();
     expect(otpBody.destination).toMatch(/^.+@kavangoeast\.test$/);
     const verificationId = otpBody.verificationId;
@@ -108,16 +109,12 @@ test.describe.serial('Public request lifecycle', () => {
 
     // Establish a valid secure session
     const otpResponse = await ctx.post(`/api/public/requests/kavango-east/otp`, {
-      data: { employeeNumber: 'KERC002', verifier: 'Shikongo' },
+      data: { employeeNumber: 'KERC003', verifier: 'Ndara' },
     });
-    if (otpResponse.status() === 429) {
-      test.skip(true, 'Rate-limited on OTP for test 3 — too many runs in 15 min window');
-      return;
-    }
     expect(otpResponse.status(), await otpResponse.text()).toBe(200);
     const otpBody = await otpResponse.json();
     const otp = otpBody.developmentOtp;
-    test.skip(!otp, 'No development OTP available — email sent successfully (Resend configured)');
+    expect(otp, 'development OTP must be available in disposable CI').toBeTruthy();
     const verificationId = otpBody.verificationId;
 
     // Verify OTP
