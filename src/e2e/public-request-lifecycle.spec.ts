@@ -30,55 +30,51 @@ test.describe.serial('Public request lifecycle', () => {
     // The secure session cookie is auto-stored in this APIRequestContext.
 
     // --- Submit request (secure session cookie auto-attached) ---
+    const departureAt = new Date(Date.now() + 7 * 86_400_000).toISOString();
+    const returnAt = new Date(Date.now() + 10 * 86_400_000).toISOString();
+    const clientSubmissionId = crypto.randomUUID();
+    const requestPayload = {
+      purpose: 'Official duty travel — E2E test',
+      origin: 'Rundu',
+      destination: 'Windhoek',
+      departureAt,
+      returnAt,
+      scope: 'regional' as const,
+      passengers: [{ externalName: 'Test Passenger' }],
+      clientSubmissionId,
+    };
+
     const submitResponse = await ctx.post(`/api/public/requests/kavango-east/submit`, {
-      data: {
-        purpose: 'Official duty travel — E2E test',
-        origin: 'Rundu',
-        destination: 'Windhoek',
-        departureDate: new Date(Date.now() + 7 * 86_400_000).toISOString().split('T')[0],
-        departureTime: '08:00',
-        returnDate: new Date(Date.now() + 10 * 86_400_000).toISOString().split('T')[0],
-        returnTime: '17:00',
-        tripType: 'regional',
-        passengers: JSON.stringify([{ name: 'Test Passenger', organisation: 'Kavango East' }]),
-        emergency: 'false',
-      },
+      data: requestPayload,
     });
     const submitBody = await submitResponse.json();
-    expect(submitResponse.status(), JSON.stringify(submitBody)).toBe(200);
-    expect(submitBody.reference).toMatch(/^REQ-/);
-    expect(submitBody.id).toBeTruthy();
+    expect(submitResponse.status(), JSON.stringify(submitBody)).toBe(201);
+    expect(submitBody.request.reference).toMatch(/^GRN\/TR\//);
+    expect(submitBody.request.id).toBeTruthy();
+    expect(submitBody.trackingUrl).toBeTruthy();
 
-    // Store reference for idempotency check
-    const requestReference = submitBody.reference;
-    const requestId = submitBody.id;
+    const requestReference = submitBody.request.reference as string;
+    const requestId = submitBody.request.id as string;
 
-    // --- Idempotency: verify duplicate submit returns the same reference ---
+    // --- Idempotency: duplicate submit with the same clientSubmissionId returns the same request ---
     const duplicateResponse = await ctx.post(`/api/public/requests/kavango-east/submit`, {
-      data: {
-        purpose: 'Official duty travel — E2E test',
-        origin: 'Rundu',
-        destination: 'Windhoek',
-        departureDate: new Date(Date.now() + 7 * 86_400_000).toISOString().split('T')[0],
-        departureTime: '08:00',
-        returnDate: new Date(Date.now() + 10 * 86_400_000).toISOString().split('T')[0],
-        returnTime: '17:00',
-        tripType: 'regional',
-        passengers: JSON.stringify([{ name: 'Test Passenger', organisation: 'Kavango East' }]),
-        emergency: 'false',
-      },
+      data: requestPayload,
     });
     const duplicateBody = await duplicateResponse.json();
     expect(duplicateResponse.status(), JSON.stringify(duplicateBody)).toBe(200);
-    expect(duplicateBody.reference).toBe(requestReference);
-    expect(duplicateBody.id).toBe(requestId);
+    expect(duplicateBody.duplicate).toBe(true);
+    expect(duplicateBody.request.reference).toBe(requestReference);
+    expect(duplicateBody.request.id).toBe(requestId);
 
-    // --- Track the request ---
-    const trackResponse = await ctx.get(`/api/public/requests/kavango-east/track/${requestId}`);
+    // --- Track the request with the signed tracking token returned by submit ---
+    const trackingUrl = new URL(submitBody.trackingUrl as string);
+    const trackResponse = await ctx.get(
+      `${trackingUrl.pathname}${trackingUrl.search}`,
+    );
     expect(trackResponse.status(), await trackResponse.text()).toBe(200);
     const trackBody = await trackResponse.json();
-    expect(trackBody.reference).toBe(requestReference);
-    expect(trackBody.status).toBeTruthy();
+    expect(trackBody.request.reference).toBe(requestReference);
+    expect(trackBody.request.status).toBeTruthy();
 
     await ctx.dispose();
   });
@@ -126,13 +122,10 @@ test.describe.serial('Public request lifecycle', () => {
         purpose: '',
         origin: '',
         destination: '',
-        departureDate: '',
-        departureTime: '',
-        returnDate: '',
-        returnTime: '',
-        tripType: '',
-        passengers: '',
-        emergency: '',
+        departureAt: '',
+        returnAt: '',
+        scope: 'regional',
+        passengers: [],
       },
     });
     expect(submitResponse.status()).toBe(400);
