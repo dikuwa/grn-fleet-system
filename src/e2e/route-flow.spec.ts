@@ -42,20 +42,16 @@ test.describe('Route flow with maps and reporting', () => {
   test('mapped request -> detail map -> report km -> authority map', async ({ browser }) => {
     const requester = await login('requester@kavangoeast.test');
     const supervisor = await login('supervisor@kavangoeast.test');
+    const admin = await login(process.env.SEED_ADMIN_EMAIL || 'admin@kavangoeast.gov.na');
     const transport = await login('transport.admin@kavangoeast.test');
     const release = await login('release.officer@kavangoeast.test');
     const authoriser = await login('regional.authoriser@kavangoeast.test');
     const driver = await login('driver@kavangoeast.test');
 
-    // Trip-authority validity check at trip-start requires now >= validFrom.
-    // Use a window 4-6h in the future: route-flow never calls trip-start, and
-    // this must NOT overlap role-lifecycle-smoke's dedicated-driver window
-    // (now-1h -> now+2h) which runs in a parallel worker — the driver-overlap
-    // check rejects any second assignment of the same employee in an
-    // overlapping period, so a wide 2h+ gap keeps both specs deterministic
-    // even with clock drift between parallel workers.
-    const start = new Date(Date.now() + 4 * 60 * 60 * 1000);
-    const end = new Date(Date.now() + 6 * 60 * 60 * 1000);
+    // Keep this mapped-route fixture well outside the short operational
+    // windows used by the other serial Extended E2E suites.
+    const start = new Date(Date.now() + 45 * 24 * 60 * 60 * 1000);
+    const end = new Date(Date.now() + 45 * 24 * 60 * 60 * 1000 + 2 * 60 * 60 * 1000);
 
     // ── 1. Requester creates a transport request WITH mapped routes ─────
     const createRes = await requester.post('/api/transport-requests', {
@@ -117,7 +113,7 @@ test.describe('Route flow with maps and reporting', () => {
     );
     expect(supApprove.status(), await supApprove.text()).toBe(200);
 
-    const createVehicleRes = await transport.post('/api/fleet', {
+    const createVehicleRes = await admin.post('/api/fleet', {
       headers: { 'idempotency-key': crypto.randomUUID() },
       data: {
         licenceNumber: `E2E-RF-${Date.now()}`,
@@ -132,10 +128,6 @@ test.describe('Route flow with maps and reporting', () => {
         seatedCapacity: 5,
       },
     });
-    if (createVehicleRes.status() === 403) {
-      test.skip(true, 'Transport admin lacks VEHICLE_CREATE permission');
-      return;
-    }
     expect(createVehicleRes.status(), await createVehicleRes.text()).toBe(201);
     const vehicleId = ((await createVehicleRes.json()).vehicle as { id: string }).id;
 
@@ -153,15 +145,14 @@ test.describe('Route flow with maps and reporting', () => {
     const tripId = allocationData.trip.id as string;
     expect(tripId).toBeTruthy();
 
-    // Use the dedicated driver identity; never mutate the fixed Requester persona.
-    const profileRes = await driver.get('/api/users/profile');
-    const profileBody = await profileRes.json();
-    const profileData = profileBody.data || profileBody;
-    const driverEmpId = profileData.employee?.id || profileData.profile?.employeeId;
-    if (!driverEmpId) {
-      test.skip(true, 'Could not determine driver employee ID');
-      return;
-    }
+    // Resolve the seeded driver deterministically through the transport API.
+    const driversResponse = await transport.get('/api/drivers');
+    expect(driversResponse.status(), await driversResponse.text()).toBe(200);
+    const driverRows = (await driversResponse.json()).data;
+    const driverEmpId = driverRows.find(
+      (row: { employeeNumber: string }) => row.employeeNumber === 'KERC008',
+    )?.id as string;
+    expect(driverEmpId, 'seeded driver KERC008 found').toBeTruthy();
 
     const assignRes = await transport.patch(`/api/allocations/${allocationId}/driver`, {
       data: { driverEmployeeId: driverEmpId },
@@ -199,7 +190,7 @@ test.describe('Route flow with maps and reporting', () => {
     await context.close();
     await api.dispose();
     await Promise.all(
-      [requester, supervisor, transport, release, authoriser, driver].map((a) => a.dispose()),
+      [requester, supervisor, admin, transport, release, authoriser, driver].map((a) => a.dispose()),
     );
   });
 });
