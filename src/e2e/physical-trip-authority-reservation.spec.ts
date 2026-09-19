@@ -67,8 +67,6 @@ test.describe.serial('Physical Trip Authority reservation and departure inspecti
 
     const run = Date.now().toString(36).toUpperCase();
     const vehiclesList = await pickAvailableVehicles(transport, 2);
-    test.skip(!vehiclesList.length, 'No available vehicle in seed for reservation E2E');
-
     const driverEmployeeId = await seededDriverEmployeeId(transport);
     const transportUserId = await employeeUserId('transport.admin@kavangoeast.test');
     const authoriserUserId = await employeeUserId('regional.authoriser@kavangoeast.test');
@@ -169,8 +167,6 @@ test.describe.serial('Physical Trip Authority reservation and departure inspecti
 
     const run = Date.now().toString(36).toUpperCase();
     const vehiclesList = await pickAvailableVehicles(transport, 1);
-    test.skip(!vehiclesList.length, 'No available vehicle in seed for inspection E2E');
-
     const driverEmployeeId = await seededDriverEmployeeId(transport);
     const transportUserId = await employeeUserId('transport.admin@kavangoeast.test');
 
@@ -274,8 +270,6 @@ test.describe.serial('Physical Trip Authority reservation and departure inspecti
 
     const run = Date.now().toString(36).toUpperCase();
     const vehiclesList = await pickAvailableVehicles(transport, 1);
-    test.skip(!vehiclesList.length, 'No available vehicle in seed for failed-inspection E2E');
-
     const driverEmployeeId = await seededDriverEmployeeId(transport);
     const transportUserId = await employeeUserId('transport.admin@kavangoeast.test');
 
@@ -629,10 +623,35 @@ async function employeeUserId(email: string) {
 
 async function pickAvailableVehicles(transport: APIRequestContext, count: number) {
   const fleetResponse = await transport.get('/api/fleet?limit=100');
+  expect(fleetResponse.status(), await fleetResponse.text()).toBe(200);
   const fleetBody = await fleetResponse.json();
   const fleetRows = fleetBody.rows || fleetBody.data || fleetBody;
   const available = fleetRows.filter((row: { status: string }) => row.status === 'available');
-  return available.slice(0, count) as { id: string }[];
+  if (available.length >= count) return available.slice(0, count) as { id: string }[];
+
+  // Extended/CI runs are disposable. Reuse seeded tenant vehicles
+  // deterministically instead of skipping when earlier suites left them busy.
+  const db = getDb();
+  const candidates = await db
+    .select({ id: vehicles.id })
+    .from(vehicles)
+    .where(eq(vehicles.tenantId, TENANT_ID as never))
+    .limit(count);
+
+  expect(
+    candidates.length,
+    `seeded tenant vehicles available for ${count} physical-authority fixtures`,
+  ).toBeGreaterThanOrEqual(count);
+
+  for (const candidate of candidates.slice(0, count)) {
+    await cancelLeftoverAllocations(candidate.id);
+    await db
+      .update(vehicles)
+      .set({ status: 'available', updatedAt: new Date() })
+      .where(and(eq(vehicles.id, candidate.id), eq(vehicles.tenantId, TENANT_ID as never)));
+  }
+
+  return candidates.slice(0, count);
 }
 
 async function cancelLeftoverAllocations(vehicleId: string) {
