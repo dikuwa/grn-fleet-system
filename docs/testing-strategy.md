@@ -50,7 +50,6 @@ The remaining E2E suites fall into two categories:
 Keep outside automated release blocking when equivalent or stronger coverage already exists in Tier 1:
 
 - `active-trips-smoke.spec.ts`
-- `full-trip-workflow.spec.ts`
 - `mobile-responsive.spec.ts`
 - `regional-trip-workflow.spec.ts`
 - `seed-logins.spec.ts`
@@ -61,8 +60,6 @@ These can still be useful for exploratory/manual runs, but should not duplicate 
 
 ### Conditional / skip-heavy debt
 
-- `offline-conflict-resolution.spec.ts` — targets the retired `/dashboard/offline` route and remains quarantined until redesigned or retired.
-
 Rewrite or retire before promotion:
 
 - `photo-upload-workflow.spec.ts`
@@ -72,9 +69,16 @@ Rewrite or retire before promotion:
 - `role-lifecycle-smoke.spec.ts`
 - `route-calculation.spec.ts`
 - `route-flow.spec.ts`
-- `trip-return-due-lifecycle.spec.ts`
 
 A skipped test does not count as release evidence. Prefer deterministic fixtures and explicit local substitutes for external services.
+
+### Retired legacy suites
+
+The following suites were removed because they no longer represented live, unique contracts:
+
+- `full-trip-workflow.spec.ts` — superseded by stronger lifecycle/role-isolation closure coverage
+- `trip-return-due-lifecycle.spec.ts` — superseded by current return/closure coverage
+- `offline-conflict-resolution.spec.ts` — targeted the retired `/dashboard/offline` UI; live offline draft behavior remains covered by `offline-drafts.spec.ts`
 
 ## Promotion rule
 
