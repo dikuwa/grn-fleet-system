@@ -92,9 +92,14 @@ test.describe('Route flow with maps and reporting', () => {
       timeout: 60_000,
     });
     await expect(page.locator('h1:has-text("GRN/TR/")').first()).toBeVisible({ timeout: 15_000 });
-    // Routes section present with the Leaflet map container
-    await expect(page.locator('text=Routes').first()).toBeVisible({ timeout: 10_000 });
-    await expect(page.locator('.leaflet-container').first()).toBeAttached({ timeout: 15_000 });
+    // Routes section and Google Maps host are present. Disposable CI does not
+    // configure a browser key, so the supported fallback must render while the
+    // route data remains visible below.
+    await expect(page.getByText('Routes').first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByLabel('Interactive route map').first()).toBeAttached({ timeout: 15_000 });
+    await expect(page.getByText('Interactive map unavailable').first()).toBeVisible({
+      timeout: 15_000,
+    });
     // Route km surfaced in the route details
     await expect(page.getByText(/700 km/).first()).toBeVisible({ timeout: 10_000 });
     await expect(page.getByText('Windhoek, Khomas Region').first()).toBeVisible({ timeout: 5_000 });
@@ -159,18 +164,30 @@ test.describe('Route flow with maps and reporting', () => {
     });
     expect(assignRes.status(), await assignRes.text()).toBe(200);
 
-    // Transport review → release → authorise (provisions authority) → driver ack
+    // Transport review → release → authorise. Driver acknowledgement is
+    // operational and uses the canonical trip endpoint rather than approval action.
     for (const [api, label] of [
       [transport, 'transport review'],
       [release, 'release'],
       [authoriser, 'authorise'],
-      [driver, 'driver ack'],
     ] as const) {
       const res = await api.post(`/api/approvals/${requestData.workflowInstanceId}/action`, {
         data: { actionType: 'approved', comment: `Route flow: ${label}` },
       });
       expect(res.status(), `${label}: ${await res.text()}`).toBe(200);
     }
+
+    const acknowledge = await driver.post(`/api/trips/${tripId}/acknowledge`, {
+      data: {
+        vehicleConfirmed: true,
+        authorityConfirmed: true,
+        routeUnderstood: true,
+        passengersUnderstood: true,
+        licenceValidConfirmed: true,
+        responsibilityAccepted: true,
+      },
+    });
+    expect(acknowledge.status(), await acknowledge.text()).toBe(200);
 
     // ── 5. Trip Authority page renders the route map on the document ────
     await page.goto(`/dashboard/trips/${tripId}/authority`, {
@@ -181,7 +198,10 @@ test.describe('Route flow with maps and reporting', () => {
       timeout: 20_000,
     });
     await expect(page.getByText('Route map').first()).toBeVisible({ timeout: 15_000 });
-    await expect(page.locator('.leaflet-container').first()).toBeAttached({ timeout: 15_000 });
+    await expect(page.getByLabel('Interactive route map').first()).toBeAttached({ timeout: 15_000 });
+    await expect(page.getByText('Interactive map unavailable').first()).toBeVisible({
+      timeout: 15_000,
+    });
     await expect(page.getByText('Approved route distance').first()).toBeVisible({
       timeout: 10_000,
     });
