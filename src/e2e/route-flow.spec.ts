@@ -15,6 +15,9 @@
  * test is reliable offline and in CI.
  */
 import { expect, request as playwrightRequest, test } from '@playwright/test';
+import { getDb } from '@/db';
+import { vehicleAllocations } from '@/db/schema/trips';
+import { and, eq, inArray, lt } from 'drizzle-orm';
 
 const BASE = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 const PASSWORD = process.env.SEED_ADMIN_PASSWORD || 'changeme';
@@ -47,15 +50,10 @@ test.describe('Route flow with maps and reporting', () => {
     const authoriser = await login('regional.authoriser@kavangoeast.test');
     const driver = await login('driver@kavangoeast.test');
 
-    // Trip-authority validity check at trip-start requires now >= validFrom.
-    // Use a window 4-6h in the future: route-flow never calls trip-start, and
-    // this must NOT overlap role-lifecycle-smoke's dedicated-driver window
-    // (now-1h -> now+2h) which runs in a parallel worker — the driver-overlap
-    // check rejects any second assignment of the same employee in an
-    // overlapping period, so a wide 2h+ gap keeps both specs deterministic
-    // even with clock drift between parallel workers.
-    const start = new Date(Date.now() + 4 * 60 * 60 * 1000);
-    const end = new Date(Date.now() + 6 * 60 * 60 * 1000);
+    // Keep this mapped-route fixture well outside the short operational
+    // windows used by the other serial Extended E2E suites.
+    const start = new Date(Date.now() + 45 * 24 * 60 * 60 * 1000);
+    const end = new Date(Date.now() + 45 * 24 * 60 * 60 * 1000 + 2 * 60 * 60 * 1000);
 
     // ── 1. Requester creates a transport request WITH mapped routes ─────
     const createRes = await requester.post('/api/transport-requests', {
@@ -96,9 +94,16 @@ test.describe('Route flow with maps and reporting', () => {
       timeout: 60_000,
     });
     await expect(page.locator('h1:has-text("GRN/TR/")').first()).toBeVisible({ timeout: 15_000 });
-    // Routes section present with the Leaflet map container
-    await expect(page.locator('text=Routes').first()).toBeVisible({ timeout: 10_000 });
-    await expect(page.locator('.leaflet-container').first()).toBeAttached({ timeout: 15_000 });
+    // Routes section and Google Maps host are present. Disposable CI does not
+    // configure a browser key, so the supported fallback must render while the
+    // route data remains visible below.
+    await expect(page.getByText('Routes').first()).toBeVisible({ timeout: 10_000 });
+    await expect(page.getByLabel('Interactive route map').first()).toBeAttached({
+      timeout: 15_000,
+    });
+    await expect(page.getByText('Interactive map unavailable').first()).toBeVisible({
+      timeout: 15_000,
+    });
     // Route km surfaced in the route details
     await expect(page.getByText(/700 km/).first()).toBeVisible({ timeout: 10_000 });
     await expect(page.getByText('Windhoek, Khomas Region').first()).toBeVisible({ timeout: 5_000 });
@@ -132,10 +137,6 @@ test.describe('Route flow with maps and reporting', () => {
         seatedCapacity: 5,
       },
     });
-    if (createVehicleRes.status() === 403) {
-      test.skip(true, 'Transport admin lacks VEHICLE_CREATE permission');
-      return;
-    }
     expect(createVehicleRes.status(), await createVehicleRes.text()).toBe(201);
     const vehicleId = ((await createVehicleRes.json()).vehicle as { id: string }).id;
 
@@ -153,27 +154,46 @@ test.describe('Route flow with maps and reporting', () => {
     const tripId = allocationData.trip.id as string;
     expect(tripId).toBeTruthy();
 
-    // Use the dedicated driver identity; never mutate the fixed Requester persona.
-    const profileRes = await driver.get('/api/users/profile');
-    const profileBody = await profileRes.json();
-    const profileData = profileBody.data || profileBody;
-    const driverEmpId = profileData.employee?.id || profileData.profile?.employeeId;
-    if (!driverEmpId) {
-      test.skip(true, 'Could not determine driver employee ID');
-      return;
-    }
+    // Resolve the seeded driver deterministically through the transport API.
+    const driversResponse = await transport.get('/api/drivers');
+    expect(driversResponse.status(), await driversResponse.text()).toBe(200);
+    const driverRows = (await driversResponse.json()).data;
+    const driverEmpId = driverRows.find(
+      (row: { employeeNumber: string }) => row.employeeNumber === 'KERC008',
+    )?.id as string;
+    expect(driverEmpId, 'seeded driver KERC008 found').toBeTruthy();
+
+    // Extended/CI runs are disposable, but a local run may leave the seeded
+    // driver with a still-confirmed allocation from an earlier attempt that
+    // failed before its cleanup. Cancel stale driver allocations inside the
+    // fixture horizon (the same retry-safe pattern the physical-authority
+    // suite uses) so the assignment below is deterministic. Cancelled trips
+    // stay in the audit trail; no lifecycle or authorization behavior is
+    // changed.
+    const db = getDb();
+    const horizon = new Date(Date.now() + 60 * 24 * 60 * 60 * 1000);
+    await db
+      .update(vehicleAllocations)
+      .set({ state: 'cancelled', updatedAt: new Date() })
+      .where(
+        and(
+          eq(vehicleAllocations.driverEmployeeId, driverEmpId),
+          inArray(vehicleAllocations.state, ['provisional', 'confirmed', 'issued']),
+          lt(vehicleAllocations.startAt, horizon),
+        ),
+      );
 
     const assignRes = await transport.patch(`/api/allocations/${allocationId}/driver`, {
       data: { driverEmployeeId: driverEmpId },
     });
     expect(assignRes.status(), await assignRes.text()).toBe(200);
 
-    // Transport review → release → authorise (provisions authority) → driver ack
+    // Transport review → release → authorise. Driver acknowledgement is
+    // operational and uses the canonical trip endpoint rather than approval action.
     for (const [api, label] of [
       [transport, 'transport review'],
       [release, 'release'],
       [authoriser, 'authorise'],
-      [driver, 'driver ack'],
     ] as const) {
       const res = await api.post(`/api/approvals/${requestData.workflowInstanceId}/action`, {
         data: { actionType: 'approved', comment: `Route flow: ${label}` },
@@ -181,21 +201,44 @@ test.describe('Route flow with maps and reporting', () => {
       expect(res.status(), `${label}: ${await res.text()}`).toBe(200);
     }
 
-    // ── 5. Trip Authority page renders the route map on the document ────
-    await page.goto(`/dashboard/trips/${tripId}/authority`, {
+    const acknowledge = await driver.post(`/api/trips/${tripId}/acknowledge`, {
+      data: {
+        vehicleConfirmed: true,
+        authorityConfirmed: true,
+        routeUnderstood: true,
+        passengersUnderstood: true,
+        licenceValidConfirmed: true,
+        responsibilityAccepted: true,
+        conditionsReviewed: true,
+      },
+    });
+    expect(acknowledge.status(), await acknowledge.text()).toBe(200);
+
+    // ── 5. Trip Authority page renders the route map for an authorised operations role ──
+    const authorityContext = await browser.newContext({
+      storageState: await transport.storageState(),
+    });
+    const authorityPage = await authorityContext.newPage();
+    await authorityPage.goto(`/dashboard/trips/${tripId}/authority`, {
       waitUntil: 'load',
       timeout: 60_000,
     });
-    await expect(page.getByText('Official Vehicle Trip Authority').first()).toBeVisible({
+    await expect(authorityPage.getByText('Official Vehicle Trip Authority').first()).toBeVisible({
       timeout: 20_000,
     });
-    await expect(page.getByText('Route map').first()).toBeVisible({ timeout: 15_000 });
-    await expect(page.locator('.leaflet-container').first()).toBeAttached({ timeout: 15_000 });
-    await expect(page.getByText('Approved route distance').first()).toBeVisible({
+    await expect(authorityPage.getByText('Route map').first()).toBeVisible({ timeout: 15_000 });
+    await expect(authorityPage.getByLabel('Interactive route map').first()).toBeAttached({
+      timeout: 15_000,
+    });
+    await expect(authorityPage.getByText('Interactive map unavailable').first()).toBeVisible({
+      timeout: 15_000,
+    });
+    await expect(authorityPage.getByText('Approved route distance').first()).toBeVisible({
       timeout: 10_000,
     });
-    await expect(page.getByText(/700 km/).first()).toBeVisible({ timeout: 10_000 });
+    await expect(authorityPage.getByText(/700 km/).first()).toBeVisible({ timeout: 10_000 });
 
+    await authorityContext.close();
     await context.close();
     await api.dispose();
     await Promise.all(
