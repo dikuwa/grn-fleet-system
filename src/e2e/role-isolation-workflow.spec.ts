@@ -335,7 +335,7 @@ test.describe.serial('Approved multi-role workflow and isolation', () => {
       .from(generatedDocuments)
       .where(
         and(
-          eq(generatedDocuments.tenantId, authorityRequest.tenantId),
+          eq(generatedDocuments.tenantId, authorityRequest!.tenantId),
           eq(generatedDocuments.entityType, 'vehicle_allocation'),
           eq(generatedDocuments.entityId, allocationId),
           eq(generatedDocuments.documentType, 'trip_authority'),
@@ -593,23 +593,55 @@ test.describe.serial('Approved multi-role workflow and isolation', () => {
     const fleetBody = await fleetResponse.json();
     const available = (fleetBody.rows || fleetBody.data || fleetBody).find(
       (vehicle: { status: string }) => vehicle.status === 'available',
-    );
-    test.skip(!available, 'No available vehicles after prior test consumed them');
+    ) as { id: string } | undefined;
+    expect(available, 'available vehicle after regional lifecycle cleanup').toBeTruthy();
+
+    const db = getDb();
+    await db
+      .update(vehicleAllocations)
+      .set({ state: 'cancelled' })
+      .where(
+        and(
+          eq(vehicleAllocations.vehicleId, available!.id),
+          inArray(vehicleAllocations.state, ['provisional', 'confirmed', 'issued']),
+          lt(vehicleAllocations.startAt, end),
+          gt(vehicleAllocations.endAt, start),
+        ),
+      );
+
     const allocationResponse = await transport.post('/api/allocations', {
       data: {
         requestId: national.id,
-        vehicleId: available.id,
+        vehicleId: available!.id,
         startDate: start.toISOString(),
         endDate: end.toISOString(),
       },
     });
     expect(allocationResponse.status(), await allocationResponse.text()).toBe(200);
-    const allocationId = (await allocationResponse.json()).allocation.id as string;
+    const allocationBody = await allocationResponse.json();
+    const allocationId = allocationBody.allocation.id as string;
+    const tripId = allocationBody.trip.id as string;
+
     const driversResponse = await transport.get('/api/drivers');
+    expect(driversResponse.status(), await driversResponse.text()).toBe(200);
     const driverRows = (await driversResponse.json()).data;
     const driverEmployeeId = driverRows.find(
       (row: { employeeNumber: string }) => row.employeeNumber === 'KERC008',
-    ).id as string;
+    )?.id as string | undefined;
+    expect(driverEmployeeId, 'seeded authorised driver KERC008').toBeTruthy();
+
+    await db
+      .update(vehicleAllocations)
+      .set({ state: 'cancelled' })
+      .where(
+        and(
+          eq(vehicleAllocations.driverEmployeeId, driverEmployeeId!),
+          inArray(vehicleAllocations.state, ['provisional', 'confirmed', 'issued']),
+          lt(vehicleAllocations.startAt, end),
+          gt(vehicleAllocations.endAt, start),
+        ),
+      );
+
     const driverAssignment = await transport.patch(`/api/allocations/${allocationId}/driver`, {
       data: { driverEmployeeId },
     });
@@ -617,9 +649,21 @@ test.describe.serial('Approved multi-role workflow and isolation', () => {
     await approve(transport, national.workflowInstanceId);
     await approve(nationalRelease, national.workflowInstanceId);
     await approve(nationalAuthoriser, national.workflowInstanceId);
-    await approve(driver, national.workflowInstanceId);
 
-    const db = getDb();
+    const acknowledge = await driver.post(`/api/trips/${tripId}/acknowledge`, {
+      data: {
+        vehicleConfirmed: true,
+        authorityConfirmed: true,
+        routeUnderstood: true,
+        passengersUnderstood: true,
+        licenceValidConfirmed: true,
+        responsibilityAccepted: true,
+        conditionsReviewed: true,
+        signature: 'e2e-national-role-isolation-driver-confirmed',
+        comment: 'National role isolation driver acceptance.',
+      },
+    });
+    expect(acknowledge.status(), await acknowledge.text()).toBe(200);
     const [cancelledRequest] = await db
       .select()
       .from(transportRequests)
