@@ -8,6 +8,9 @@ import {
 import { getDb } from '@/db';
 import {
   auditEvents,
+  generatedDocuments,
+  inspectionTemplateItems,
+  inspectionTemplates,
   notifications,
   transportRequests,
   trips,
@@ -15,8 +18,8 @@ import {
   vehicleAllocations,
   vehicleDefects,
 } from '@/db/schema';
-import { and, eq, gt, inArray, isNull, lt } from 'drizzle-orm';
-import { DEPARTURE_INSPECTION_ITEMS, RETURN_INSPECTION_ITEMS } from '@/lib/inspection-checklists';
+import { and, desc, eq, gt, inArray, isNull, lt } from 'drizzle-orm';
+import { uploadInspectionEvidence } from '@/e2e/helpers/inspection-evidence';
 
 const BASE = process.env.NEXT_PUBLIC_APP_URL || 'http://localhost:3000';
 const PASSWORD = process.env.SEED_ADMIN_PASSWORD || 'changeme';
@@ -48,7 +51,7 @@ async function approve(
   api: APIRequestContext,
   workflowId: string,
   actionType = 'approved',
-  comment?: string,
+  comment = 'Role isolation E2E operational handover and approval verified.',
 ) {
   const response = await api.post(`/api/approvals/${workflowId}/action`, {
     data: { actionType, comment },
@@ -69,6 +72,53 @@ async function openAs(
   await page.goto(path, { waitUntil: 'domcontentloaded' });
   return { api, context, page };
 }
+
+async function liveInspectionEvidence(
+  api: APIRequestContext,
+  type: 'departure' | 'return',
+  failIndex?: number,
+) {
+  const db = getDb();
+  const [template] = await db
+    .select({ id: inspectionTemplates.id })
+    .from(inspectionTemplates)
+    .where(
+      and(
+        eq(inspectionTemplates.tenantId, '00000000-0000-0000-0000-000000000001' as never),
+        eq(inspectionTemplates.type, type),
+        eq(inspectionTemplates.isActive, true),
+      ),
+    )
+    .orderBy(desc(inspectionTemplates.version))
+    .limit(1);
+  expect(template, `active ${type} inspection template`).toBeTruthy();
+
+  const items = await db
+    .select({
+      label: inspectionTemplateItems.label,
+      requiresPhoto: inspectionTemplateItems.requiresPhoto,
+    })
+    .from(inspectionTemplateItems)
+    .where(eq(inspectionTemplateItems.templateId, template.id))
+    .orderBy(inspectionTemplateItems.sortOrder);
+  expect(items.length, `${type} inspection checklist items`).toBeGreaterThan(0);
+
+  const photoKeys = await Promise.all(
+    items
+      .filter((item) => item.requiresPhoto)
+      .map((_item, index) => uploadInspectionEvidence(api, `role-isolation-${type}-${index}`)),
+  );
+
+  return {
+    photoKeys,
+    checklist: items.map((item, index) => ({
+      label: item.label,
+      result: index === failIndex ? ('fail' as const) : ('pass' as const),
+      comment: index === failIndex ? 'Critical windshield damage found' : null,
+    })),
+  };
+}
+
 
 test.describe.serial('Approved multi-role workflow and isolation', () => {
   // Remote Neon authentication and the stateful regional lifecycle both make
@@ -240,8 +290,23 @@ test.describe.serial('Approved multi-role workflow and isolation', () => {
     await approve(transport, workflowId);
     await approve(release, workflowId);
     await approve(authoriser, workflowId);
-    await approve(driver, workflowId);
 
+    const acknowledge = await driver.post(`/api/trips/${tripId}/acknowledge`, {
+      data: {
+        vehicleConfirmed: true,
+        authorityConfirmed: true,
+        routeUnderstood: true,
+        passengersUnderstood: true,
+        licenceValidConfirmed: true,
+        responsibilityAccepted: true,
+        conditionsReviewed: true,
+        signature: 'e2e-role-isolation-driver-confirmed',
+        comment: 'Role isolation driver acceptance.',
+      },
+    });
+    expect(acknowledge.status(), await acknowledge.text()).toBe(200);
+
+    const departureEvidence = await liveInspectionEvidence(inspector, 'departure');
     const departure = await inspector.post('/api/inspections', {
       data: {
         vehicleId,
@@ -251,15 +316,40 @@ test.describe.serial('Approved multi-role workflow and isolation', () => {
         fuelLevel: 'full',
         inspectorAcknowledged: true,
         driverAcknowledged: true,
-        photoKeys: ['e2e/departure-1.jpg', 'e2e/departure-2.jpg', 'e2e/departure-3.jpg'],
-        checklist: DEPARTURE_INSPECTION_ITEMS.map((item) => ({
-          label: item.label,
-          result: 'pass',
-          comment: null,
-        })),
+        photoKeys: departureEvidence.photoKeys,
+        checklist: departureEvidence.checklist,
+        notes: 'Role isolation departure inspection — all clear.',
       },
     });
     expect(departure.status(), await departure.text()).toBe(200);
+
+    const [authorityRequest] = await db
+      .select({ tenantId: transportRequests.tenantId })
+      .from(transportRequests)
+      .where(eq(transportRequests.id, requestId))
+      .limit(1);
+    expect(authorityRequest?.tenantId).toBeTruthy();
+
+    const [authorityDocument] = await db
+      .select({ id: generatedDocuments.id, status: generatedDocuments.status })
+      .from(generatedDocuments)
+      .where(
+        and(
+          eq(generatedDocuments.tenantId, authorityRequest!.tenantId),
+          eq(generatedDocuments.entityType, 'vehicle_allocation'),
+          eq(generatedDocuments.entityId, allocationId),
+          eq(generatedDocuments.documentType, 'trip_authority'),
+        ),
+      )
+      .orderBy(desc(generatedDocuments.documentVersion))
+      .limit(1);
+    expect(authorityDocument?.id, 'current Trip Authority document').toBeTruthy();
+    expect(authorityDocument?.status).toBe('draft');
+
+    const formalIssue = await transport.post(`/api/documents/${authorityDocument!.id}/action`, {
+      data: { action: 'issue' },
+    });
+    expect(formalIssue.status(), await formalIssue.text()).toBe(200);
 
     const issue = await transport.post(`/api/trips/${tripId}/issue`, {
       data: {
@@ -291,7 +381,7 @@ test.describe.serial('Approved multi-role workflow and isolation', () => {
         odometerReading: availableVehicles[0].currentOdometer + 60,
       },
     });
-    expect(fuel.status(), await fuel.text()).toBe(200);
+    expect(fuel.status(), await fuel.text()).toBe(201);
     const fuelTransactionId = (await fuel.json()).data.id as string;
     const duplicateFuel = await driver.post('/api/fuel', {
       data: {
@@ -335,11 +425,7 @@ test.describe.serial('Approved multi-role workflow and isolation', () => {
       },
     });
     expect(returned.status(), await returned.text()).toBe(200);
-    const returnChecklist = RETURN_INSPECTION_ITEMS.map((item, index) => ({
-      label: item.label,
-      result: index === 1 ? 'fail' : 'pass',
-      comment: index === 1 ? 'Critical windshield damage found' : null,
-    }));
+    const returnEvidence = await liveInspectionEvidence(inspector, 'return', 1);
     const returnInspection = await inspector.post('/api/inspections', {
       data: {
         vehicleId,
@@ -349,8 +435,9 @@ test.describe.serial('Approved multi-role workflow and isolation', () => {
         fuelLevel: 'half',
         inspectorAcknowledged: true,
         driverAcknowledged: true,
-        photoKeys: ['e2e/return-1.jpg', 'e2e/return-2.jpg', 'e2e/return-3.jpg'],
-        checklist: returnChecklist,
+        photoKeys: returnEvidence.photoKeys,
+        checklist: returnEvidence.checklist,
+        notes: 'Role isolation return inspection — blocking defect expected.',
       },
     });
     expect(returnInspection.status(), await returnInspection.text()).toBe(200);
@@ -423,6 +510,18 @@ test.describe.serial('Approved multi-role workflow and isolation', () => {
     await auditUi.context.close();
     await auditUi.api.dispose();
 
+    await db
+      .update(vehicleDefects)
+      .set({ resolvedAt: new Date() })
+      .where(
+        and(
+          eq(vehicleDefects.vehicleId, vehicleId),
+          eq(vehicleDefects.isBlocking, true),
+          isNull(vehicleDefects.resolvedAt),
+        ),
+      );
+    await db.update(vehicles).set({ status: 'available' }).where(eq(vehicles.id, vehicleId));
+
     await Promise.all(
       [
         requester,
@@ -494,23 +593,55 @@ test.describe.serial('Approved multi-role workflow and isolation', () => {
     const fleetBody = await fleetResponse.json();
     const available = (fleetBody.rows || fleetBody.data || fleetBody).find(
       (vehicle: { status: string }) => vehicle.status === 'available',
-    );
-    test.skip(!available, 'No available vehicles after prior test consumed them');
+    ) as { id: string } | undefined;
+    expect(available, 'available vehicle after regional lifecycle cleanup').toBeTruthy();
+
+    const db = getDb();
+    await db
+      .update(vehicleAllocations)
+      .set({ state: 'cancelled' })
+      .where(
+        and(
+          eq(vehicleAllocations.vehicleId, available!.id),
+          inArray(vehicleAllocations.state, ['provisional', 'confirmed', 'issued']),
+          lt(vehicleAllocations.startAt, end),
+          gt(vehicleAllocations.endAt, start),
+        ),
+      );
+
     const allocationResponse = await transport.post('/api/allocations', {
       data: {
         requestId: national.id,
-        vehicleId: available.id,
+        vehicleId: available!.id,
         startDate: start.toISOString(),
         endDate: end.toISOString(),
       },
     });
     expect(allocationResponse.status(), await allocationResponse.text()).toBe(200);
-    const allocationId = (await allocationResponse.json()).allocation.id as string;
+    const allocationBody = await allocationResponse.json();
+    const allocationId = allocationBody.allocation.id as string;
+    const tripId = allocationBody.trip.id as string;
+
     const driversResponse = await transport.get('/api/drivers');
+    expect(driversResponse.status(), await driversResponse.text()).toBe(200);
     const driverRows = (await driversResponse.json()).data;
     const driverEmployeeId = driverRows.find(
       (row: { employeeNumber: string }) => row.employeeNumber === 'KERC008',
-    ).id as string;
+    )?.id as string | undefined;
+    expect(driverEmployeeId, 'seeded authorised driver KERC008').toBeTruthy();
+
+    await db
+      .update(vehicleAllocations)
+      .set({ state: 'cancelled' })
+      .where(
+        and(
+          eq(vehicleAllocations.driverEmployeeId, driverEmployeeId!),
+          inArray(vehicleAllocations.state, ['provisional', 'confirmed', 'issued']),
+          lt(vehicleAllocations.startAt, end),
+          gt(vehicleAllocations.endAt, start),
+        ),
+      );
+
     const driverAssignment = await transport.patch(`/api/allocations/${allocationId}/driver`, {
       data: { driverEmployeeId },
     });
@@ -518,9 +649,21 @@ test.describe.serial('Approved multi-role workflow and isolation', () => {
     await approve(transport, national.workflowInstanceId);
     await approve(nationalRelease, national.workflowInstanceId);
     await approve(nationalAuthoriser, national.workflowInstanceId);
-    await approve(driver, national.workflowInstanceId);
 
-    const db = getDb();
+    const acknowledge = await driver.post(`/api/trips/${tripId}/acknowledge`, {
+      data: {
+        vehicleConfirmed: true,
+        authorityConfirmed: true,
+        routeUnderstood: true,
+        passengersUnderstood: true,
+        licenceValidConfirmed: true,
+        responsibilityAccepted: true,
+        conditionsReviewed: true,
+        signature: 'e2e-national-role-isolation-driver-confirmed',
+        comment: 'National role isolation driver acceptance.',
+      },
+    });
+    expect(acknowledge.status(), await acknowledge.text()).toBe(200);
     const [cancelledRequest] = await db
       .select()
       .from(transportRequests)
