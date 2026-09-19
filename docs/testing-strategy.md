@@ -50,7 +50,6 @@ The remaining E2E suites fall into two categories:
 Keep outside automated release blocking when equivalent or stronger coverage already exists in Tier 1:
 
 - `active-trips-smoke.spec.ts`
-- `full-trip-workflow.spec.ts`
 - `mobile-responsive.spec.ts`
 - `regional-trip-workflow.spec.ts`
 - `seed-logins.spec.ts`
@@ -72,9 +71,15 @@ Rewrite or retire before promotion:
 - `role-lifecycle-smoke.spec.ts`
 - `route-calculation.spec.ts`
 - `route-flow.spec.ts`
-- `trip-return-due-lifecycle.spec.ts`
 
 A skipped test does not count as release evidence. Prefer deterministic fixtures and explicit local substitutes for external services.
+
+### Retired superseded suites
+
+These older lifecycle specs were removed after stronger current closure coverage replaced them:
+
+- `full-trip-workflow.spec.ts`
+- `trip-return-due-lifecycle.spec.ts`
 
 ## Promotion rule
 
