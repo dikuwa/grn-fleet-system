@@ -81,10 +81,6 @@ test.describe('Fuel efficiency report with route km', () => {
         currentOdometer: 100, status: 'available', seatedCapacity: 5,
       },
     });
-    if (createVehicleRes.status() === 403) {
-      test.skip(true, 'Transport admin lacks VEHICLE_CREATE permission');
-      return;
-    }
     expect(createVehicleRes.status(), await createVehicleRes.text()).toBe(201);
     const vehicleId = ((await createVehicleRes.json()).vehicle as { id: string }).id;
 
