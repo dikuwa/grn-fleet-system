@@ -68,10 +68,10 @@ export function BuiltForPublicSector() {
             {/* Bundled local image avoids third-party image failures. */}
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src="/images/home/public-office.webp"
-              alt="Namibian-style public office building with the national flag"
-              width={400}
-              height={300}
+              src="/images/home/public-fleet.webp"
+              alt="Namibian government fleet vehicles parked outside the Ministry of Works and Transport"
+              width={1000}
+              height={563}
               loading="lazy"
               decoding="async"
               className="block aspect-[16/9] w-full object-cover object-center sm:aspect-[12/5] lg:aspect-[16/10]"
