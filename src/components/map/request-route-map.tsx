@@ -20,6 +20,11 @@ interface RouteMapProps {
 }
 
 type LatLngLiteral = { lat: number; lng: number };
+type GoogleMapStyle = {
+  featureType?: string;
+  elementType?: string;
+  stylers: Array<Record<string, string | number>>;
+};
 
 type GoogleMap = {
   fitBounds: (
@@ -65,6 +70,7 @@ type GoogleMapsApi = {
       clickableIcons: boolean;
       gestureHandling: 'cooperative';
       backgroundColor: string;
+      styles?: GoogleMapStyle[];
     },
   ) => GoogleMap;
   LatLngBounds: new () => GoogleBounds;
@@ -242,11 +248,19 @@ function formatDuration(minutes: number | null): string {
   return `~${hours}h${remaining ? ` ${remaining}m` : ''}`;
 }
 
-const ROUTE_COLORS = ['#2563eb', '#059669', '#d97706', '#dc2626', '#7c3aed', '#0891b2'];
+const ROUTE_COLORS = ['#2563eb', '#0891b2', '#4f46e5', '#0284c7', '#1d4ed8', '#0f766e'];
 const NAMIBIA_CENTER = { lat: -22.5609, lng: 17.0658 };
+const ROADMAP_STYLES: GoogleMapStyle[] = [
+  { featureType: 'poi', stylers: [{ visibility: 'off' }] },
+  { featureType: 'landscape', elementType: 'geometry', stylers: [{ color: '#eef2e8' }] },
+  { featureType: 'road', elementType: 'geometry', stylers: [{ color: '#ffffff' }] },
+  { featureType: 'road', elementType: 'geometry.stroke', stylers: [{ color: '#d5d9d1' }] },
+  { featureType: 'water', elementType: 'geometry', stylers: [{ color: '#bfe3f5' }] },
+  { featureType: 'administrative', elementType: 'labels.text.fill', stylers: [{ color: '#64748b' }] },
+];
 const ENDPOINT_COLORS = {
-  Origin: '#2563eb',
-  Destination: '#dc2626',
+  Origin: '#dc2626',
+  Destination: '#059669',
 } as const;
 const MAP_PIN_PATH = 'M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5A2.5 2.5 0 1 1 12 6a2.5 2.5 0 0 1 0 5.5z';
 
@@ -278,15 +292,15 @@ export default function RouteMap({ routes }: RouteMapProps) {
         mapInstanceRef.current = new maps.Map(mapRef.current, {
           center: NAMIBIA_CENTER,
           zoom: 6,
-          ...(mapId ? { mapId } : {}),
-          mapTypeControl: true,
-          streetViewControl: true,
+          ...(mapId ? { mapId } : { styles: ROADMAP_STYLES }),
+          mapTypeControl: false,
+          streetViewControl: false,
           fullscreenControl: true,
           zoomControl: true,
           scaleControl: true,
-          clickableIcons: true,
+          clickableIcons: false,
           gestureHandling: 'cooperative',
-          backgroundColor: '#e5e7eb',
+          backgroundColor: '#e8efe5',
         });
         setLoadState('ready');
       })
@@ -332,7 +346,7 @@ export default function RouteMap({ routes }: RouteMapProps) {
             path,
             strokeColor: color,
             strokeOpacity: 0.92,
-            strokeWeight: 5,
+            strokeWeight: 4,
             geodesic: true,
           });
           overlaysRef.current.push(polyline);
@@ -364,11 +378,11 @@ export default function RouteMap({ routes }: RouteMapProps) {
             title: `${endpoint.kind}: ${endpoint.name}`,
             icon: {
               path: MAP_PIN_PATH,
-              scale: 1.35,
+              scale: 1.05,
               fillColor: ENDPOINT_COLORS[endpoint.kind],
               fillOpacity: 1,
               strokeColor: '#ffffff',
-              strokeWeight: 1.5,
+              strokeWeight: 1.25,
               anchor: new maps.Point(12, 22),
             },
             zIndex: endpoint.kind === 'Origin' ? 20 : 21,
@@ -396,7 +410,7 @@ export default function RouteMap({ routes }: RouteMapProps) {
             path: [route.originCoordinates, route.destinationCoordinates],
             strokeColor: color,
             strokeOpacity: 0.55,
-            strokeWeight: 3,
+            strokeWeight: 2.5,
             geodesic: true,
           });
           overlaysRef.current.push(fallbackLine);

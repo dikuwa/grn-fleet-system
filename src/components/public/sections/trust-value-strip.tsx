@@ -2,11 +2,11 @@
  * Trust strip + value proposition strip.
  *
  * Organisation types use approved local generated imagery rather than remote
- * image providers. The tiny WebP assets are embedded as data URIs so this
- * marketing strip cannot fail because a third-party image endpoint changes or
- * blocks a request.
+ * image providers. Optimised WebP assets are bundled with the app so this
+ * marketing strip stays fast and does not depend on third-party image hosts.
  */
 
+import Image from 'next/image';
 import {
   Eye,
   FileCheck2,
@@ -39,7 +39,7 @@ const ORGANISATIONS = [
   {
     key: 'public-enterprises',
     label: 'Public Enterprises',
-    alt: 'Modern institutional office building',
+    alt: 'Public-service enterprise and utility operations campus',
     position: '50% 50%',
   },
   {
@@ -114,16 +114,12 @@ export function TrustValueStrip({ orgs }: TrustValueStripProps) {
                 className="group min-w-0 overflow-hidden rounded-[10px] border border-border bg-canvas transition-[border-color,transform] duration-200 hover:-translate-y-0.5 hover:border-brand-300 motion-reduce:transform-none motion-reduce:transition-none dark:hover:border-brand-800"
               >
                 <div className="relative aspect-[8/5] overflow-hidden bg-muted">
-                  {/* The source is an approved local data URI, so no network dependency exists. */}
-                  {/* eslint-disable-next-line @next/next/no-img-element */}
-                  <img
+                  <Image
                     src={SECTOR_IMAGE_DATA[org.key]}
                     alt={org.alt}
-                    width={160}
-                    height={100}
-                    loading="lazy"
-                    decoding="async"
-                    className="h-full w-full object-cover opacity-90 transition-[transform,opacity] duration-300 group-hover:scale-[1.02] group-hover:opacity-100 motion-reduce:transform-none motion-reduce:transition-none"
+                    fill
+                    sizes="(max-width: 639px) 50vw, (max-width: 1023px) 33vw, 14vw"
+                    className="object-cover opacity-95 transition-[transform,opacity] duration-300 group-hover:scale-[1.02] group-hover:opacity-100 motion-reduce:transform-none motion-reduce:transition-none"
                     style={{ objectPosition: org.position }}
                   />
                   <span

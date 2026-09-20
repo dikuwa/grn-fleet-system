@@ -6,10 +6,10 @@
  * national adoption or a live tenant deployment.
  */
 
+import Image from 'next/image';
 import { ClipboardCheck, GitBranch, ShieldCheck } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { SectionContainer, SectionHeading } from '@/components/public/section';
-import { SECTOR_IMAGE_DATA } from '@/components/public/sector-image-data';
 
 const PRINCIPLES: {
   icon: LucideIcon;
@@ -66,25 +66,15 @@ export function BuiltForPublicSector() {
             </div>
           </div>
 
-          <figure className="border-border bg-surface overflow-hidden rounded-[12px] border p-3 shadow-sm sm:p-4">
-            <div className="bg-muted border-border overflow-hidden rounded-[9px] border">
-              {/* Bundled local imagery keeps the public page independent from remote image hosts. */}
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={SECTOR_IMAGE_DATA['government-ministries']}
-                alt="Namibian public-sector civic building with the national flag"
-                width={160}
-                height={100}
-                loading="lazy"
-                decoding="async"
-                className="aspect-[16/10] h-full w-full object-cover"
-                style={{ objectPosition: '50% 48%' }}
-              />
-            </div>
-            <figcaption className="text-ink-500 mt-3 text-xs leading-relaxed">
-              Namibia-focused civic context for organisations that coordinate public services and
-              fleet operations.
-            </figcaption>
+          <figure className="border-border bg-surface overflow-hidden rounded-[12px] border shadow-sm">
+            <Image
+              src="/images/home/public-sector-civic.webp"
+              alt="Illustrative Namibia public-sector civic building with an on-image message about an efficient, accountable and sustainable fleet"
+              width={1190}
+              height={550}
+              sizes="(max-width: 1023px) 100vw, 52vw"
+              className="block h-auto w-full object-cover"
+            />
           </figure>
         </div>
       </SectionContainer>
