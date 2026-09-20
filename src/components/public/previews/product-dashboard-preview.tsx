@@ -116,7 +116,7 @@ export function ProductDashboardPreview({
             <span className="text-[10px] text-ink-400">live</span>
           </div>
           <div className="mt-2 h-40">
-            <FleetMapPreview className="h-full" />
+            <FleetMapPreview className="h-full" variant="hero" />
           </div>
         </div>
       </div>
