@@ -11,39 +11,51 @@ import { SectionContainer } from '@/components/public/section';
 
 const ORGANISATIONS = [
   {
-    image: '/images/home/sectors/government-ministries.svg',
+    image: 'https://blogs.worldbank.org/content/dam/sites/blogs/img/detail/mgr/mad-blog-1.jpg',
     label: 'Government Ministries',
-    alt: 'Illustrative Namibian government ministry building with a national flag',
+    alt: 'Dr. Hifikepunye Pohamba government building in Windhoek, Namibia',
+    position: '50% 46%',
   },
   {
-    image: '/images/home/sectors/regional-councils.svg',
+    image:
+      'https://images.squarespace-cdn.com/content/v1/65e4c22f5f8b9206d6021811/1710154539933-QZR5TM9KJPIGH8BG7BMY/7.3.jpg?format=750w',
     label: 'Regional Councils',
-    alt: 'Illustrative contemporary regional council administration building',
+    alt: 'Omaheke Regional Council office park in Namibia',
+    position: '50% 52%',
   },
   {
-    image: '/images/home/sectors/municipalities.svg',
+    image:
+      'https://commons.wikimedia.org/wiki/Special:Redirect/file/Swakopmund%20house%20from%20the%20founding%20era.JPG?width=720',
     label: 'Municipalities',
-    alt: 'Illustrative municipal civic centre in a landscaped local setting',
+    alt: 'Municipal administration building in Swakopmund, Namibia',
+    position: '50% 45%',
   },
   {
-    image: '/images/home/sectors/public-enterprises.svg',
+    image:
+      'https://www.namport.com.na/files/images/4%20STS%20cranes%20in%20action%20simultaneously%20on%20Maersk%20Iyo%20vessel.jpg',
     label: 'Public Enterprises',
-    alt: 'Illustrative public enterprise operations and utility campus',
+    alt: 'Namport ship-to-shore cranes operating at the Port of Walvis Bay',
+    position: '50% 50%',
   },
   {
-    image: '/images/home/sectors/mining-industry.svg',
+    image:
+      'https://www.komatsu.com/content/dam/komatsu/websites/south-africa/images/press-release-photos/komatsu_960e-2kt_drives_husab_mining_operation.jpg',
     label: 'Mining & Industry',
-    alt: 'Illustrative heavy mining truck operating in an open quarry',
+    alt: 'Komatsu haul truck operating at Husab mine in Namibia',
+    position: '50% 52%',
   },
   {
-    image: '/images/home/sectors/logistics-providers.svg',
+    image:
+      'https://hitradio.com.na/wp-content/uploads/2022/06/15062022_namibia-lastwagen_iStock_DarthArt-1.jpg',
     label: 'Logistics Providers',
-    alt: 'Illustrative commercial freight truck on a long-distance road',
+    alt: 'Freight truck travelling on a Namibian highway',
+    position: '50% 54%',
   },
   {
-    image: '/images/home/sectors/private-organisations.svg',
+    image: 'https://namibiadailynews.info/files/2025/05/Labor-1-585x390.png',
     label: 'Private Organisations',
-    alt: 'Illustrative modern private-sector office campus',
+    alt: 'Modern office building in Windhoek, Namibia',
+    position: '50% 48%',
   },
 ] as const;
 
@@ -109,6 +121,7 @@ export function TrustValueStrip({ orgs }: TrustValueStripProps) {
                     loading="lazy"
                     decoding="async"
                     className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.015] motion-reduce:transform-none motion-reduce:transition-none"
+                    style={{ objectPosition: org.position }}
                   />
                 </div>
                 <div className="flex min-h-14 items-center px-3 py-3">
