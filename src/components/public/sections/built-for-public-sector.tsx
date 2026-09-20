@@ -65,21 +65,23 @@ export function BuiltForPublicSector() {
           </div>
 
           <figure className="border-border bg-surface relative isolate overflow-hidden rounded-[12px] border shadow-sm">
-            {/* Real Windhoek cityscape photograph, served from a 960px CC0 Wikimedia derivative. */}
+            {/* Bundled local image avoids third-party image failures. */}
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src="https://upload.wikimedia.org/wikipedia/commons/thumb/3/36/Cityscape_Chronicles%3B_Windhoek%27s_Architectural_Diversity.jpg/960px-Cityscape_Chronicles%3B_Windhoek%27s_Architectural_Diversity.jpg"
-              alt="Windhoek cityscape showing a mix of civic and commercial architecture"
-              width={960}
-              height={1280}
+              src="/images/home/public-office.webp"
+              alt="Namibian-style public office building with the national flag"
+              width={400}
+              height={300}
               loading="lazy"
               decoding="async"
-              className="block aspect-[16/9] w-full object-cover object-[50%_62%] sm:aspect-[12/5] lg:aspect-[16/10]"
+              className="block aspect-[16/9] w-full object-cover object-center sm:aspect-[12/5] lg:aspect-[16/10]"
             />
-            <div className="absolute right-3 bottom-3 max-w-[72%] sm:right-4 sm:bottom-4 sm:max-w-[56%]">
-              <p className="rounded-[8px] bg-slate-950/58 px-3 py-2 text-xs leading-snug font-medium text-white/92 shadow-sm backdrop-blur-[2px] sm:text-sm">
-                Accountable fleet operations for public service.
-              </p>
+            <div className="absolute right-3 bottom-3 max-w-[72%] sm:right-4 sm:bottom-4 sm:max-w-[54%]">
+              <div className="rounded-[7px] border border-white/75 bg-white/92 px-2.5 py-2 shadow-sm backdrop-blur-[2px] sm:px-3">
+                <p className="text-[10px] leading-snug font-normal text-slate-700 sm:text-[11px]">
+                  A more efficient, accountable and sustainable fleet for a better tomorrow.
+                </p>
+              </div>
             </div>
           </figure>
         </div>

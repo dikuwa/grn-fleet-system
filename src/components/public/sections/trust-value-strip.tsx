@@ -1,9 +1,9 @@
 /**
  * Trust strip + value proposition strip.
  *
- * Organisation imagery is bundled locally as individual optimized SVG assets.
- * Each image is full-bleed inside its tile so no contact-sheet whitespace,
- * remote image dependency or broken-image placeholder can leak into the public page.
+ * Organisation imagery is bundled locally as optimized WebP assets.
+ * Each image is full-bleed inside its tile so third-party image endpoints
+ * cannot break the public homepage.
  */
 
 import { Eye, FileCheck2, ScrollText, ShieldCheck, Users } from 'lucide-react';
@@ -11,48 +11,48 @@ import { SectionContainer } from '@/components/public/section';
 
 const ORGANISATIONS = [
   {
-    image: 'https://blogs.worldbank.org/content/dam/sites/blogs/img/detail/mgr/mad-blog-1.jpg',
+    image: '/images/home/government-ministries.webp',
     label: 'Government Ministries',
     alt: 'Dr. Hifikepunye Pohamba government building in Windhoek, Namibia',
     position: '50% 46%',
   },
   {
     image:
-      'https://images.squarespace-cdn.com/content/v1/65e4c22f5f8b9206d6021811/1710154539933-QZR5TM9KJPIGH8BG7BMY/7.3.jpg?format=750w',
+      '/images/home/regional-councils.webp',
     label: 'Regional Councils',
     alt: 'Omaheke Regional Council office park in Namibia',
     position: '50% 52%',
   },
   {
     image:
-      'https://commons.wikimedia.org/wiki/Special:Redirect/file/Swakopmund%20house%20from%20the%20founding%20era.JPG?width=720',
+      '/images/home/municipalities.webp',
     label: 'Municipalities',
     alt: 'Municipal administration building in Swakopmund, Namibia',
     position: '50% 45%',
   },
   {
     image:
-      'https://www.namport.com.na/files/images/4%20STS%20cranes%20in%20action%20simultaneously%20on%20Maersk%20Iyo%20vessel.jpg',
+      '/images/home/public-enterprises.webp',
     label: 'Public Enterprises',
     alt: 'Namport ship-to-shore cranes operating at the Port of Walvis Bay',
     position: '50% 50%',
   },
   {
     image:
-      'https://www.komatsu.com/content/dam/komatsu/websites/south-africa/images/press-release-photos/komatsu_960e-2kt_drives_husab_mining_operation.jpg',
+      '/images/home/mining-industry.webp',
     label: 'Mining & Industry',
     alt: 'Komatsu haul truck operating at Husab mine in Namibia',
     position: '50% 52%',
   },
   {
     image:
-      'https://hitradio.com.na/wp-content/uploads/2022/06/15062022_namibia-lastwagen_iStock_DarthArt-1.jpg',
+      '/images/home/logistics-providers.webp',
     label: 'Logistics Providers',
     alt: 'Freight truck travelling on a Namibian highway',
     position: '50% 54%',
   },
   {
-    image: 'https://namibiadailynews.info/files/2025/05/Labor-1-585x390.png',
+    image: '/images/home/private-organisations.webp',
     label: 'Private Organisations',
     alt: 'Modern office building in Windhoek, Namibia',
     position: '50% 48%',
@@ -111,7 +111,7 @@ export function TrustValueStrip({ orgs }: TrustValueStripProps) {
                 className="group border-border bg-canvas hover:border-brand-300 dark:hover:border-brand-800 min-w-0 overflow-hidden rounded-[10px] border transition-[border-color,transform] duration-200 hover:-translate-y-0.5 motion-reduce:transform-none motion-reduce:transition-none"
               >
                 <div className="bg-muted relative aspect-[16/9] overflow-hidden">
-                  {/* Local SVGs are already optimized and render sharply at all responsive sizes. */}
+                  {/* Local WebP assets stay fast and avoid third-party image failures. */}
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
                     src={org.image}
