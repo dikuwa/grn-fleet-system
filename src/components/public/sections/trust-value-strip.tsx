@@ -1,64 +1,49 @@
 /**
  * Trust strip + value proposition strip.
  *
- * Organisation types use approved local generated imagery rather than remote
- * image providers. The tiny WebP assets are embedded as data URIs so this
- * marketing strip cannot fail because a third-party image endpoint changes or
- * blocks a request.
+ * Organisation imagery is bundled locally as individual optimized SVG assets.
+ * Each image is full-bleed inside its tile so no contact-sheet whitespace,
+ * remote image dependency or broken-image placeholder can leak into the public page.
  */
 
-import {
-  Eye,
-  FileCheck2,
-  ScrollText,
-  ShieldCheck,
-  Users,
-} from 'lucide-react';
+import { Eye, FileCheck2, ScrollText, ShieldCheck, Users } from 'lucide-react';
 import { SectionContainer } from '@/components/public/section';
-import { SECTOR_IMAGE_DATA } from '@/components/public/sector-image-data';
 
 const ORGANISATIONS = [
   {
-    key: 'government-ministries',
+    image: '/images/home/sectors/government-ministries.svg',
     label: 'Government Ministries',
-    alt: 'Namibian public-sector civic building',
-    position: '50% 48%',
+    alt: 'Illustrative Namibian government ministry building with a national flag',
   },
   {
-    key: 'regional-councils',
+    image: '/images/home/sectors/regional-councils.svg',
     label: 'Regional Councils',
-    alt: 'Contemporary regional administration building',
-    position: '50% 50%',
+    alt: 'Illustrative contemporary regional council administration building',
   },
   {
-    key: 'municipalities',
+    image: '/images/home/sectors/municipalities.svg',
     label: 'Municipalities',
-    alt: 'Modern civic building in a municipal setting',
-    position: '50% 52%',
+    alt: 'Illustrative municipal civic centre in a landscaped local setting',
   },
   {
-    key: 'public-enterprises',
+    image: '/images/home/sectors/public-enterprises.svg',
     label: 'Public Enterprises',
-    alt: 'Modern institutional office building',
-    position: '50% 50%',
+    alt: 'Illustrative public enterprise operations and utility campus',
   },
   {
-    key: 'mining-industry',
+    image: '/images/home/sectors/mining-industry.svg',
     label: 'Mining & Industry',
-    alt: 'Heavy mining equipment operating in a quarry',
-    position: '50% 54%',
+    alt: 'Illustrative heavy mining truck operating in an open quarry',
   },
   {
-    key: 'logistics-providers',
+    image: '/images/home/sectors/logistics-providers.svg',
     label: 'Logistics Providers',
-    alt: 'Commercial freight truck travelling on a highway',
-    position: '50% 55%',
+    alt: 'Illustrative commercial freight truck on a long-distance road',
   },
   {
-    key: 'private-organisations',
+    image: '/images/home/sectors/private-organisations.svg',
     label: 'Private Organisations',
-    alt: 'Modern private-sector office building',
-    position: '50% 48%',
+    alt: 'Illustrative modern private-sector office campus',
   },
 ] as const;
 
@@ -101,9 +86,9 @@ export function TrustValueStrip({ orgs }: TrustValueStripProps) {
 
   return (
     <>
-      <section className="border-b border-border bg-surface">
+      <section className="border-border bg-surface border-b">
         <SectionContainer className="py-10 md:py-12">
-          <p className="text-center text-sm font-medium text-ink-500">
+          <p className="text-ink-500 text-center text-sm font-medium">
             Built for organisations that move people, services and resources
           </p>
 
@@ -111,28 +96,23 @@ export function TrustValueStrip({ orgs }: TrustValueStripProps) {
             {items.map((org) => (
               <li
                 key={org.label}
-                className="group min-w-0 overflow-hidden rounded-[10px] border border-border bg-canvas transition-[border-color,transform] duration-200 hover:-translate-y-0.5 hover:border-brand-300 motion-reduce:transform-none motion-reduce:transition-none dark:hover:border-brand-800"
+                className="group border-border bg-canvas hover:border-brand-300 dark:hover:border-brand-800 min-w-0 overflow-hidden rounded-[10px] border transition-[border-color,transform] duration-200 hover:-translate-y-0.5 motion-reduce:transform-none motion-reduce:transition-none"
               >
-                <div className="relative aspect-[8/5] overflow-hidden bg-muted">
-                  {/* The source is an approved local data URI, so no network dependency exists. */}
+                <div className="bg-muted relative aspect-[16/9] overflow-hidden">
+                  {/* Local SVGs are already optimized and render sharply at all responsive sizes. */}
                   {/* eslint-disable-next-line @next/next/no-img-element */}
                   <img
-                    src={SECTOR_IMAGE_DATA[org.key]}
+                    src={org.image}
                     alt={org.alt}
-                    width={160}
-                    height={100}
+                    width={640}
+                    height={360}
                     loading="lazy"
                     decoding="async"
-                    className="h-full w-full object-cover opacity-90 transition-[transform,opacity] duration-300 group-hover:scale-[1.02] group-hover:opacity-100 motion-reduce:transform-none motion-reduce:transition-none"
-                    style={{ objectPosition: org.position }}
-                  />
-                  <span
-                    aria-hidden="true"
-                    className="pointer-events-none absolute inset-x-0 bottom-0 h-px bg-white/10"
+                    className="h-full w-full object-cover transition-transform duration-300 group-hover:scale-[1.015] motion-reduce:transform-none motion-reduce:transition-none"
                   />
                 </div>
                 <div className="flex min-h-14 items-center px-3 py-3">
-                  <span className="text-xs font-semibold leading-snug text-ink-800 sm:text-sm">
+                  <span className="text-ink-800 text-xs leading-snug font-semibold sm:text-sm">
                     {org.label}
                   </span>
                 </div>
@@ -142,19 +122,22 @@ export function TrustValueStrip({ orgs }: TrustValueStripProps) {
         </SectionContainer>
       </section>
 
-      <section className="border-b border-border bg-canvas">
+      <section className="border-border bg-canvas border-b">
         <SectionContainer className="py-12">
-          <div className="rounded-[12px] border border-border bg-surface px-5 py-6 sm:px-6">
+          <div className="border-border bg-surface rounded-[12px] border px-5 py-6 sm:px-6">
             <div className="grid gap-6 sm:grid-cols-2 lg:grid-cols-5 lg:gap-0">
               {VALUES.map((v, index) => (
                 <div
                   key={v.title}
-                  className={`flex gap-3 lg:px-5 ${index > 0 ? 'lg:border-l lg:border-border' : ''}`}
+                  className={`flex gap-3 lg:px-5 ${index > 0 ? 'lg:border-border lg:border-l' : ''}`}
                 >
-                  <v.icon className="mt-0.5 h-5 w-5 shrink-0 text-brand-700 dark:text-brand-400" aria-hidden="true" />
+                  <v.icon
+                    className="text-brand-700 dark:text-brand-400 mt-0.5 h-5 w-5 shrink-0"
+                    aria-hidden="true"
+                  />
                   <div>
-                    <h3 className="text-sm font-semibold text-ink-950">{v.title}</h3>
-                    <p className="mt-1 text-xs leading-relaxed text-ink-500">{v.text}</p>
+                    <h3 className="text-ink-950 text-sm font-semibold">{v.title}</h3>
+                    <p className="text-ink-500 mt-1 text-xs leading-relaxed">{v.text}</p>
                   </div>
                 </div>
               ))}

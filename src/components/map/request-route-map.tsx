@@ -245,8 +245,8 @@ function formatDuration(minutes: number | null): string {
 const ROUTE_COLORS = ['#2563eb', '#059669', '#d97706', '#dc2626', '#7c3aed', '#0891b2'];
 const NAMIBIA_CENTER = { lat: -22.5609, lng: 17.0658 };
 const ENDPOINT_COLORS = {
-  Origin: '#2563eb',
-  Destination: '#dc2626',
+  Origin: '#dc2626',
+  Destination: '#059669',
 } as const;
 const MAP_PIN_PATH = 'M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5A2.5 2.5 0 1 1 12 6a2.5 2.5 0 0 1 0 5.5z';
 
@@ -279,12 +279,12 @@ export default function RouteMap({ routes }: RouteMapProps) {
           center: NAMIBIA_CENTER,
           zoom: 6,
           ...(mapId ? { mapId } : {}),
-          mapTypeControl: true,
-          streetViewControl: true,
+          mapTypeControl: false,
+          streetViewControl: false,
           fullscreenControl: true,
           zoomControl: true,
           scaleControl: true,
-          clickableIcons: true,
+          clickableIcons: false,
           gestureHandling: 'cooperative',
           backgroundColor: '#e5e7eb',
         });
@@ -331,8 +331,8 @@ export default function RouteMap({ routes }: RouteMapProps) {
             map,
             path,
             strokeColor: color,
-            strokeOpacity: 0.92,
-            strokeWeight: 5,
+            strokeOpacity: 0.9,
+            strokeWeight: 3,
             geodesic: true,
           });
           overlaysRef.current.push(polyline);
@@ -364,11 +364,11 @@ export default function RouteMap({ routes }: RouteMapProps) {
             title: `${endpoint.kind}: ${endpoint.name}`,
             icon: {
               path: MAP_PIN_PATH,
-              scale: 1.35,
+              scale: 1.05,
               fillColor: ENDPOINT_COLORS[endpoint.kind],
               fillOpacity: 1,
               strokeColor: '#ffffff',
-              strokeWeight: 1.5,
+              strokeWeight: 1.25,
               anchor: new maps.Point(12, 22),
             },
             zIndex: endpoint.kind === 'Origin' ? 20 : 21,
@@ -395,8 +395,8 @@ export default function RouteMap({ routes }: RouteMapProps) {
             map,
             path: [route.originCoordinates, route.destinationCoordinates],
             strokeColor: color,
-            strokeOpacity: 0.55,
-            strokeWeight: 3,
+            strokeOpacity: 0.7,
+            strokeWeight: 2.25,
             geodesic: true,
           });
           overlaysRef.current.push(fallbackLine);

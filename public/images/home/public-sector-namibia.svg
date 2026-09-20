@@ -1,0 +1,44 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 520" role="img" aria-labelledby="title desc">
+<title id="title">Namibian public sector civic campus</title>
+<desc id="desc">A modern civic building with landscaped grounds and Namibian flags, used as an illustrative public sector visual.</desc>
+<defs>
+  <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#74b7ef"/><stop offset=".78" stop-color="#ddecf8"/></linearGradient>
+  <linearGradient id="glass" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#173b5f"/><stop offset="1" stop-color="#4f83a8"/></linearGradient>
+  <linearGradient id="stone" x1="0" y1="0" x2="0" y2="1"><stop stop-color="#eee7dc"/><stop offset="1" stop-color="#cfc4b5"/></linearGradient>
+  <filter id="shadow"><feDropShadow dx="0" dy="7" stdDeviation="10" flood-color="#0f172a" flood-opacity=".18"/></filter>
+</defs>
+<rect width="960" height="520" fill="url(#sky)"/>
+<circle cx="790" cy="95" r="54" fill="#fff" opacity=".3"/>
+<g fill="#fff" opacity=".48"><ellipse cx="170" cy="70" rx="90" ry="24"/><ellipse cx="290" cy="106" rx="110" ry="28"/><ellipse cx="632" cy="58" rx="98" ry="24"/></g>
+<rect y="382" width="960" height="138" fill="#7fa85b"/>
+<path d="M0 442C173 414 313 428 468 448s308 12 492-22v94H0Z" fill="#6c904b"/>
+<g filter="url(#shadow)">
+  <rect x="144" y="188" width="478" height="208" rx="8" fill="url(#stone)"/>
+  <rect x="204" y="144" width="355" height="242" rx="7" fill="#e7dfd2"/>
+  <rect x="283" y="126" width="201" height="260" rx="28" fill="#e8e0d5"/>
+  <rect x="326" y="151" width="116" height="176" rx="14" fill="url(#glass)"/>
+  <rect x="169" y="220" width="77" height="115" fill="url(#glass)"/>
+  <rect x="514" y="210" width="78" height="125" fill="url(#glass)"/>
+  <g fill="#345b77" opacity=".88">
+    <rect x="229" y="190" width="32" height="58"/><rect x="229" y="269" width="32" height="58"/>
+    <rect x="469" y="191" width="31" height="57"/><rect x="469" y="268" width="31" height="59"/>
+  </g>
+  <rect x="121" y="367" width="535" height="23" rx="11" fill="#d6cabb"/>
+</g>
+<g>
+  <rect x="100" y="98" width="6" height="300" fill="#d1d5db"/>
+  <path d="M106 104h92v58h-92z" fill="#009543"/><path d="M106 104l92 58v-58z" fill="#003580"/><path d="M106 162l92-58v58z" fill="#d21034"/>
+  <path d="M106 125l92 16v8l-92-16z" fill="#fff"/>
+  <circle cx="181" cy="119" r="9" fill="#ffce00"/>
+  <rect x="691" y="116" width="5" height="278" fill="#d1d5db"/>
+  <path d="M696 121h75v47h-75z" fill="#009543"/><path d="M696 121l75 47v-47z" fill="#003580"/><path d="M696 168l75-47v47z" fill="#d21034"/>
+  <path d="M696 138l75 13v7l-75-13z" fill="#fff"/>
+</g>
+<g fill="#3f7c3f">
+  <circle cx="89" cy="377" r="46"/><circle cx="716" cy="369" r="54"/><circle cx="835" cy="386" r="68"/>
+</g>
+<g fill="#2f6f38">
+  <rect x="82" y="360" width="12" height="96" rx="5"/><rect x="709" y="350" width="12" height="112" rx="5"/><rect x="828" y="356" width="13" height="119" rx="5"/>
+</g>
+<path d="M0 483C192 454 378 474 543 489s292 9 417-13v44H0Z" fill="#d9c19c"/>
+</svg>

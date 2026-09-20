@@ -1,15 +1,13 @@
 /**
  * Public-sector readiness section.
  *
- * This is intentionally a static, illustrative preview. It communicates the
- * product's workflow and accountability model without claiming certification,
- * national adoption or a live tenant deployment.
+ * The right-hand visual is a full-bleed local asset with an HTML overlay so
+ * the message remains responsive, selectable and accessible.
  */
 
 import { ClipboardCheck, GitBranch, ShieldCheck } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { SectionContainer, SectionHeading } from '@/components/public/section';
-import { SECTOR_IMAGE_DATA } from '@/components/public/sector-image-data';
 
 const PRINCIPLES: {
   icon: LucideIcon;
@@ -40,7 +38,7 @@ export function BuiltForPublicSector() {
       className="border-border bg-canvas scroll-mt-20 border-b py-20 md:py-24"
     >
       <SectionContainer>
-        <div className="grid items-center gap-10 lg:grid-cols-[minmax(0,0.9fr)_minmax(420px,1.1fr)] lg:gap-16">
+        <div className="grid items-center gap-10 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:gap-14">
           <div>
             <SectionHeading
               align="left"
@@ -66,25 +64,23 @@ export function BuiltForPublicSector() {
             </div>
           </div>
 
-          <figure className="border-border bg-surface overflow-hidden rounded-[12px] border p-3 shadow-sm sm:p-4">
-            <div className="bg-muted border-border overflow-hidden rounded-[9px] border">
-              {/* Bundled local imagery keeps the public page independent from remote image hosts. */}
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={SECTOR_IMAGE_DATA['government-ministries']}
-                alt="Namibian public-sector civic building with the national flag"
-                width={160}
-                height={100}
-                loading="lazy"
-                decoding="async"
-                className="aspect-[16/10] h-full w-full object-cover"
-                style={{ objectPosition: '50% 48%' }}
-              />
+          <figure className="border-border bg-surface relative isolate overflow-hidden rounded-[12px] border shadow-sm">
+            {/* Real Windhoek cityscape photograph, served from a 960px CC0 Wikimedia derivative. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="https://upload.wikimedia.org/wikipedia/commons/thumb/3/36/Cityscape_Chronicles%3B_Windhoek%27s_Architectural_Diversity.jpg/960px-Cityscape_Chronicles%3B_Windhoek%27s_Architectural_Diversity.jpg"
+              alt="Windhoek cityscape showing a mix of civic and commercial architecture"
+              width={960}
+              height={1280}
+              loading="lazy"
+              decoding="async"
+              className="block aspect-[16/9] w-full object-cover object-[50%_62%] sm:aspect-[12/5] lg:aspect-[16/10]"
+            />
+            <div className="absolute right-3 bottom-3 max-w-[72%] sm:right-4 sm:bottom-4 sm:max-w-[56%]">
+              <p className="rounded-[8px] bg-slate-950/58 px-3 py-2 text-xs leading-snug font-medium text-white/92 shadow-sm backdrop-blur-[2px] sm:text-sm">
+                Accountable fleet operations for public service.
+              </p>
             </div>
-            <figcaption className="text-ink-500 mt-3 text-xs leading-relaxed">
-              Namibia-focused civic context for organisations that coordinate public services and
-              fleet operations.
-            </figcaption>
           </figure>
         </div>
       </SectionContainer>
