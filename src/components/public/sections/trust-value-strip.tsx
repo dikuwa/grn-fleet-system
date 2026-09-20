@@ -31,10 +31,7 @@ const ORGANISATIONS = [
     position: '50% 50%',
   },
   {
-    // Reuse a verified local civic-office asset until the original municipality
-    // data URI is regenerated. This removes the broken-image state without
-    // introducing any network dependency.
-    key: 'public-enterprises',
+    key: 'municipalities',
     label: 'Municipalities',
     alt: 'Modern civic building in a municipal setting',
     position: '50% 52%',

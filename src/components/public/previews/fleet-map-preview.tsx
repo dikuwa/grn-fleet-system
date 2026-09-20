@@ -38,7 +38,7 @@ export function FleetMapPreview({ className }: FleetMapPreviewProps) {
   return (
     <div
       className={cn(
-        'relative w-full overflow-hidden rounded-[10px] border border-border bg-[#eef0e8] dark:bg-[#151b1f]',
+        'border-border relative w-full overflow-hidden rounded-[10px] border bg-[#eef0e8] dark:bg-[#151b1f]',
         className,
       )}
     >
@@ -49,7 +49,12 @@ export function FleetMapPreview({ className }: FleetMapPreviewProps) {
         role="img"
         aria-label="Illustrative Kavango East regional fleet route between Rundu and Divundu"
       >
-        <rect width="100" height="70" fill="currentColor" className="text-[#eef0e8] dark:text-[#151b1f]" />
+        <rect
+          width="100"
+          height="70"
+          fill="currentColor"
+          className="text-[#eef0e8] dark:text-[#151b1f]"
+        />
 
         {/* River / terrain */}
         <path
@@ -78,37 +83,74 @@ export function FleetMapPreview({ className }: FleetMapPreviewProps) {
 
         {/* Major B8 corridor */}
         <path
-          d="M12 36 C 27 34, 39 35, 51 33 C 64 31, 74 30, 91 32"
+          d="M10 40 C 23 37, 30 38, 41 36 C 53 34, 59 29, 69 29 C 78 29, 84 32, 94 34"
           fill="none"
           stroke="var(--color-surface)"
-          strokeWidth="3.3"
+          strokeWidth="3.4"
           opacity="0.95"
         />
         <path
-          d="M12 36 C 27 34, 39 35, 51 33 C 64 31, 74 30, 91 32"
+          d="M10 40 C 23 37, 30 38, 41 36 C 53 34, 59 29, 69 29 C 78 29, 84 32, 94 34"
           fill="none"
           stroke="var(--color-ink-400)"
-          strokeWidth="1.2"
+          strokeWidth="1"
           opacity="0.75"
         />
 
-        {/* Active route */}
+        {/* Active route: a fine, outlined road treatment keeps the trip path
+            legible at both hero and section-preview sizes without looking like
+            a blunt connector. */}
         <path
-          d="M18 36 C 31 35, 43 35, 54 33 C 66 31, 76 30, 86 31"
+          d="M18 38 C 27 37, 34 38, 43 36 C 52 34, 58 30, 67 30 C 75 30, 80 32, 86 33"
+          fill="none"
+          stroke="var(--color-surface)"
+          strokeWidth="3"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+        />
+        <path
+          d="M18 38 C 27 37, 34 38, 43 36 C 52 34, 58 30, 67 30 C 75 30, 80 32, 86 33"
           fill="none"
           stroke="var(--color-brand-700)"
-          strokeWidth="2.4"
+          strokeWidth="1.15"
           strokeLinecap="round"
+          strokeLinejoin="round"
         />
-        <circle cx="18" cy="36" r="2.2" fill="var(--color-brand-700)" />
-        <circle cx="86" cy="31" r="2.2" fill="var(--color-brand-700)" />
+
+        {/* Origin marker */}
+        <circle
+          cx="18"
+          cy="38"
+          r="3"
+          fill="var(--color-surface)"
+          stroke="var(--color-brand-700)"
+          strokeWidth="0.7"
+        />
+        <circle cx="18" cy="38" r="1.25" fill="var(--color-brand-700)" />
+
+        {/* Destination pin */}
+        <path
+          d="M86 27.3c-2.15 0-3.65 1.55-3.65 3.55 0 2.45 3.65 6.3 3.65 6.3s3.65-3.85 3.65-6.3c0-2-1.5-3.55-3.65-3.55Z"
+          fill="var(--color-brand-800)"
+          stroke="var(--color-surface)"
+          strokeWidth="0.65"
+        />
+        <circle cx="86" cy="30.85" r="1.05" fill="var(--color-surface)" />
 
         {/* Labels */}
         <g fontFamily="var(--font-sans)" fill="var(--color-ink-600)">
-          <text x="13" y="31" fontSize="4" fontWeight="600">Rundu</text>
-          <text x="79" y="26" fontSize="4" fontWeight="600">Divundu</text>
-          <text x="50" y="29" fontSize="2.7">B8</text>
-          <text x="39" y="8" fontSize="2.4" opacity="0.75">Kavango River</text>
+          <text x="12" y="33" fontSize="4" fontWeight="600">
+            Rundu
+          </text>
+          <text x="78" y="23" fontSize="4" fontWeight="600">
+            Divundu
+          </text>
+          <text x="53" y="26" fontSize="2.7">
+            B8
+          </text>
+          <text x="39" y="8" fontSize="2.4" opacity="0.75">
+            Kavango River
+          </text>
         </g>
       </svg>
 
@@ -123,18 +165,18 @@ export function FleetMapPreview({ className }: FleetMapPreviewProps) {
               className="block h-2.5 w-2.5 rounded-full border-2 border-[var(--color-surface)] shadow-sm"
               style={{ backgroundColor: STATUS_COLOR[m.status] }}
             />
-            <span className="mt-1 rounded border border-border bg-[var(--color-surface)]/95 px-1.5 py-0.5 font-mono text-[9px] text-ink-700 shadow-sm backdrop-blur-sm">
+            <span className="border-border text-ink-700 mt-1 rounded border bg-[var(--color-surface)]/95 px-1.5 py-0.5 font-mono text-[9px] shadow-sm backdrop-blur-sm">
               {m.label}
             </span>
           </div>
         </div>
       ))}
 
-      <div className="absolute left-2 top-2 rounded-[7px] border border-border bg-[var(--color-surface)]/92 px-2 py-1 text-[9px] font-medium text-ink-600 shadow-sm backdrop-blur-sm">
+      <div className="border-border text-ink-600 absolute top-2 left-2 rounded-[7px] border bg-[var(--color-surface)]/92 px-2 py-1 text-[9px] font-medium shadow-sm backdrop-blur-sm">
         Rundu → Divundu · active route
       </div>
 
-      <div className="absolute bottom-2 right-2 flex items-center gap-2 rounded-[7px] border border-border bg-[var(--color-surface)]/92 px-2 py-1.5 backdrop-blur-sm">
+      <div className="border-border absolute right-2 bottom-2 flex items-center gap-2 rounded-[7px] border bg-[var(--color-surface)]/92 px-2 py-1.5 backdrop-blur-sm">
         <LegendItem color="var(--color-status-success-text)" label="On trip" />
         <LegendItem color="var(--color-ink-400)" label="Idle" />
         <LegendItem color="var(--color-status-warning-text)" label="Service" />
@@ -145,8 +187,12 @@ export function FleetMapPreview({ className }: FleetMapPreviewProps) {
 
 function LegendItem({ color, label }: { color: string; label: string }) {
   return (
-    <span className="flex items-center gap-1 text-[9px] text-ink-500">
-      <span className="h-1.5 w-1.5 rounded-full" style={{ backgroundColor: color }} aria-hidden="true" />
+    <span className="text-ink-500 flex items-center gap-1 text-[9px]">
+      <span
+        className="h-1.5 w-1.5 rounded-full"
+        style={{ backgroundColor: color }}
+        aria-hidden="true"
+      />
       {label}
     </span>
   );
