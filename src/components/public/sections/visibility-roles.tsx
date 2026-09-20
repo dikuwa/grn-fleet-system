@@ -48,7 +48,7 @@ export function VisibilityRoles() {
             <div>
               <AnalyticsPreview className="shadow-sm" />
               <div className="mt-3">
-                <FleetMapPreview className="h-48" />
+                <FleetMapPreview className="h-48" variant="visibility" />
               </div>
             </div>
           </div>
