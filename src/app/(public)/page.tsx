@@ -21,10 +21,7 @@ import {
   getPublishedFaqs,
   getPublicSiteSettings,
 } from '@/lib/platform/cms-public';
-import type {
-  PublicCmsContent,
-  PublicSiteSettings,
-} from '@/lib/platform/cms-public';
+import type { PublicCmsContent, PublicSiteSettings } from '@/lib/platform/cms-public';
 import { getPublicSeoContent, publicPageMetadata } from '@/lib/platform/public-metadata';
 import { readPublicSiteContent } from '@/lib/platform/site-settings-content';
 import { JsonLd } from '@/components/public/json-ld';
@@ -33,6 +30,7 @@ import { TrustValueStrip } from '@/components/public/sections/trust-value-strip'
 import { Capabilities } from '@/components/public/sections/capabilities';
 import { Workflow } from '@/components/public/sections/workflow';
 import { VisibilityRoles } from '@/components/public/sections/visibility-roles';
+import { BuiltForPublicSector } from '@/components/public/sections/built-for-public-sector';
 import { SectorsMetricsPilot } from '@/components/public/sections/sectors-metrics-pilot';
 import { FaqSection, FinalCta } from '@/components/public/sections/faq-final-cta';
 
@@ -49,10 +47,7 @@ export async function generateMetadata(): Promise<Metadata> {
 // CMS extraction helpers (all with safe defaults)
 // ---------------------------------------------------------------------------
 
-function heroFrom(
-  content: PublicCmsContent | null,
-  settings: PublicSiteSettings | null,
-) {
+function heroFrom(content: PublicCmsContent | null, settings: PublicSiteSettings | null) {
   // New Site Settings editor is authoritative (metadata.publicSite.hero);
   // legacy heroSection / cms-content fields remain as fallbacks.
   const p = readPublicSiteContent(settings).hero;
@@ -78,8 +73,7 @@ function workflowFrom(content: PublicCmsContent | null) {
   const c = content?.content ?? {};
   return {
     heading: typeof c.workflowHeading === 'string' ? c.workflowHeading : undefined,
-    subheading:
-      typeof c.workflowSubheading === 'string' ? c.workflowSubheading : undefined,
+    subheading: typeof c.workflowSubheading === 'string' ? c.workflowSubheading : undefined,
   };
 }
 
@@ -154,20 +148,11 @@ export default async function HomePage() {
       />
       <TrustValueStrip />
       <Capabilities />
-      <Workflow
-        heading={workflow.heading}
-        subheading={workflow.subheading}
-      />
+      <Workflow heading={workflow.heading} subheading={workflow.subheading} />
       <VisibilityRoles />
-      <SectorsMetricsPilot
-        pilotTitle={pilot.pilotTitle}
-        pilotSummary={pilot.pilotSummary}
-      />
-      <FaqSection
-        faqs={faqs}
-        heading={faq.heading}
-        subheading={faq.subheading}
-      />
+      <BuiltForPublicSector />
+      <SectorsMetricsPilot pilotTitle={pilot.pilotTitle} pilotSummary={pilot.pilotSummary} />
+      <FaqSection faqs={faqs} heading={faq.heading} subheading={faq.subheading} />
       <FinalCta />
     </>
   );
