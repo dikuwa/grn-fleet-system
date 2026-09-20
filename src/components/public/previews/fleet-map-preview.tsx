@@ -1,21 +1,36 @@
 /**
- * FleetMapPreview — lightweight regional route visual for the public homepage.
+ * FleetMapPreview — lightweight static route visual for the public homepage.
  *
- * The base is a real OpenStreetMap render centred on the Rundu–Divundu corridor.
- * Only the active route and endpoint markers are overlaid so surrounding roads,
- * towns and geographic context remain visible.
+ * Uses locally bundled WebP route maps so the homepage remains fast, reliable
+ * and independent of third-party map/image hosts.
  */
 
 import { cn } from '@/lib/utils';
 
 export interface FleetMapPreviewProps {
   className?: string;
+  variant?: 'hero' | 'visibility';
 }
 
-const MAP_URL =
-  'https://staticmap.openstreetmap.de/staticmap.php?center=-18.02,20.64&zoom=8&size=800x340&maptype=mapnik';
+const MAPS = {
+  hero: {
+    src: '/images/home/route-map-hero.webp',
+    alt: 'Route map from Rundu to Divundu in north-eastern Namibia',
+    route: 'Rundu → Divundu',
+  },
+  visibility: {
+    src: '/images/home/route-map-visibility.webp',
+    alt: 'Route map from Swakopmund to Otjiwarongo in Namibia',
+    route: 'Swakopmund → Otjiwarongo',
+  },
+} as const;
 
-export function FleetMapPreview({ className }: FleetMapPreviewProps) {
+export function FleetMapPreview({
+  className,
+  variant = 'hero',
+}: FleetMapPreviewProps) {
+  const map = MAPS[variant];
+
   return (
     <div
       className={cn(
@@ -25,75 +40,22 @@ export function FleetMapPreview({ className }: FleetMapPreviewProps) {
     >
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img
-        src={MAP_URL}
-        alt="OpenStreetMap view of the Rundu to Divundu corridor in north-eastern Namibia"
-        width={800}
-        height={340}
+        src={map.src}
+        alt={map.alt}
+        width={640}
+        height={360}
         decoding="async"
         className="absolute inset-0 h-full w-full object-cover"
       />
 
-      <svg
-        viewBox="0 0 800 340"
-        preserveAspectRatio="none"
-        className="pointer-events-none absolute inset-0 h-full w-full"
-        aria-hidden="true"
-      >
-        <path
-          d="M132 171 C 191 166, 252 163, 313 159 C 376 155, 435 151, 493 148 C 553 145, 612 146, 675 151"
-          fill="none"
-          stroke="rgba(255,255,255,.92)"
-          strokeWidth="7"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-        <path
-          d="M132 171 C 191 166, 252 163, 313 159 C 376 155, 435 151, 493 148 C 553 145, 612 146, 675 151"
-          fill="none"
-          stroke="#2563eb"
-          strokeWidth="3.2"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-
-        <g>
-          <circle cx="132" cy="171" r="8.5" fill="white" opacity=".96" />
-          <circle cx="132" cy="171" r="5.2" fill="#dc2626" />
-          <circle cx="675" cy="151" r="8.5" fill="white" opacity=".96" />
-          <circle cx="675" cy="151" r="5.2" fill="#059669" />
-        </g>
-      </svg>
-
-      <div className="border-border absolute top-2 left-2 rounded-[7px] border bg-white/92 px-2.5 py-1.5 shadow-sm backdrop-blur-sm">
-        <p className="text-[9px] font-semibold leading-none text-slate-800">Rundu → Divundu</p>
-        <p className="mt-1 text-[8px] leading-none text-slate-500">Active route · 352 km</p>
+      <div className="absolute top-2 left-2 max-w-[72%] rounded-[6px] border border-white/60 bg-white/88 px-2 py-1 shadow-sm backdrop-blur-[2px]">
+        <p className="truncate text-[8px] leading-none font-medium text-slate-800 sm:text-[9px]">
+          {map.route}
+        </p>
+        <p className="mt-1 text-[7px] leading-none font-normal text-slate-500 sm:text-[8px]">
+          Active route
+        </p>
       </div>
-
-      <div className="border-border absolute right-2 bottom-2 flex items-center gap-2 rounded-[7px] border bg-white/92 px-2 py-1.5 shadow-sm backdrop-blur-sm">
-        <LegendItem color="#dc2626" label="Start" />
-        <LegendItem color="#059669" label="Destination" />
-        <span className="flex items-center gap-1 text-[9px] text-slate-600">
-          <span className="h-0.5 w-3 rounded-full bg-[#2563eb]" aria-hidden="true" />
-          Route
-        </span>
-      </div>
-
-      <span className="absolute bottom-1 left-2 text-[7px] font-medium text-slate-600/80 [text-shadow:0_1px_2px_white]">
-        © OpenStreetMap contributors
-      </span>
     </div>
-  );
-}
-
-function LegendItem({ color, label }: { color: string; label: string }) {
-  return (
-    <span className="flex items-center gap-1 text-[9px] text-slate-600">
-      <span
-        className="h-1.5 w-1.5 rounded-full"
-        style={{ backgroundColor: color }}
-        aria-hidden="true"
-      />
-      {label}
-    </span>
   );
 }
