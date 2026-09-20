@@ -65,26 +65,21 @@ export function BuiltForPublicSector() {
           </div>
 
           <figure className="border-border bg-surface relative isolate overflow-hidden rounded-[12px] border shadow-sm">
-            {/* Local vector artwork stays sharp while keeping the payload small and cacheable. */}
+            {/* Real Windhoek cityscape photograph, served from a 960px CC0 Wikimedia derivative. */}
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src="/images/home/public-sector-namibia.svg"
-              alt="Illustrative Namibian public-sector civic campus with national flags"
+              src="https://upload.wikimedia.org/wikipedia/commons/thumb/3/36/Cityscape_Chronicles%3B_Windhoek%27s_Architectural_Diversity.jpg/960px-Cityscape_Chronicles%3B_Windhoek%27s_Architectural_Diversity.jpg"
+              alt="Windhoek cityscape showing a mix of civic and commercial architecture"
               width={960}
-              height={520}
+              height={1280}
               loading="lazy"
               decoding="async"
-              className="block aspect-[16/9] w-full object-cover sm:aspect-[12/5] lg:aspect-[16/10]"
+              className="block aspect-[16/9] w-full object-cover object-[50%_62%] sm:aspect-[12/5] lg:aspect-[16/10]"
             />
-            <div className="absolute inset-x-4 bottom-4 sm:inset-x-auto sm:right-5 sm:bottom-5 sm:w-[58%] lg:w-[62%]">
-              <div className="border-white/70 bg-white/92 rounded-[10px] border px-4 py-3 shadow-lg backdrop-blur-sm sm:px-5 sm:py-4">
-                <p className="text-brand-900 text-base leading-tight font-semibold sm:text-lg lg:text-xl">
-                  A more efficient, accountable and sustainable fleet for a better tomorrow.
-                </p>
-                <p className="mt-1.5 text-xs leading-relaxed text-slate-600 sm:text-sm">
-                  Support public services. Enable progress.
-                </p>
-              </div>
+            <div className="absolute right-3 bottom-3 max-w-[72%] sm:right-4 sm:bottom-4 sm:max-w-[56%]">
+              <p className="rounded-[8px] bg-slate-950/58 px-3 py-2 text-xs leading-snug font-medium text-white/92 shadow-sm backdrop-blur-[2px] sm:text-sm">
+                Accountable fleet operations for public service.
+              </p>
             </div>
           </figure>
         </div>
