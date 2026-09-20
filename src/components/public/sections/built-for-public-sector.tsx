@@ -1,15 +1,13 @@
 /**
  * Public-sector readiness section.
  *
- * This is intentionally a static, illustrative preview. It communicates the
- * product's workflow and accountability model without claiming certification,
- * national adoption or a live tenant deployment.
+ * The right-hand visual is a full-bleed local asset with an HTML overlay so
+ * the message remains responsive, selectable and accessible.
  */
 
 import { ClipboardCheck, GitBranch, ShieldCheck } from 'lucide-react';
 import type { LucideIcon } from 'lucide-react';
 import { SectionContainer, SectionHeading } from '@/components/public/section';
-import { SECTOR_IMAGE_DATA } from '@/components/public/sector-image-data';
 
 const PRINCIPLES: {
   icon: LucideIcon;
@@ -40,7 +38,7 @@ export function BuiltForPublicSector() {
       className="border-border bg-canvas scroll-mt-20 border-b py-20 md:py-24"
     >
       <SectionContainer>
-        <div className="grid items-center gap-10 lg:grid-cols-[minmax(0,0.9fr)_minmax(420px,1.1fr)] lg:gap-16">
+        <div className="grid items-center gap-10 lg:grid-cols-[minmax(0,0.9fr)_minmax(0,1.1fr)] lg:gap-14">
           <div>
             <SectionHeading
               align="left"
@@ -66,25 +64,28 @@ export function BuiltForPublicSector() {
             </div>
           </div>
 
-          <figure className="border-border bg-surface overflow-hidden rounded-[12px] border p-3 shadow-sm sm:p-4">
-            <div className="bg-muted border-border overflow-hidden rounded-[9px] border">
-              {/* Bundled local imagery keeps the public page independent from remote image hosts. */}
-              {/* eslint-disable-next-line @next/next/no-img-element */}
-              <img
-                src={SECTOR_IMAGE_DATA['government-ministries']}
-                alt="Namibian public-sector civic building with the national flag"
-                width={160}
-                height={100}
-                loading="lazy"
-                decoding="async"
-                className="aspect-[16/10] h-full w-full object-cover"
-                style={{ objectPosition: '50% 48%' }}
-              />
+          <figure className="border-border bg-surface relative isolate overflow-hidden rounded-[12px] border shadow-sm">
+            {/* Local vector artwork stays sharp while keeping the payload small and cacheable. */}
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src="/images/home/public-sector-namibia.svg"
+              alt="Illustrative Namibian public-sector civic campus with national flags"
+              width={960}
+              height={520}
+              loading="lazy"
+              decoding="async"
+              className="block aspect-[16/9] w-full object-cover sm:aspect-[12/5] lg:aspect-[16/10]"
+            />
+            <div className="absolute inset-x-4 bottom-4 sm:inset-x-auto sm:right-5 sm:bottom-5 sm:w-[58%] lg:w-[62%]">
+              <div className="border-white/70 bg-white/92 rounded-[10px] border px-4 py-3 shadow-lg backdrop-blur-sm sm:px-5 sm:py-4">
+                <p className="text-brand-900 text-base leading-tight font-semibold sm:text-lg lg:text-xl">
+                  A more efficient, accountable and sustainable fleet for a better tomorrow.
+                </p>
+                <p className="mt-1.5 text-xs leading-relaxed text-slate-600 sm:text-sm">
+                  Support public services. Enable progress.
+                </p>
+              </div>
             </div>
-            <figcaption className="text-ink-500 mt-3 text-xs leading-relaxed">
-              Namibia-focused civic context for organisations that coordinate public services and
-              fleet operations.
-            </figcaption>
           </figure>
         </div>
       </SectionContainer>
