@@ -64,7 +64,7 @@ export function BuiltForPublicSector() {
             </div>
           </div>
 
-          <figure className="border-border bg-surface relative isolate overflow-hidden rounded-[12px] border shadow-sm">
+          <figure className="border-border bg-surface relative isolate aspect-[16/9] overflow-hidden rounded-[12px] border shadow-sm sm:aspect-[12/5] lg:aspect-[16/10]">
             {/* Bundled local image avoids third-party image failures. */}
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
@@ -74,10 +74,10 @@ export function BuiltForPublicSector() {
               height={563}
               loading="lazy"
               decoding="async"
-              className="block aspect-[16/9] w-full object-cover object-center sm:aspect-[12/5] lg:aspect-[16/10]"
+              className="absolute inset-0 h-full w-full object-cover object-center"
             />
-            <div className="absolute right-3 bottom-3 max-w-[72%] sm:right-4 sm:bottom-4 sm:max-w-[54%]">
-              <div className="rounded-[7px] border border-white/75 bg-white/92 px-2.5 py-2 shadow-sm backdrop-blur-[2px] sm:px-3">
+            <div className="absolute right-3 bottom-3 max-w-[58%] sm:right-4 sm:bottom-4 sm:max-w-[42%] lg:max-w-[40%]">
+              <div className="rounded-[7px] border border-white/75 bg-white/92 px-2.5 py-2 shadow-sm sm:px-3">
                 <p className="text-[10px] leading-snug font-normal text-slate-700 sm:text-[11px]">
                   A more efficient, accountable and sustainable fleet for a better tomorrow.
                 </p>
