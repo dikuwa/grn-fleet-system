@@ -68,7 +68,7 @@ export function BuiltForPublicSector() {
             {/* Bundled local image avoids third-party image failures. */}
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
-              src="/images/home/public-fleet-hq.webp"
+              src="/images/home/public-fleet-visible.webp"
               alt="Namibian government fleet vehicles parked outside the Ministry of Works and Transport"
               width={1000}
               height={563}
